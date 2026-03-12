@@ -8,7 +8,7 @@ Clui gives you a project sidebar with organized conversation threads — each on
 
 **What you get:**
 - **Projects with threads** — organize your Claude conversations by project, each thread is its own branch/worktree
-- **Real terminal, not a chat UI** — each thread runs `claude` CLI via xterm.js + node-pty (same tech as VS Code's terminal)
+- **Real terminal, not a chat UI** — each thread runs `claude` CLI via xterm.js + node-pty
 - **Resume anywhere** — dormant threads save their scrollback and resume via `claude --resume`
 - **Git workflow built in** — branch management, commit, push, and PR creation from the sidebar
 - **Smart resource management** — only N terminals stay alive (configurable), the rest hibernate with saved scrollback
