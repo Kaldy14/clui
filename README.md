@@ -17,7 +17,7 @@ Clui gives you a project sidebar with organized conversation threads — each on
 
 This is a fork of [t3code](https://github.com/pingdotgg/t3code). We kept the excellent sidebar, project/thread organization, branch/worktree management, and git workflow. We're replacing the Agent SDK chat interface with embedded terminals running Claude Code CLI directly.
 
-**Why fork?** t3code's project organization and git workflow are great, but the Agent SDK integration adds complexity and fragility. Claude Code CLI already handles conversation history, tool use, and context management — we just need a terminal to run it in.
+**Why fork?** t3code's project organization and git workflow are great, but the chat UI built on the Agent SDK is missing many features that the CLI has natively. Rather than writing abstraction layers to bridge the gap, it's a better experience to use Claude Code CLI directly — it already handles conversation history, tool use, context management, and everything else out of the box.
 
 See [PLAN.md](./PLAN.md) for the full implementation plan.
 
