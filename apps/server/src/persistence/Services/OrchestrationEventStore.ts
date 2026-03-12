@@ -9,7 +9,7 @@
  *
  * @module OrchestrationEventStore
  */
-import { OrchestrationEvent } from "@t3tools/contracts";
+import { OrchestrationEvent } from "@clui/contracts";
 import { ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
 

@@ -28,7 +28,7 @@ import {
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPush,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { compileResolvedKeybindingRule, DEFAULT_KEYBINDINGS } from "./keybindings";
 import type {
   TerminalClearInput,
@@ -38,7 +38,7 @@ import type {
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager";
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient, SqlError } from "effect/unstable/sql";

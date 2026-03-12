@@ -1,4 +1,4 @@
-import type { McpServerStatus, ThreadId } from "@t3tools/contracts";
+import type { McpServerStatus, ThreadId } from "@clui/contracts";
 import {
   ChevronRightIcon,
   PlugIcon,

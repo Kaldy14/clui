@@ -23,7 +23,7 @@ import {
   type ProviderSession,
   type McpServerStatus,
   type McpSetServersResult,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Effect, Layer, Option, PubSub, Schema, SchemaIssue, Stream } from "effect";
 
 import { ProviderValidationError } from "../Errors.ts";

@@ -1,4 +1,4 @@
-import type { GitStatusResult } from "@t3tools/contracts";
+import type { GitStatusResult } from "@clui/contracts";
 import type { Thread } from "../types";
 
 export interface ThreadStatusPill {

@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import { Encoding } from "effect";
-import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
+import { CheckpointRef, ProjectId, type ThreadId } from "@clui/contracts";
 
 export const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 

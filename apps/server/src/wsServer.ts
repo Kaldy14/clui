@@ -28,7 +28,7 @@ import {
   WsPush,
   WsResponse,
   ServerProviderStatus,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,

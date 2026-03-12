@@ -16,7 +16,7 @@ import {
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
   type ServerConfigIssue,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Mutable } from "effect/Types";
 import {
   Array,

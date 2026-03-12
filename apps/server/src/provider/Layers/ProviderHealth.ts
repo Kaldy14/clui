@@ -12,7 +12,7 @@ import type {
   ServerProviderAuthStatus,
   ServerProviderStatus,
   ServerProviderStatusState,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Array, Effect, Fiber, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 

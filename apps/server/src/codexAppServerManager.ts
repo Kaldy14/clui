@@ -18,8 +18,8 @@ import {
   type ProviderTurnStartResult,
   RuntimeMode,
   ProviderInteractionMode,
-} from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+} from "@clui/contracts";
+import { normalizeModelSlug } from "@clui/shared/model";
 import { Effect, ServiceMap } from "effect";
 
 import {

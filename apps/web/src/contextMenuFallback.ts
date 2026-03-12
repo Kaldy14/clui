@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem } from "@clui/contracts";
 
 /**
  * Imperative DOM-based context menu for non-Electron environments.

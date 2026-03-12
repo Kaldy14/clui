@@ -1,4 +1,4 @@
-import type { OrchestrationSessionMetrics, RateLimitEntry, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationSessionMetrics, RateLimitEntry, ThreadId } from "@clui/contracts";
 import { memo, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryOptions } from "@tanstack/react-query";

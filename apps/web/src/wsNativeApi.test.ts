@@ -8,7 +8,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type ServerProviderStatus,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();

@@ -6,7 +6,7 @@ import {
   DEFAULT_TERMINAL_ID,
   type TerminalEvent,
   type TerminalOpenInput,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {

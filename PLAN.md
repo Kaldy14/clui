@@ -107,8 +107,8 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 | Step | Action | Files |
 |------|--------|-------|
 | 0.1 | Fork t3code into `better-claude-cmux` repo | — |
-| 0.2 | Rename package from `@t3tools/monorepo` to `@clui/monorepo` | `/package.json` (line 2) |
-| 0.3 | Update all `@t3tools/*` package names to `@clui/*` | `apps/web/package.json`, `apps/server/package.json`, `apps/desktop/package.json`, `packages/contracts/package.json`, `packages/shared/package.json` |
+| 0.2 | Rename package from `@clui/monorepo` to `@clui/monorepo` | `/package.json` (line 2) |
+| 0.3 | Update all `@clui/*` package names to `@clui/*` | `apps/web/package.json`, `apps/server/package.json`, `apps/desktop/package.json`, `packages/contracts/package.json`, `packages/shared/package.json` |
 | 0.4 | Verify build: `bun install && bun run build` | — |
 | 0.5 | Verify dev: `bun run dev` and confirm the existing app runs | — |
 

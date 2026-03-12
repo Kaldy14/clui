@@ -10,7 +10,7 @@ import {
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

@@ -1,4 +1,4 @@
-import type { OrchestrationMessage } from "@t3tools/contracts";
+import type { OrchestrationMessage } from "@clui/contracts";
 
 const MAX_SUMMARY_CHARS = 4000;
 const MAX_USER_CHARS = 200;

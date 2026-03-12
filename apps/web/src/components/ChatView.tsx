@@ -24,7 +24,7 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import {
   getDefaultModel,
   getDefaultReasoningEffort,
@@ -35,7 +35,7 @@ import {
   parseCursorModelSelection,
   resolveCursorModelFromSelection,
   resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+} from "@clui/shared/model";
 import {
   memo,
   useCallback,

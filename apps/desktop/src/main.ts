@@ -7,12 +7,12 @@ import * as Path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@clui/contracts";
 import { autoUpdater } from "electron-updater";
 
-import type { ContextMenuItem } from "@t3tools/contracts";
-import { NetService } from "@t3tools/shared/Net";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import type { ContextMenuItem } from "@clui/contracts";
+import { NetService } from "@clui/shared/Net";
+import { RotatingFileSink } from "@clui/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";

@@ -1,4 +1,4 @@
-import type { OrchestrationThreadActivity, OrchestrationSessionStatus } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity, OrchestrationSessionStatus } from "@clui/contracts";
 
 export function requestNotificationPermission(): void {
   if (!("Notification" in window)) return;

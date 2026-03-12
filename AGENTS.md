@@ -39,7 +39,7 @@ Long term maintainability is a core priority. If you add new functionality, firs
 - `apps/server`: Node.js WebSocket server. Manages provider sessions, serves the React web app, and streams events to the browser.
 - `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
 - `packages/contracts`: Shared Effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
-- `packages/shared`: Shared runtime utilities consumed by both server and web. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
+- `packages/shared`: Shared runtime utilities consumed by both server and web. Uses explicit subpath exports (e.g. `@clui/shared/git`) — no barrel index.
 
 ## Provider Architecture
 
