@@ -13,7 +13,7 @@ import {
   ThreadId,
   TurnId,
   IsoDateTime,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

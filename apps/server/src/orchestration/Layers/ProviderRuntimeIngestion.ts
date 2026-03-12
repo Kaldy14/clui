@@ -9,7 +9,7 @@ import {
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";

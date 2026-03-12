@@ -5,7 +5,7 @@ import type {
   OrchestrationThread,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";

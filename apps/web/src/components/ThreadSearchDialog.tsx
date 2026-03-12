@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { GitBranchIcon, SearchIcon } from "lucide-react";
-import type { ProjectId, ThreadId } from "@t3tools/contracts";
+import type { ProjectId, ThreadId } from "@clui/contracts";
 import { useStore } from "../store";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { formatRelativeTime, threadStatusPill } from "../lib/threadStatus";

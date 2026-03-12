@@ -11,7 +11,7 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";

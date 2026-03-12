@@ -5,13 +5,13 @@ import {
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import {
   getModelOptions,
   normalizeModelSlug,
   resolveModelSlug,
   resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+} from "@clui/shared/model";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";

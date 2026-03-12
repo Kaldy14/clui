@@ -11,7 +11,7 @@ import {
   TerminalWriteInput,
   type TerminalEvent,
   type TerminalSessionSnapshot,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Effect, Encoding, Layer, Path, Schema } from "effect";
 
 import { createLogger } from "../../logger";

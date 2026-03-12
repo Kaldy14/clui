@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { TerminalSquare, XIcon } from "lucide-react";
-import type { ProjectId } from "@t3tools/contracts";
+import type { ProjectId } from "@clui/contracts";
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,

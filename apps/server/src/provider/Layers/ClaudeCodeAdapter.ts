@@ -38,7 +38,7 @@ import {
   RuntimeTaskId,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { Cause, DateTime, Deferred, Effect, Fiber, Layer, PubSub, Queue, Random, Ref, Stream } from "effect";
 
 import {

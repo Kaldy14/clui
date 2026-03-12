@@ -14,7 +14,7 @@ import {
   type ModelSlug,
   type ProviderEffort,
   type ProviderKind,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 
 type CursorModelCapability = {
   readonly supportsReasoning: boolean;

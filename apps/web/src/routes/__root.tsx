@@ -1,4 +1,4 @@
-import { type OrchestrationSessionStatus, ThreadId } from "@t3tools/contracts";
+import { type OrchestrationSessionStatus, ThreadId } from "@clui/contracts";
 import type { SessionPhase } from "../types";
 import {
   Outlet,
@@ -186,7 +186,7 @@ function EventRouter() {
     let needsProviderInvalidation = false;
     const sessionStatusByThread = new Map<
       string,
-      import("@t3tools/contracts").OrchestrationSessionStatus
+      import("@clui/contracts").OrchestrationSessionStatus
     >();
 
     const flushSnapshotSync = async (): Promise<void> => {

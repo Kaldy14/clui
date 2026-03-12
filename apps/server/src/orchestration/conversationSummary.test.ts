@@ -1,4 +1,4 @@
-import { MessageId, TurnId, type OrchestrationMessage } from "@t3tools/contracts";
+import { MessageId, TurnId, type OrchestrationMessage } from "@clui/contracts";
 import { describe, expect, it } from "vitest";
 
 import { buildConversationSummary } from "./conversationSummary.ts";

@@ -7,8 +7,8 @@ import {
   type ProviderKind,
   type ProviderInteractionMode,
   type RuntimeMode,
-} from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+} from "@clui/contracts";
+import { normalizeModelSlug } from "@clui/shared/model";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";

@@ -1,7 +1,7 @@
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type { ResolvedKeybindingsConfig } from "@clui/contracts";
 
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";

@@ -1,4 +1,4 @@
-import type { ThreadId, ProjectId } from "@t3tools/contracts";
+import type { ThreadId, ProjectId } from "@clui/contracts";
 import { projectTerminalThreadId } from "../types";
 
 interface TerminalRetentionThread {

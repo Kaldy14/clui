@@ -15,7 +15,7 @@ import {
   TerminalSessionSnapshot,
   TerminalSessionStatus,
   TerminalWriteInput,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import { PtyProcess } from "./PTY";
 import { Effect, Schema, ServiceMap } from "effect";
 

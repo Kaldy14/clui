@@ -14,7 +14,7 @@ import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { CheckpointStoreError } from "../Errors.ts";
-import { CheckpointRef } from "@t3tools/contracts";
+import { CheckpointRef } from "@clui/contracts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;

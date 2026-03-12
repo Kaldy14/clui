@@ -3,7 +3,7 @@ import type {
   ProjectScriptIcon,
   ProjectScriptTerminalTarget,
   ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+} from "@clui/contracts";
 import {
   BugIcon,
   ChevronDownIcon,

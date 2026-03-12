@@ -5,7 +5,7 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId } from "@clui/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Random, Stream } from "effect";
 
