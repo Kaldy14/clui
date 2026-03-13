@@ -7,6 +7,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import ThreadTerminalView from "~/components/ThreadTerminalView";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
@@ -150,7 +151,7 @@ function ChatThreadRouteView() {
     return (
       <>
         <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-          <div className="flex h-full items-center justify-center text-muted-foreground">Terminal goes here — Phase 4</div>
+          <ThreadTerminalView threadId={threadId} />
         </SidebarInset>
         <DiffPanelInlineSidebar diffOpen={diffOpen} onCloseDiff={closeDiff} onOpenDiff={openDiff} />
       </>
@@ -160,7 +161,7 @@ function ChatThreadRouteView() {
   return (
     <>
       <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-        <div className="flex h-full items-center justify-center text-muted-foreground">Terminal goes here — Phase 4</div>
+        <ThreadTerminalView threadId={threadId} />
       </SidebarInset>
       <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
         <Suspense fallback={<DiffLoadingFallback inline={false} />}>

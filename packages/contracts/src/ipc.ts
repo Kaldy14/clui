@@ -55,6 +55,14 @@ import type {
   McpReconnectServerInput,
   McpToggleServerInput,
 } from "./mcp";
+import type {
+  ClaudeStartInput,
+  ClaudeHibernateInput,
+  ClaudeWriteInput,
+  ClaudeResizeInput,
+  ClaudeGetScrollbackInput,
+  ClaudeSessionEvent,
+} from "./claude-terminal";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -189,5 +197,15 @@ export interface NativeApi {
     setServers: (input: McpSetServersInput) => Promise<McpSetServersResult>;
     reconnectServer: (input: McpReconnectServerInput) => Promise<void>;
     toggleServer: (input: McpToggleServerInput) => Promise<void>;
+  };
+  claude: {
+    start: (input: ClaudeStartInput) => Promise<void>;
+    hibernate: (input: ClaudeHibernateInput) => Promise<void>;
+    write: (input: ClaudeWriteInput) => Promise<void>;
+    resize: (input: ClaudeResizeInput) => Promise<void>;
+    getScrollback: (
+      input: ClaudeGetScrollbackInput,
+    ) => Promise<{ threadId: string; scrollback: string | null }>;
+    onSessionEvent: (callback: (event: ClaudeSessionEvent) => void) => () => void;
   };
 }

@@ -13,12 +13,12 @@ import {
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("resolveOffset", () => {
-    it.effect("uses explicit T3CODE_PORT_OFFSET when provided", () =>
+    it.effect("uses explicit CLUI_PORT_OFFSET when provided", () =>
       Effect.sync(() => {
         const result = resolveOffset({ portOffset: 12, devInstance: undefined });
         assert.deepStrictEqual(result, {
           offset: 12,
-          source: "T3CODE_PORT_OFFSET=12",
+          source: "CLUI_PORT_OFFSET=12",
         });
       }),
     );
@@ -40,13 +40,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           }),
         );
 
-        assert.ok(error.includes("Invalid T3CODE_PORT_OFFSET"));
+        assert.ok(error.includes("Invalid CLUI_PORT_OFFSET"));
       }),
     );
   });
 
   describe("createDevRunnerEnv", () => {
-    it.effect("defaults state dir to ~/.t3/dev when not provided", () =>
+    it.effect("defaults state dir to ~/.clui/dev when not provided", () =>
       Effect.gen(function* () {
         const [env, defaultStateDir] = yield* Effect.all([
           createDevRunnerEnv({
@@ -66,7 +66,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           DEFAULT_DEV_STATE_DIR,
         ]);
 
-        assert.equal(env.T3CODE_STATE_DIR, defaultStateDir);
+        assert.equal(env.CLUI_STATE_DIR, defaultStateDir);
       }),
     );
 
@@ -87,13 +87,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: new URL("http://localhost:7331"),
         });
 
-        assert.equal(env.T3CODE_STATE_DIR, resolve("/tmp/override-state"));
-        assert.equal(env.T3CODE_PORT, "4222");
+        assert.equal(env.CLUI_STATE_DIR, resolve("/tmp/override-state"));
+        assert.equal(env.CLUI_PORT, "4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
-        assert.equal(env.T3CODE_NO_BROWSER, "1");
-        assert.equal(env.T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
-        assert.equal(env.T3CODE_LOG_WS_EVENTS, "1");
-        assert.equal(env.T3CODE_HOST, "0.0.0.0");
+        assert.equal(env.CLUI_NO_BROWSER, "1");
+        assert.equal(env.CLUI_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
+        assert.equal(env.CLUI_LOG_WS_EVENTS, "1");
+        assert.equal(env.CLUI_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
       }),
     );
@@ -103,7 +103,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
-            T3CODE_LOG_WS_EVENTS: "keep-me-out",
+            CLUI_LOG_WS_EVENTS: "keep-me-out",
           },
           serverOffset: 0,
           webOffset: 0,
@@ -117,8 +117,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_MODE, "web");
-        assert.equal(env.T3CODE_LOG_WS_EVENTS, undefined);
+        assert.equal(env.CLUI_MODE, "web");
+        assert.equal(env.CLUI_LOG_WS_EVENTS, undefined);
       }),
     );
 
@@ -139,7 +139,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
+        assert.equal(env.CLUI_LOG_WS_EVENTS, "0");
       }),
     );
   });
@@ -160,7 +160,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
     it.effect("advances until all required ports are available", () =>
       Effect.gen(function* () {
-        const taken = new Set([3773, 5733, 3774, 5734]);
+        const taken = new Set([4100, 5733, 4101, 5734]);
         const offset = yield* findFirstAvailableOffset({
           startOffset: 0,
           requireServerPort: true,
@@ -189,7 +189,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("resolveModePortOffsets", () => {
     it.effect("uses a shared fallback offset for dev mode", () =>
       Effect.gen(function* () {
-        const taken = new Set([3773, 5733]);
+        const taken = new Set([4100, 5733]);
         const offsets = yield* resolveModePortOffsets({
           mode: "dev",
           startOffset: 0,
@@ -219,7 +219,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
     it.effect("shifts only server offset for dev:server", () =>
       Effect.gen(function* () {
-        const taken = new Set([3773]);
+        const taken = new Set([4100]);
         const offsets = yield* resolveModePortOffsets({
           mode: "dev:server",
           startOffset: 0,

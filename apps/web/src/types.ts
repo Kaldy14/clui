@@ -12,6 +12,7 @@ import type {
   ProviderKind,
   ProviderInteractionMode,
   RuntimeMode,
+  TerminalStatus,
 } from "@clui/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -113,6 +114,9 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  terminalStatus: TerminalStatus;
+  claudeSessionId: string | null;
+  scrollbackSnapshot: string | null;
 }
 
 export interface ThreadSession {

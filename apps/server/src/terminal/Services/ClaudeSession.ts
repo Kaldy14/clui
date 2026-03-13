@@ -63,6 +63,10 @@ export interface ClaudeSessionManagerShape {
   readonly getClaudeSessionId: (
     threadId: string,
   ) => Effect.Effect<string | null>;
+  /** Kill PTY and remove session from map without emitting lifecycle events. Used for thread deletion. */
+  readonly destroySession: (
+    threadId: string,
+  ) => Effect.Effect<void>;
   readonly dispose: Effect.Effect<void>;
 }
 

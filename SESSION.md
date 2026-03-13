@@ -35,7 +35,7 @@ A fork of [t3code](https://github.com/pingdotgg/t3code) that replaces the Agent 
 - **LRU eviction:** When cap exceeded, least-recently-interacted terminal hibernates (scrollback saved, PTY killed)
 - **App startup:** Zero PTYs spawn. All threads render as dormant with saved scrollback. Resume on-demand.
 - **Resume:** `claude --resume <session_id>` — Claude CLI handles conversation continuity natively
-- **Session ID capture:** Parse from PTY output or read from `~/.claude/projects/` after session starts
+- **Session ID:** Assigned upfront via `--session-id <uuid>` for new sessions, reused via `--resume <uuid>` for resumes. No regex extraction needed.
 
 ### xterm.js Instance Management
 
@@ -292,14 +292,89 @@ Built a new `ClaudeSessionManager` Effect service — separate from the existing
 
 **Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` 333/333 pass (+31 new tests).
 
-### Phase 4: Terminal UI (Client) ⬜ NOT STARTED
-- `ThreadTerminalView` — three-state renderer (new/active/dormant)
-- `ActiveTerminalView` — live xterm.js ↔ WebSocket ↔ PTY
-- `DormantTerminalView` — saved scrollback + "Resume" button
-- `NewThreadView` — "Start Conversation" prompt
-- xterm.js instance cache in Zustand store
-- Update sidebar status pills
-- Add xterm addons: `@xterm/addon-webgl`, `@xterm/addon-search`, `@xterm/addon-web-links`
+### Phase 4: Terminal UI (Client) ✅ COMPLETE
+
+Built the client-side terminal UI in `apps/web/` with three-state rendering, xterm.js integration, and WebSocket I/O.
+
+**New files:**
+- `apps/web/src/components/ThreadTerminalView.tsx` — Three-state renderer: `NewThreadView` (Start button), `ActiveTerminalView` (live xterm.js ↔ WS), `DormantTerminalView` (read-only scrollback + Resume button)
+- `apps/web/src/lib/claudeTerminalCache.ts` — Module-level `Map<ThreadId, CachedTerminal>` for xterm.js instance caching. Terminals are detached (not disposed) on thread switch and reattached instantly on return. WebGL renderer addon for GPU acceleration. Shared theme management.
+
+**Modified files:**
+- `packages/contracts/src/ipc.ts` — Added `claude` namespace to `NativeApi` interface: `start`, `hibernate`, `write`, `resize`, `getScrollback`, `onSessionEvent`
+- `apps/web/src/wsNativeApi.ts` — Wired all claude methods to WS transport + session event subscription with schema validation
+- `apps/web/src/types.ts` — Added `terminalStatus`, `claudeSessionId`, `scrollbackSnapshot` to `Thread` type
+- `apps/web/src/store.ts` — Maps terminal fields from `OrchestrationReadModel` in `syncServerReadModel`
+- `apps/web/src/routes/_chat.$threadId.tsx` — Replaced Phase 4 placeholder with `ThreadTerminalView` component
+- `apps/web/src/lib/threadStatus.ts` — Added `claudeTerminalStatusPill()`: active → green pulsing "Running", dormant → gray "Paused"
+- `apps/web/package.json` — Added `@xterm/addon-webgl`
+- `apps/web/src/store.test.ts` — Added terminal fields to `makeThread` helper
+- `apps/web/src/worktreeCleanup.test.ts` — Added terminal fields to `makeThread` helper
+
+**Key design decisions:**
+- **xterm.js instance cache** — Module-level `Map` (not Zustand, since Terminal instances aren't serializable). Detach on thread switch, reattach on return. Dispose only on hibernation/deletion.
+- **Race-free output** — ActiveTerminalView subscribes to `claude.sessionEvent` push events first, buffers them, then fetches scrollback via `getScrollback`, writes it, and flushes the buffer. No output is lost.
+- **WebGL renderer** — Loaded via `@xterm/addon-webgl` with context-loss recovery fallback.
+- **Theme sync** — MutationObserver on `<html>` class/style changes triggers `refreshTheme()` across all cached terminals.
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` 333/333 pass.
+
+### Post-Phase 4: Frontend Architecture Review Fixes ✅ COMPLETE
+
+5-agent parallel review (style, quality, accessibility, browser/platform, test-engineer) identified 17 issues across P0–P2. All P0 and P1 items fixed.
+
+**P0 fixes:**
+
+1. **WebGL addon leak** — `tryLoadWebgl()` was called on every `attach()`, accumulating GPU contexts (browser limit ~16). Added `WeakSet<Terminal>` tracking: load once per terminal, skip on re-attach, remove from set on context loss.
+   - `apps/web/src/lib/claudeTerminalCache.ts`
+
+2. **Missing `disposed` guard in ActiveTerminalView** — Scrollback `.then()` fired after unmount, writing stale data to detached terminal. Added `let disposed = false` + check in `.then()`/`.catch()` + set in cleanup. Mirrors DormantTerminalView pattern.
+   - `apps/web/src/components/ThreadTerminalView.tsx`
+
+3. **Route placeholder in sheet branch** — `_chat.$threadId.tsx:164` still showed `"Terminal goes here — Phase 4"` for narrow viewports (<1180px). Replaced with `<ThreadTerminalView>`.
+   - `apps/web/src/routes/_chat.$threadId.tsx`
+
+4. **Duplicated `terminalThemeFromApp()`** — Identical 60-line function in 3 files (CLAUDE.md maintainability violation). Extracted to shared `lib/terminalTheme.ts`, removed local copies from `claudeTerminalCache.ts`, `ThreadTerminalDrawer.tsx`, `ProjectTerminalDrawer.tsx`.
+   - `apps/web/src/lib/terminalTheme.ts` (NEW)
+   - `apps/web/src/lib/claudeTerminalCache.ts`
+   - `apps/web/src/components/ThreadTerminalDrawer.tsx`
+   - `apps/web/src/components/ProjectTerminalDrawer.tsx`
+
+**P1 fixes:**
+
+5. **`pointer-events: none` → `disableStdin`** — Dormant view blocked all interaction including text selection/copy. Removed `style={{ pointerEvents: "none" }}`, replaced with `terminal.options.disableStdin = true`. Active view sets `disableStdin = false` on attach.
+   - `apps/web/src/components/ThreadTerminalView.tsx`
+
+6. **`handleResume` hardcoded dimensions** — Was sending `cols: 120, rows: 40` ignoring actual cached terminal size. Now reads `cached.terminal.cols/rows` before disposing. `handleStart` kept hardcoded (no terminal exists yet; corrective resize follows immediately on mount).
+   - `apps/web/src/components/ThreadTerminalView.tsx`
+
+7. **Error `role="alert"`** — Both error paragraphs now have `role="alert"` for screen reader announcement.
+   - `apps/web/src/components/ThreadTerminalView.tsx`
+
+8. **Icons `aria-hidden`** — Added `aria-hidden="true"` to decorative `PlusCircleIcon` and `PlayIcon`.
+   - `apps/web/src/components/ThreadTerminalView.tsx`
+
+9. **`aria-busy` on buttons** — Added `aria-busy={starting}` and `aria-busy={resuming}` for assistive technology feedback.
+   - `apps/web/src/components/ThreadTerminalView.tsx`
+
+10. **ResizeObserver** — Added `ResizeObserver` on terminal container element. Handles sidebar collapse/expand and split-view changes that don't trigger `window.resize`.
+    - `apps/web/src/components/ThreadTerminalView.tsx`
+
+11. **Exhaustive switch in `writeEvent`** — Replaced if/else chain with exhaustive switch covering all `ClaudeSessionEvent` types (`output`, `error`, `exited`, `started`, `hibernated`, `sessionId`). Future-proofs against new event types.
+    - `apps/web/src/components/ThreadTerminalView.tsx`
+
+12. **Stale `cached` ref in cleanup** — DormantTerminalView captured `cached` boolean at effect-run time for dispose decision. Replaced with explicit `ownsCacheEntry` ownership flag.
+    - `apps/web/src/components/ThreadTerminalView.tsx`
+
+**Deferred to Phase 6 (by design):**
+- Keyboard escape binding for terminal (shell terminals have same behavior; terminal-first app)
+- xterm.js `screenReaderMode` (performance overhead; add as user setting)
+- MutationObserver debounce (low impact)
+- LRU eviction for terminal cache (Phase 5 scope)
+- `makeThread` fixture extraction (test infrastructure)
+- Terminal font size documentation (13px Claude vs 12px shell — intentional)
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` 333/333 pass.
 
 ### Phase 5: Lifecycle Management ⬜ NOT STARTED
 - LRU eviction when exceeding max active terminals
@@ -328,17 +403,18 @@ Built a new `ClaudeSessionManager` Effect service — separate from the existing
 | `packages/contracts/src/orchestration.ts` | `TerminalStatus`, `OrchestrationThread` with terminal fields |
 | `packages/contracts/src/claude-terminal.ts` | Claude terminal schemas (Start/Hibernate/Write/Resize/GetScrollback + SessionEvent) |
 | `packages/contracts/src/ws.ts` | WS_METHODS (includes claude.start/hibernate/write/resize/getScrollback) |
+| `packages/contracts/src/ipc.ts` | NativeApi interface with `claude` namespace |
 | `apps/server/src/terminal/Services/ClaudeSession.ts` | ClaudeSessionManager service interface |
-| `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | ClaudeSessionManager implementation (ScrollbackRingBuffer, env filtering, kill escalation) |
-| `apps/server/src/terminal/terminalUtils.ts` | Shared utils (capHistory, env filtering, assertValidCwd, runWithThreadLock, createSpawnEnv) |
+| `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | ClaudeSessionManager implementation |
 | `apps/server/src/wsServer.ts` | WS routes for all claude.* methods + event subscription |
-| `apps/web/src/routes/_chat.$threadId.tsx` | **TO MODIFY** — Replace placeholder with terminal view (Phase 4) |
-| `apps/web/package.json` | Already has `@xterm/xterm` and `@xterm/addon-fit` |
-| `apps/server/package.json` | Already has `node-pty` |
+| `apps/web/src/components/ThreadTerminalView.tsx` | Three-state terminal view (new/active/dormant) |
+| `apps/web/src/lib/claudeTerminalCache.ts` | xterm.js instance cache with WebGL + theme |
+| `apps/web/src/wsNativeApi.ts` | WS native API with claude methods wired |
+| `apps/web/src/lib/threadStatus.ts` | Thread/terminal status pills for sidebar |
 
 ## How to Continue
 
 1. Read this file and `PLAN.md`
-2. Start Phase 4: Terminal UI (client-side xterm.js)
-3. Then Phase 5: Lifecycle Management
+2. Start Phase 5: Lifecycle Management
+3. Then Phase 6: Polish & Integration
 4. Follow the checkpoint at end of each phase before moving to the next
