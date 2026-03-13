@@ -1,6 +1,7 @@
 export * from "./baseSchemas";
 export * from "./ipc";
 export * from "./terminal";
+export * from "./claude-terminal";
 export * from "./model";
 export * from "./ws";
 export * from "./keybindings";

@@ -28,6 +28,7 @@ import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
 import Migration0014 from "./Migrations/014_ProjectionTurnMetrics.ts";
 import Migration0015 from "./Migrations/015_ProjectionThreadActivityTaskId.ts";
 import Migration0016 from "./Migrations/016_TerminalSessions.ts";
+import Migration0017 from "./Migrations/017_ScrollbackSnapshot.ts";
 import { Effect } from "effect";
 
 /**
@@ -57,6 +58,7 @@ const loader = Migrator.fromRecord({
   "14_ProjectionTurnMetrics": Migration0014,
   "15_ProjectionThreadActivityTaskId": Migration0015,
   "16_TerminalSessions": Migration0016,
+  "17_ScrollbackSnapshot": Migration0017,
 });
 
 /**

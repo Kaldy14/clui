@@ -641,6 +641,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.terminal.statusChanged": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.terminal-status-changed",
+        payload: {
+          threadId: command.threadId,
+          terminalStatus: command.terminalStatus,
+          claudeSessionId: command.claudeSessionId,
+          scrollbackSnapshot: command.scrollbackSnapshot,
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
     default: {
       command satisfies never;
       const fallback = command as never as { type: string };

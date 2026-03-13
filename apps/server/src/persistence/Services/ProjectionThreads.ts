@@ -31,6 +31,7 @@ export const ProjectionThread = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   claudeSessionId: Schema.NullOr(Schema.String),
   terminalStatus: TerminalStatus,
+  scrollbackSnapshot: Schema.NullOr(Schema.String),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

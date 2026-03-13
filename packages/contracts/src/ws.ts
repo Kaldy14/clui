@@ -33,6 +33,13 @@ import {
   TerminalRestartInput,
   TerminalWriteInput,
 } from "./terminal";
+import {
+  ClaudeStartInput,
+  ClaudeHibernateInput,
+  ClaudeGetScrollbackInput,
+  ClaudeWriteInput,
+  ClaudeResizeInput,
+} from "./claude-terminal";
 import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
@@ -77,6 +84,13 @@ export const WS_METHODS = {
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
 
+  // Claude terminal methods
+  claudeStart: "claude.start",
+  claudeHibernate: "claude.hibernate",
+  claudeGetScrollback: "claude.getScrollback",
+  claudeWrite: "claude.write",
+  claudeResize: "claude.resize",
+
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
@@ -93,6 +107,7 @@ export const MCP_WS_METHODS = {
 
 export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
+  claudeSessionEvent: "claude.sessionEvent",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
 } as const;
@@ -153,6 +168,13 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.terminalClear, TerminalClearInput),
   tagRequestBody(WS_METHODS.terminalRestart, TerminalRestartInput),
   tagRequestBody(WS_METHODS.terminalClose, TerminalCloseInput),
+
+  // Claude terminal methods
+  tagRequestBody(WS_METHODS.claudeStart, ClaudeStartInput),
+  tagRequestBody(WS_METHODS.claudeHibernate, ClaudeHibernateInput),
+  tagRequestBody(WS_METHODS.claudeGetScrollback, ClaudeGetScrollbackInput),
+  tagRequestBody(WS_METHODS.claudeWrite, ClaudeWriteInput),
+  tagRequestBody(WS_METHODS.claudeResize, ClaudeResizeInput),
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
