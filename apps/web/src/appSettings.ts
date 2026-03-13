@@ -12,6 +12,12 @@ const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>
   cursor: new Set(getModelOptions("cursor").map((option) => option.slug)),
 };
 
+export const DEFAULT_TERMINAL_FONT_SIZE = 13;
+export const MIN_TERMINAL_FONT_SIZE = 8;
+export const MAX_TERMINAL_FONT_SIZE = 32;
+export const DEFAULT_TERMINAL_FONT_FAMILY =
+  '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace';
+
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
@@ -31,6 +37,12 @@ const AppSettingsSchema = Schema.Struct({
   ),
   customCursorModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  terminalFontSize: Schema.Number.pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_SIZE)),
+  ),
+  terminalFontFamily: Schema.String.check(Schema.isMaxLength(512)).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_FAMILY)),
   ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;

@@ -9,7 +9,12 @@ import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { projectTerminalThreadId } from "../types";
-import { isThreadSearchShortcut } from "../keybindings";
+import { isMacPlatform } from "../lib/utils";
+import {
+  isThreadNextShortcut,
+  isThreadPrevShortcut,
+  isThreadSearchShortcut,
+} from "../keybindings";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 
 const ProjectTerminalDrawer = lazy(() => import("../components/ProjectTerminalDrawer"));
@@ -75,16 +80,51 @@ function ChatRouteLayout() {
     };
   }, [navigate]);
 
+  const threads = useStore((s) => s.threads);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isThreadSearchShortcut(event, keybindings)) {
         event.preventDefault();
         setSearchOpen(true);
+        return;
+      }
+
+      // Thread next/prev: Cmd+Shift+] / Cmd+Shift+[
+      if (isThreadNextShortcut(event, keybindings) || isThreadPrevShortcut(event, keybindings)) {
+        event.preventDefault();
+        const isNext = isThreadNextShortcut(event, keybindings);
+        const allThreads = threads.filter((t) => t.terminalStatus !== undefined);
+        if (allThreads.length === 0) return;
+        const params = window.location.pathname.match(/\/([^/]+)$/);
+        const currentThreadId = params?.[1];
+        const currentIndex = allThreads.findIndex((t) => t.id === currentThreadId);
+        const nextIndex = isNext
+          ? (currentIndex + 1) % allThreads.length
+          : (currentIndex - 1 + allThreads.length) % allThreads.length;
+        const nextThread = allThreads[nextIndex];
+        if (nextThread) {
+          void navigate({ to: "/$threadId", params: { threadId: nextThread.id } });
+        }
+        return;
+      }
+
+      // Cmd+1-9: Switch to thread by index
+      const modKey = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+      if (modKey && !event.shiftKey && !event.altKey && event.key >= "1" && event.key <= "9") {
+        event.preventDefault();
+        const index = Number.parseInt(event.key, 10) - 1;
+        if (index < threads.length) {
+          const targetThread = threads[index];
+          if (targetThread) {
+            void navigate({ to: "/$threadId", params: { threadId: targetThread.id } });
+          }
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings]);
+  }, [keybindings, threads, navigate]);
 
   const handleSearchClick = useCallback(() => setSearchOpen(true), []);
 

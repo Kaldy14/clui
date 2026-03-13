@@ -10,6 +10,7 @@ import {
   formatShortcutLabel,
   isChatNewShortcut,
   isChatNewLocalShortcut,
+  isClaudeHibernateShortcut,
   isDiffToggleShortcut,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
@@ -17,6 +18,8 @@ import {
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
+  isThreadNextShortcut,
+  isThreadPrevShortcut,
   resolveShortcutCommand,
   shortcutLabelForCommand,
   terminalNavigationShortcutData,
@@ -100,6 +103,13 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  {
+    shortcut: modShortcut("w"),
+    command: "claude.hibernate",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
+  { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.prev" },
 ]);
 
 describe("isTerminalToggleShortcut", () => {
@@ -481,6 +491,84 @@ describe("plus key parsing", () => {
     assert.isTrue(
       isTerminalToggleShortcut(event({ key: "+", ctrlKey: true }), plusBindings, {
         platform: "Linux",
+      }),
+    );
+  });
+});
+
+describe("isClaudeHibernateShortcut", () => {
+  it("matches Cmd+W on macOS with the default bindings", () => {
+    assert.isTrue(
+      isClaudeHibernateShortcut(event({ key: "w", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+
+  it("matches Ctrl+W on Linux with the default bindings", () => {
+    assert.isTrue(
+      isClaudeHibernateShortcut(event({ key: "w", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("does not match without modifier", () => {
+    assert.isFalse(
+      isClaudeHibernateShortcut(event({ key: "w" }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+});
+
+describe("isThreadNextShortcut", () => {
+  it("matches Cmd+Shift+] on macOS", () => {
+    assert.isTrue(
+      isThreadNextShortcut(event({ key: "]", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+
+  it("matches Ctrl+Shift+] on Linux", () => {
+    assert.isTrue(
+      isThreadNextShortcut(event({ key: "]", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("does not match without shift", () => {
+    assert.isFalse(
+      isThreadNextShortcut(event({ key: "]", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+});
+
+describe("isThreadPrevShortcut", () => {
+  it("matches Cmd+Shift+[ on macOS", () => {
+    assert.isTrue(
+      isThreadPrevShortcut(event({ key: "[", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+
+  it("matches Ctrl+Shift+[ on Linux", () => {
+    assert.isTrue(
+      isThreadPrevShortcut(event({ key: "[", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("does not match without shift", () => {
+    assert.isFalse(
+      isThreadPrevShortcut(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
       }),
     );
   });

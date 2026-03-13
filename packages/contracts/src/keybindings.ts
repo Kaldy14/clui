@@ -18,6 +18,9 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "editor.openFavorite",
   "thread.search",
+  "claude.hibernate",
+  "thread.next",
+  "thread.prev",
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
