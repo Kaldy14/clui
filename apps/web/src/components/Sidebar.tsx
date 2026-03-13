@@ -3,7 +3,6 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitBranchIcon,
-  GripVerticalIcon,
   GitPullRequestIcon,
   PlusIcon,
   RocketIcon,
@@ -51,7 +50,6 @@ import { derivePendingApprovals, derivePendingUserInputs } from "../session-logi
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
@@ -90,7 +88,6 @@ import {
   type ThreadPr,
   formatBranchForDisplay,
   formatRelativeTime,
-  threadStatusPill,
   terminalStatusFromRunningIds,
   prStatusIndicator,
 } from "../lib/threadStatus";
@@ -202,22 +199,22 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
   const reorderProjects = useStore((store) => store.reorderProjects);
-  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
-  const getDraftThreadByProjectId = useComposerDraftStore(
-    (store) => store.getDraftThreadByProjectId,
+  const clearComposerDraftForThread = useCallback((_threadId: ThreadId) => {}, []);
+  const getDraftThreadByProjectId = useCallback(
+    (_projectId: ProjectId): { threadId: ThreadId; projectId: ProjectId; branch: string | null; worktreePath: string | null; envMode: string } | null => null,
+    [],
   );
-  const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const getDraftThread = useCallback(
+    (_threadId: ThreadId): { projectId: ProjectId; branch: string | null; worktreePath: string | null; envMode: string } | null => null,
+    [],
+  );
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const storeSetTerminalOpen = useTerminalStateStore((state) => state.setProjectTerminalOpen);
-  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
-  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const clearProjectDraftThreadId = useComposerDraftStore(
-    (store) => store.clearProjectDraftThreadId,
-  );
-  const clearProjectDraftThreadById = useComposerDraftStore(
-    (store) => store.clearProjectDraftThreadById,
-  );
+  const setProjectDraftThreadId = useCallback((_projectId: ProjectId, _threadId: ThreadId, _opts?: unknown) => {}, []);
+  const setDraftThreadContext = useCallback((_threadId: ThreadId, _ctx: unknown) => {}, []);
+  const clearProjectDraftThreadId = useCallback((_projectId: ProjectId) => {}, []);
+  const clearProjectDraftThreadById = useCallback((_projectId: ProjectId, _threadId: ThreadId) => {}, []);
   const navigate = useNavigate();
   const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const { settings: appSettings } = useAppSettings();
@@ -349,7 +346,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
-        envMode?: DraftThreadEnvMode;
+        envMode?: string;
       },
     ): Promise<void> => {
       const hasBranchOption = options?.branch !== undefined;

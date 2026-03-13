@@ -1,67 +1,32 @@
 import {
   CommandId,
   EventId,
-  MessageId,
   ThreadId,
-  TurnId,
   type OrchestrationEvent,
-  type ProviderRuntimeEvent,
 } from "@clui/contracts";
-import { Cause, Effect, Layer, Option, Queue, Stream } from "effect";
+import { Cause, Effect, Layer, Queue, Stream } from "effect";
 
-import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
 
-type ReactorInput =
-  | {
-      readonly source: "runtime";
-      readonly event: ProviderRuntimeEvent;
-    }
-  | {
-      readonly source: "domain";
-      readonly event: OrchestrationEvent;
-    };
-
-function toTurnId(value: string | undefined): TurnId | null {
-  return value === undefined ? null : TurnId.makeUnsafe(String(value));
-}
-
-function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
-  if (left === null || left === undefined || right === null || right === undefined) {
-    return false;
-  }
-  return left === right;
-}
-
-function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
-  switch (status) {
-    case "failed":
-      return "error";
-    case "cancelled":
-    case "interrupted":
-      return "missing";
-    case "completed":
-    default:
-      return "ready";
-  }
-}
+type ReactorInput = {
+  readonly source: "domain";
+  readonly event: OrchestrationEvent;
+};
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
-  const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
 
   const appendRevertFailureActivity = (input: {
@@ -89,263 +54,7 @@ const make = Effect.gen(function* () {
       createdAt: input.createdAt,
     });
 
-  const appendCaptureFailureActivity = (input: {
-    readonly threadId: ThreadId;
-    readonly turnId: TurnId | null;
-    readonly detail: string;
-    readonly createdAt: string;
-  }) =>
-    orchestrationEngine.dispatch({
-      type: "thread.activity.append",
-      commandId: serverCommandId("checkpoint-capture-failure"),
-      threadId: input.threadId,
-      activity: {
-        id: EventId.makeUnsafe(crypto.randomUUID()),
-        tone: "error",
-        kind: "checkpoint.capture.failed",
-        summary: "Checkpoint capture failed",
-        payload: {
-          detail: input.detail,
-        },
-        turnId: input.turnId,
-        createdAt: input.createdAt,
-      },
-      createdAt: input.createdAt,
-    });
-
-  const resolveSessionRuntimeForThread = Effect.fnUntraced(function* (
-    threadId: ThreadId,
-  ): Effect.fn.Return<Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }>> {
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === threadId);
-
-    const sessions = yield* providerService.listSessions();
-
-    const findSessionWithCwd = (
-      session: (typeof sessions)[number] | undefined,
-    ): Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }> => {
-      if (!session?.cwd) {
-        return Option.none();
-      }
-      return Option.some({ threadId: session.threadId!, cwd: session.cwd });
-    };
-
-    if (thread) {
-      const projectedSession = sessions.find((session) => session.threadId === thread.id);
-      const fromProjected = findSessionWithCwd(projectedSession);
-      if (Option.isSome(fromProjected)) {
-        return fromProjected;
-      }
-    }
-
-    return Option.none();
-  });
-
   const isGitWorkspace = (cwd: string) => isGitRepository(cwd);
-
-  const captureCheckpointFromTurnCompletion = Effect.fnUntraced(function* (
-    event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>,
-  ) {
-    const turnId = toTurnId(event.turnId);
-    if (!turnId) {
-      return;
-    }
-
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === event.threadId);
-    if (!thread) {
-      return;
-    }
-
-    // When a primary turn is active, only that turn may produce completion checkpoints.
-    if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, turnId)) {
-      return;
-    }
-
-    if (thread.checkpoints.some((checkpoint) => checkpoint.turnId === turnId)) {
-      return;
-    }
-
-    const sessionRuntime = yield* resolveSessionRuntimeForThread(thread.id);
-    const checkpointCwd =
-      Option.match(sessionRuntime, {
-        onNone: () => undefined,
-        onSome: (runtime) => runtime.cwd,
-      }) ??
-      resolveThreadWorkspaceCwd({
-        thread,
-        projects: readModel.projects,
-      });
-    if (!checkpointCwd) {
-      yield* Effect.logWarning("checkpoint capture skipped: no active provider session cwd", {
-        threadId: thread.id,
-        turnId,
-      });
-      return;
-    }
-    if (!isGitWorkspace(checkpointCwd)) {
-      yield* Effect.logDebug("checkpoint capture skipped for non-git workspace", {
-        threadId: thread.id,
-        turnId,
-        cwd: checkpointCwd,
-      });
-      return;
-    }
-
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
-    const nextTurnCount = currentTurnCount + 1;
-    const fromTurnCount = Math.max(0, nextTurnCount - 1);
-    const fromCheckpointRef = checkpointRefForThreadTurn(thread.id, fromTurnCount);
-    const targetCheckpointRef = checkpointRefForThreadTurn(thread.id, nextTurnCount);
-
-    const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: checkpointCwd,
-      checkpointRef: fromCheckpointRef,
-    });
-    if (!fromCheckpointExists) {
-      yield* Effect.logWarning("checkpoint completion missing pre-turn baseline", {
-        threadId: thread.id,
-        turnId,
-        fromTurnCount,
-      });
-    }
-
-    yield* checkpointStore.captureCheckpoint({
-      cwd: checkpointCwd,
-      checkpointRef: targetCheckpointRef,
-    });
-
-    const files = yield* checkpointStore
-      .diffCheckpoints({
-        cwd: checkpointCwd,
-        fromCheckpointRef,
-        toCheckpointRef: targetCheckpointRef,
-        fallbackFromToHead: false,
-      })
-      .pipe(
-        Effect.map((diff) =>
-          parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-            path: file.path,
-            kind: "modified" as const,
-            additions: file.additions,
-            deletions: file.deletions,
-          })),
-        ),
-        Effect.tapError((error) =>
-          appendCaptureFailureActivity({
-            threadId: thread.id,
-            turnId,
-            detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
-            createdAt: event.createdAt,
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning("failed to derive checkpoint file summary", {
-            threadId: thread.id,
-            turnId,
-            turnCount: nextTurnCount,
-            detail: error.message,
-          }).pipe(Effect.as([])),
-        ),
-      );
-
-    const assistantMessageId =
-      thread.messages
-        .toReversed()
-        .find((entry) => entry.role === "assistant" && entry.turnId === turnId)?.id ??
-      MessageId.makeUnsafe(`assistant:${turnId}`);
-
-    const now = event.createdAt;
-    yield* orchestrationEngine.dispatch({
-      type: "thread.turn.diff.complete",
-      commandId: serverCommandId("checkpoint-turn-diff-complete"),
-      threadId: thread.id,
-      turnId,
-      completedAt: now,
-      checkpointRef: targetCheckpointRef,
-      status: checkpointStatusFromRuntime(event.payload.state),
-      files,
-      assistantMessageId,
-      checkpointTurnCount: nextTurnCount,
-      createdAt: now,
-    });
-
-    yield* orchestrationEngine.dispatch({
-      type: "thread.activity.append",
-      commandId: serverCommandId("checkpoint-captured-activity"),
-      threadId: thread.id,
-      activity: {
-        id: EventId.makeUnsafe(crypto.randomUUID()),
-        tone: "info",
-        kind: "checkpoint.captured",
-        summary: "Checkpoint captured",
-        payload: {
-          turnCount: nextTurnCount,
-          status: event.payload.state,
-        },
-        turnId,
-        createdAt: now,
-      },
-      createdAt: now,
-    });
-  });
-
-  const ensurePreTurnBaselineFromTurnStart = Effect.fnUntraced(function* (
-    event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>,
-  ) {
-    const turnId = toTurnId(event.turnId);
-    if (!turnId) {
-      return;
-    }
-
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === event.threadId);
-    if (!thread) {
-      return;
-    }
-
-    const checkpointCwdFromThreadOrProject = resolveThreadWorkspaceCwd({
-      thread,
-      projects: readModel.projects,
-    });
-    const checkpointCwd =
-      checkpointCwdFromThreadOrProject ??
-      Option.match(yield* resolveSessionRuntimeForThread(thread.id), {
-        onNone: () => undefined,
-        onSome: (runtime) => runtime.cwd,
-      });
-    if (!checkpointCwd) {
-      yield* Effect.logWarning("checkpoint pre-turn capture skipped: no workspace cwd", {
-        threadId: thread.id,
-        turnId,
-      });
-      return;
-    }
-    if (!isGitWorkspace(checkpointCwd)) {
-      return;
-    }
-
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
-    const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
-    const baselineExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: checkpointCwd,
-      checkpointRef: baselineCheckpointRef,
-    });
-    if (baselineExists) {
-      return;
-    }
-
-    yield* checkpointStore.captureCheckpoint({
-      cwd: checkpointCwd,
-      checkpointRef: baselineCheckpointRef,
-    });
-  });
 
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fnUntraced(function* (
     event: Extract<
@@ -370,16 +79,10 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const checkpointCwdFromThreadOrProject = resolveThreadWorkspaceCwd({
+    const checkpointCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: readModel.projects,
     });
-    const checkpointCwd =
-      checkpointCwdFromThreadOrProject ??
-      Option.match(yield* resolveSessionRuntimeForThread(threadId), {
-        onNone: () => undefined,
-        onSome: (runtime) => runtime.cwd,
-      });
     if (!checkpointCwd) {
       yield* Effect.logWarning("checkpoint pre-turn capture skipped: no workspace cwd", {
         threadId,
@@ -426,16 +129,8 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Resolve cwd from thread/project configuration (primary) or active session (fallback).
-    // NOTE: resolveSessionRuntimeForThread matches by ProviderSession.threadId which is the
-    // SDK-assigned session_id, not the orchestration threadId, so it can fail to find the
-    // session. Using resolveThreadWorkspaceCwd as the primary source avoids this mismatch.
-    const checkpointCwd =
-      resolveThreadWorkspaceCwd({ thread, projects: readModel.projects }) ??
-      Option.match(yield* resolveSessionRuntimeForThread(event.payload.threadId), {
-        onNone: () => undefined,
-        onSome: (runtime) => runtime.cwd,
-      });
+    // Resolve cwd from thread/project configuration.
+    const checkpointCwd = resolveThreadWorkspaceCwd({ thread, projects: readModel.projects });
     if (!checkpointCwd) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
@@ -446,15 +141,6 @@ const make = Effect.gen(function* () {
       return;
     }
     if (!isGitWorkspace(checkpointCwd)) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: "Checkpoints are unavailable because this project is not a git repository.",
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-    if (!isGitWorkspace(sessionRuntime.value.cwd)) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
@@ -511,16 +197,6 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Use the orchestration threadId for rollback — rollbackConversation routes through
-    // ProviderSessionDirectory which is keyed by orchestration threadId.
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: event.payload.threadId,
-        numTurns: rolledBackTurns,
-      });
-    }
-
     const staleCheckpointRefs = thread.checkpoints
       .filter((checkpoint) => checkpoint.checkpointTurnCount > event.payload.turnCount)
       .map((checkpoint) => checkpoint.checkpointRef);
@@ -573,32 +249,10 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const processRuntimeEvent = Effect.fnUntraced(function* (event: ProviderRuntimeEvent) {
-    if (event.type === "turn.started") {
-      yield* ensurePreTurnBaselineFromTurnStart(event);
-      return;
-    }
-
-    if (event.type === "turn.completed") {
-      const turnId = toTurnId(event.turnId);
-      yield* captureCheckpointFromTurnCompletion(event).pipe(
-        Effect.catch((error) =>
-          appendCaptureFailureActivity({
-            threadId: event.threadId,
-            turnId,
-            detail: error.message,
-            createdAt: new Date().toISOString(),
-          }).pipe(Effect.catch(() => Effect.void)),
-        ),
-      );
-      return;
-    }
-  });
-
   const processInput = (
     input: ReactorInput,
   ): Effect.Effect<void, CheckpointStoreError | OrchestrationDispatchError, never> =>
-    input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
+    processDomainEvent(input.event);
 
   const processInputSafely = (input: ReactorInput) =>
     processInput(input).pipe(
@@ -632,15 +286,6 @@ const make = Effect.gen(function* () {
           return Effect.void;
         }
         return Queue.offer(queue, { source: "domain", event }).pipe(Effect.asVoid);
-      }),
-    );
-
-    yield* Effect.forkScoped(
-      Stream.runForEach(providerService.streamEvents, (event) => {
-        if (event.type !== "turn.started" && event.type !== "turn.completed") {
-          return Effect.void;
-        }
-        return Queue.offer(queue, { source: "runtime", event }).pipe(Effect.asVoid);
       }),
     );
   });

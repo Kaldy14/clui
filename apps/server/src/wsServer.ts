@@ -27,7 +27,6 @@ import {
   WebSocketRequest,
   WsPush,
   WsResponse,
-  ServerProviderStatus,
 } from "@clui/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -54,15 +53,8 @@ import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
-import { ProviderService } from "./provider/Services/ProviderService";
-import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
-import {
-  getThreadContextOccupancy,
-  getThreadContextWindowSize,
-} from "./orchestration/Layers/ProviderRuntimeIngestion";
-import { getOAuthRateLimits } from "./oauthUsageApi";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
@@ -212,9 +204,7 @@ export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
   | CheckpointDiffQuery
-  | OrchestrationReactor
-  | ProviderService
-  | ProviderHealth;
+  | OrchestrationReactor;
 
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
@@ -259,7 +249,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
-  const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -612,29 +601,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
-  const liveProviderService = yield* ProviderService;
   const orchestrationReactor = yield* OrchestrationReactor;
   const { openInEditor } = yield* Open;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
-
-  // Push updated provider statuses to connected clients once background health checks finish.
-  let providers: ReadonlyArray<ServerProviderStatus> = [];
-  yield* providerHealth.getStatuses.pipe(
-    Effect.flatMap((statuses) => {
-      providers = statuses;
-      return broadcastPush({
-        type: "push",
-        channel: WS_CHANNELS.serverConfigUpdated,
-        data: {
-          issues: [],
-          providers: statuses,
-        },
-      });
-    }),
-    Effect.forkIn(subscriptionsScope),
-  );
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
     broadcastPush({
@@ -644,24 +615,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  // Fast-path: push approval events directly to clients, bypassing orchestration processing.
-  if (liveProviderService.streamApprovalEvents) {
-    yield* Stream.runForEach(liveProviderService.streamApprovalEvents, (event) =>
-      broadcastPush({
-        type: "push",
-        channel: ORCHESTRATION_WS_CHANNELS.approvalFastPath,
-        data: event,
-      }),
-    ).pipe(Effect.forkIn(subscriptionsScope));
-  }
-
   yield* Stream.runForEach(keybindingsManager.changes, (event) =>
     broadcastPush({
       type: "push",
       channel: WS_CHANNELS.serverConfigUpdated,
       data: {
         issues: event.issues,
-        providers,
+        providers: [],
       },
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
@@ -735,11 +695,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
-  yield* Effect.addFinalizer(() =>
-    Effect.catch(liveProviderService.stopAll(), (cause) =>
-      Effect.logWarning("failed to stop provider service", { cause }),
-    ),
-  );
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
     (event) => void Effect.runPromise(onTerminalEvent(event)),
@@ -795,63 +750,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case ORCHESTRATION_WS_METHODS.getSlashCommands: {
-        const { threadId } = request.body;
-        const commands = liveProviderService.getSlashCommands
-          ? yield* liveProviderService.getSlashCommands(threadId)
-          : [];
-        return { commands };
+        return { commands: [] };
       }
 
       case ORCHESTRATION_WS_METHODS.getCachedSlashCommands: {
-        const { providerKind } = request.body;
-        const commands = liveProviderService.getCachedSlashCommands
-          ? yield* liveProviderService.getCachedSlashCommands(providerKind)
-          : [];
-        return { commands };
+        return { commands: [] };
       }
 
       case ORCHESTRATION_WS_METHODS.getSessionMetrics: {
         const { threadId } = request.body;
-        const metrics = yield* projectionReadModelQuery.getSessionMetrics(threadId);
-        // Merge in-memory ephemeral data (context window from SDK)
-        const contextWindowSize = getThreadContextWindowSize(threadId);
-        // Prefer per-API-call context occupancy (actual window fill) over
-        // cumulative billing tokens which inflate when subagents are used.
-        const contextOccupancy = getThreadContextOccupancy(threadId);
-        const contextUsedTokens = contextOccupancy ?? metrics.contextUsedTokens;
-        const contextUsagePercent =
-          contextUsedTokens !== null && contextWindowSize !== null && contextWindowSize > 0
-            ? (contextUsedTokens / contextWindowSize) * 100
-            : null;
-        // Fetch rate limits from Anthropic OAuth API (cached, 30s TTL)
-        const oauthLimits = yield* Effect.promise(() => getOAuthRateLimits());
-        const rateLimits = oauthLimits
-          ? [
-              {
-                rateLimitType: "five_hour",
-                status: "allowed",
-                utilization: oauthLimits.fiveHourPercent / 100,
-                resetsAt: oauthLimits.fiveHourResetsAt,
-              },
-              ...(oauthLimits.weeklyPercent != null
-                ? [
-                    {
-                      rateLimitType: "seven_day",
-                      status: "allowed",
-                      utilization: oauthLimits.weeklyPercent / 100,
-                      resetsAt: oauthLimits.weeklyResetsAt,
-                    },
-                  ]
-                : []),
-            ]
-          : [];
-        return {
-          ...metrics,
-          contextUsedTokens: contextUsedTokens as typeof metrics.contextUsedTokens,
-          contextWindowSize: contextWindowSize as typeof metrics.contextWindowSize,
-          contextUsagePercent,
-          rateLimits,
-        };
+        return yield* projectionReadModelQuery.getSessionMetrics(threadId);
       }
 
       case WS_METHODS.projectsSearchEntries: {
@@ -990,7 +898,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
-          providers,
+          providers: [],
           availableEditors,
         };
 
@@ -1001,42 +909,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case MCP_WS_METHODS.mcpGetStatus: {
-        const { threadId } = request.body;
-        const servers = liveProviderService.mcpGetStatus
-          ? yield* liveProviderService.mcpGetStatus(threadId)
-          : [];
-        return { servers };
+        return { servers: [] };
       }
 
       case MCP_WS_METHODS.mcpSetServers: {
-        const { threadId, servers } = request.body;
-        if (!liveProviderService.mcpSetServers) {
-          return yield* new RouteRequestError({
-            message: "MCP server management is not supported by the current provider.",
-          });
-        }
-        return yield* liveProviderService.mcpSetServers(threadId, servers);
+        return {};
       }
 
       case MCP_WS_METHODS.mcpReconnectServer: {
-        const { threadId, serverName } = request.body;
-        if (!liveProviderService.mcpReconnectServer) {
-          return yield* new RouteRequestError({
-            message: "MCP server management is not supported by the current provider.",
-          });
-        }
-        yield* liveProviderService.mcpReconnectServer(threadId, serverName);
         return {};
       }
 
       case MCP_WS_METHODS.mcpToggleServer: {
-        const { threadId, serverName, enabled } = request.body;
-        if (!liveProviderService.mcpToggleServer) {
-          return yield* new RouteRequestError({
-            message: "MCP server management is not supported by the current provider.",
-          });
-        }
-        yield* liveProviderService.mcpToggleServer(threadId, serverName, enabled);
         return {};
       }
 
