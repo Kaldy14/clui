@@ -54,12 +54,6 @@ class ScrollbackRingBuffer {
     this.partial = "";
   }
 
-  /** Get tail bytes for regex scanning (session ID extraction) */
-  tail(maxBytes: number): string {
-    const full = this.materialize();
-    if (full.length <= maxBytes) return full;
-    return full.slice(full.length - maxBytes);
-  }
 }
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -113,9 +107,14 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         this.stopProcess(existing);
       }
 
+      // Determine the claude session ID:
+      // - Resuming: reuse the provided session ID with --resume
+      // - New session: generate a UUID and pass --session-id so we know it upfront
+      const claudeSessionId = input.resumeSessionId ?? crypto.randomUUID();
+
       const entry: ClaudeSessionEntry = existing ?? {
         threadId: input.threadId,
-        claudeSessionId: null,
+        claudeSessionId,
         lastInteractedAt: Date.now(),
         scrollbackBuffer: new ScrollbackRingBuffer(this.historyLineLimit),
         cols: input.cols,
@@ -126,6 +125,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         unsubscribeExit: null,
       };
 
+      entry.claudeSessionId = claudeSessionId;
       entry.cols = input.cols;
       entry.rows = input.rows;
       entry.status = "active";
@@ -135,10 +135,14 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       const args: string[] = [];
       if (input.resumeSessionId) {
         args.push("--resume", input.resumeSessionId);
+      } else {
+        args.push("--session-id", claudeSessionId);
       }
 
       try {
         await assertValidCwd(input.cwd);
+
+        const spawnEnv = createSpawnEnv(process.env);
 
         const ptyProcess = await Effect.runPromise(
           this.ptyAdapter.spawn({
@@ -147,7 +151,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
             cwd: input.cwd,
             cols: input.cols,
             rows: input.rows,
-            env: createSpawnEnv(process.env),
+            env: spawnEnv,
           }),
         );
 
@@ -167,13 +171,22 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         this.logger.info("claude session started", {
           threadId: input.threadId,
           pid: ptyProcess.pid,
-          resume: input.resumeSessionId ?? null,
+          claudeSessionId,
+          resume: !!input.resumeSessionId,
         });
 
         this.emitEvent({
           type: "started",
           threadId: input.threadId,
           createdAt: new Date().toISOString(),
+        });
+
+        // Emit session ID immediately — we know it upfront via --session-id or --resume
+        this.emitEvent({
+          type: "sessionId",
+          threadId: input.threadId,
+          createdAt: new Date().toISOString(),
+          claudeSessionId,
         });
 
         // Fire-and-forget reconciliation
@@ -280,13 +293,19 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       Promise.allSettled(activeSessions.map((entry) => this.hibernateSession(entry.threadId))),
       new Promise<PromiseSettledResult<string>[]>((resolve) =>
         setTimeout(
-          () =>
+          () => {
+            // Force-kill any PTYs that haven't hibernated yet to avoid
+            // orphaned promises holding locks after shutdown proceeds.
+            for (const entry of activeSessions) {
+              if (entry.process) this.stopProcess(entry);
+            }
             resolve(
               activeSessions.map(() => ({
                 status: "rejected" as const,
                 reason: new Error("timeout"),
               })),
-            ),
+            );
+          },
           TIMEOUT_MS,
         ),
       ),
@@ -298,6 +317,16 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         });
       }
     }
+  }
+
+  /** Kill PTY and remove session from map without emitting lifecycle events. Used for thread deletion. */
+  async destroySession(threadId: string): Promise<void> {
+    await this.runWithThreadLock(threadId, async () => {
+      const entry = this.sessions.get(threadId);
+      if (!entry) return;
+      this.stopProcess(entry);
+      this.sessions.delete(threadId);
+    });
   }
 
   dispose(): void {
@@ -318,46 +347,12 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     entry.scrollbackBuffer.append(data);
     entry.lastInteractedAt = Date.now();
 
-    this.tryExtractSessionId(entry, data);
-
     this.emitEvent({
       type: "output",
       threadId: entry.threadId,
       createdAt: new Date().toISOString(),
       data,
     });
-  }
-
-  private tryExtractSessionId(entry: ClaudeSessionEntry, _data: string): void {
-    if (entry.claudeSessionId) return;
-
-    const tail = entry.scrollbackBuffer.tail(512);
-
-    // Claude Code CLI outputs session ID in the format: session_id: <id>
-    // or as part of the startup banner. Try common patterns.
-    const patterns = [
-      /session[_\s]?id:\s*([a-f0-9-]+)/i,
-      /session:\s*([a-f0-9-]+)/i,
-      /resuming\s+session\s+([a-f0-9-]+)/i,
-    ];
-
-    for (const pattern of patterns) {
-      const match = tail.match(pattern);
-      if (match?.[1]) {
-        entry.claudeSessionId = match[1];
-        this.logger.info("captured claude session id", {
-          threadId: entry.threadId,
-          claudeSessionId: entry.claudeSessionId,
-        });
-        this.emitEvent({
-          type: "sessionId",
-          threadId: entry.threadId,
-          createdAt: new Date().toISOString(),
-          claudeSessionId: entry.claudeSessionId,
-        });
-        return;
-      }
-    }
   }
 
   private onProcessExit(entry: ClaudeSessionEntry, event: PtyExitEvent): void {
@@ -492,6 +487,8 @@ export const ClaudeSessionManagerLive = Layer.effect(
         }),
       getClaudeSessionId: (threadId) =>
         Effect.sync(() => runtime.getClaudeSessionId(threadId)),
+      destroySession: (threadId) =>
+        Effect.promise(() => runtime.destroySession(threadId)),
       dispose: Effect.sync(() => runtime.dispose()),
     } satisfies ClaudeSessionManagerShape;
   }),

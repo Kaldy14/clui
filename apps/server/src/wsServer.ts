@@ -632,6 +632,36 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
 
+  // Phase 5: Reset stale active terminal statuses on startup.
+  // After a crash or unclean shutdown, threads may still be marked 'active' in the DB
+  // even though no PTY processes are running. Set them to 'dormant' so the UI is correct.
+  yield* Effect.gen(function* () {
+    const snapshot = yield* projectionReadModelQuery.getSnapshot();
+    const staleActiveThreads = snapshot.threads.filter(
+      (thread) => thread.terminalStatus === "active" && thread.deletedAt === null,
+    );
+    yield* Effect.forEach(
+      staleActiveThreads,
+      (thread) =>
+        orchestrationEngine.dispatch({
+          type: "thread.terminal.statusChanged",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          threadId: ThreadId.makeUnsafe(thread.id),
+          terminalStatus: "dormant",
+          claudeSessionId: thread.claudeSessionId,
+          scrollbackSnapshot: thread.scrollbackSnapshot,
+          updatedAt: new Date().toISOString(),
+        }),
+      { concurrency: 10 },
+    );
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("failed to reset stale active terminal statuses on startup", {
+        cause: error,
+      }),
+    ),
+  );
+
   let welcomeBootstrapProjectId: ProjectId | undefined;
   let welcomeBootstrapThreadId: ThreadId | undefined;
 
@@ -767,20 +797,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
 
+  // Phase 5: Graceful shutdown — hibernate all sessions BEFORE closing connections
   yield* Effect.addFinalizer(() =>
-    Effect.all([
-      claudeSessionManager.hibernateAll().pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to hibernate claude sessions on shutdown", { cause: error }),
-        ),
+    claudeSessionManager.hibernateAll().pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to hibernate claude sessions on shutdown", { cause: error }),
       ),
-      closeAllClients,
-      closeWebSocketServer.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to close web socket server", { cause: error }),
-        ),
+      Effect.andThen(
+        Effect.all([
+          closeAllClients,
+          closeWebSocketServer.pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to close web socket server", { cause: error }),
+            ),
+          ),
+        ]),
       ),
-    ]),
+    ),
   );
 
   const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
@@ -791,7 +824,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case ORCHESTRATION_WS_METHODS.dispatchCommand: {
         const { command } = request.body;
         const normalizedCommand = yield* normalizeDispatchCommand({ command });
-        return yield* orchestrationEngine.dispatch(normalizedCommand);
+        const result = yield* orchestrationEngine.dispatch(normalizedCommand);
+
+        // Phase 5: Kill active PTY after thread deletion is committed
+        if (normalizedCommand.type === "thread.delete") {
+          yield* claudeSessionManager.destroySession(normalizedCommand.threadId);
+        }
+
+        return result;
       }
 
       case ORCHESTRATION_WS_METHODS.getTurnDiff: {
