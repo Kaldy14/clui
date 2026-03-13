@@ -292,6 +292,9 @@ export const OrchestrationSessionMetrics = Schema.Struct({
 });
 export type OrchestrationSessionMetrics = typeof OrchestrationSessionMetrics.Type;
 
+export const TerminalStatus = Schema.Literals(["new", "active", "dormant"]);
+export type TerminalStatus = typeof TerminalStatus.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -303,6 +306,12 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  claudeSessionId: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  terminalStatus: TerminalStatus.pipe(
+    Schema.withDecodingDefault(() => "new" as const),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -966,13 +975,19 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   { unsafePreserveChecks: true },
 );
 
-export const ProviderSessionRuntimeStatus = Schema.Literals([
-  "starting",
-  "running",
-  "stopped",
-  "error",
-]);
-export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
+const UserInputQuestionOption = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+});
+export type UserInputQuestionOption = typeof UserInputQuestionOption.Type;
+
+export const UserInputQuestion = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  header: TrimmedNonEmptyString,
+  question: TrimmedNonEmptyString,
+  options: Schema.Array(UserInputQuestionOption),
+});
+export type UserInputQuestion = typeof UserInputQuestion.Type;
 
 const ProjectionThreadTurnStatus = Schema.Literals([
   "running",

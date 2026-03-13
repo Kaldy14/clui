@@ -48,6 +48,8 @@ function makeSnapshot(input: {
         runtimeMode: "full-access",
         branch: null,
         worktreePath: input.worktreePath,
+        claudeSessionId: null,
+        terminalStatus: "new",
         latestTurn: {
           turnId: TurnId.makeUnsafe("turn-1"),
           state: "completed",

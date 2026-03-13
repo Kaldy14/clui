@@ -425,6 +425,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            claudeSessionId: null,
+            terminalStatus: "new",
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,

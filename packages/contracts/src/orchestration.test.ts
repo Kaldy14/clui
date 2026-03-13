@@ -9,6 +9,7 @@ import {
   OrchestrationSession,
   ProjectCreateCommand,
   ThreadTurnStartCommand,
+  OrchestrationThread,
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
@@ -23,6 +24,26 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
+
+const baseThread = {
+  id: "thread-1",
+  projectId: "project-1",
+  title: "Test thread",
+  model: "test-model",
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  latestTurn: null,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  deletedAt: null,
+  messages: [],
+  activities: [],
+  checkpoints: [],
+  session: null,
+};
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -234,5 +255,54 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("decodes OrchestrationThread with missing claudeSessionId to null", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread(baseThread);
+    assert.strictEqual(parsed.claudeSessionId, null);
+  }),
+);
+
+it.effect("decodes OrchestrationThread with missing terminalStatus to 'new'", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread(baseThread);
+    assert.strictEqual(parsed.terminalStatus, "new");
+  }),
+);
+
+it.effect("decodes OrchestrationThread with terminalStatus 'active'", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread({
+      ...baseThread,
+      claudeSessionId: "sess-1",
+      terminalStatus: "active",
+    });
+    assert.strictEqual(parsed.claudeSessionId, "sess-1");
+    assert.strictEqual(parsed.terminalStatus, "active");
+  }),
+);
+
+it.effect("decodes OrchestrationThread with terminalStatus 'dormant'", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread({
+      ...baseThread,
+      claudeSessionId: null,
+      terminalStatus: "dormant",
+    });
+    assert.strictEqual(parsed.terminalStatus, "dormant");
+  }),
+);
+
+it.effect("rejects OrchestrationThread with invalid terminalStatus", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationThread({
+        ...baseThread,
+        terminalStatus: "bogus",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
   }),
 );

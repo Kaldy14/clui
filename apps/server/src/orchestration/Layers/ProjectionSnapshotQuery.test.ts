@@ -232,6 +232,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          claudeSessionId: null,
+          terminalStatus: "new",
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -239,6 +241,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             startedAt: "2026-02-24T00:00:08.000Z",
             completedAt: "2026-02-24T00:00:08.000Z",
             assistantMessageId: asMessageId("message-1"),
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+            totalCostUsd: null,
+            model: null,
           },
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
@@ -288,6 +296,59 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         },
       ]);
+    }),
+  );
+
+  it.effect("hydrates thread with active terminalStatus and non-null claudeSessionId", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model, scripts_json,
+          created_at, updated_at, deleted_at
+        ) VALUES (
+          'project-2', 'Project 2', '/tmp/project-2', 'test-model',
+          '[]',
+          '2026-02-24T00:00:00.000Z', '2026-02-24T00:00:01.000Z', NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model, branch, worktree_path,
+          claude_session_id, terminal_status,
+          latest_turn_id, created_at, updated_at, deleted_at
+        ) VALUES (
+          'thread-2', 'project-2', 'Thread 2', 'test-model', NULL, NULL,
+          'sess-abc-123', 'active',
+          NULL,
+          '2026-02-24T00:00:02.000Z', '2026-02-24T00:00:03.000Z', NULL
+        )
+      `;
+
+      let sequence = 5;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, ${sequence}, '2026-02-24T00:00:09.000Z')
+        `;
+        sequence += 1;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const thread = snapshot.threads[0]!;
+      assert.equal(thread.claudeSessionId, "sess-abc-123");
+      assert.equal(thread.terminalStatus, "active");
     }),
   );
 });
