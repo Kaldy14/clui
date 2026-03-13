@@ -114,9 +114,11 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 
 ---
 
-### Phase 1: Delete Agent SDK Layer (Day 1-2)
+### Phase 1: Delete Agent SDK Layer (Day 1-2) ✅ COMPLETE
 
 **Goal:** Remove all provider/agent SDK code. The app won't have a working content area yet — that's fine.
+
+**Status:** All provider/SDK code deleted, app builds clean (7/7 typecheck, 5/5 build, 0 lint errors).
 
 #### 1.1 Delete provider adapters
 
