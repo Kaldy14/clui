@@ -10,6 +10,11 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { terminalThemeFromApp } from "./terminalTheme";
+import {
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  DEFAULT_TERMINAL_FONT_SIZE,
+  getAppSettingsSnapshot,
+} from "../appSettings";
 
 export interface CachedTerminal {
   terminal: Terminal;
@@ -23,18 +28,39 @@ const cache = new Map<string, CachedTerminal>();
 /** Track which terminals already have a WebGL addon to avoid leaking GPU contexts. */
 const webglLoaded = new WeakSet<Terminal>();
 
+function resolveTerminalFontSettings(): { fontSize: number; fontFamily: string } {
+  const settings = getAppSettingsSnapshot();
+  return {
+    fontSize: settings.terminalFontSize || DEFAULT_TERMINAL_FONT_SIZE,
+    fontFamily: settings.terminalFontFamily || DEFAULT_TERMINAL_FONT_FAMILY,
+  };
+}
+
 export function createTerminal(): CachedTerminal {
   const fitAddon = new FitAddon();
+  const { fontSize, fontFamily } = resolveTerminalFontSettings();
   const terminal = new Terminal({
     cursorBlink: true,
     lineHeight: 1.2,
-    fontSize: 13,
+    fontSize,
     scrollback: 10_000,
-    fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+    fontFamily,
     theme: terminalThemeFromApp(),
   });
   terminal.loadAddon(fitAddon);
   return { terminal, fitAddon, container: null };
+}
+
+/** Update font settings for all cached terminals. */
+export function updateFontSettings(): void {
+  const { fontSize, fontFamily } = resolveTerminalFontSettings();
+  for (const entry of cache.values()) {
+    entry.terminal.options.fontSize = fontSize;
+    entry.terminal.options.fontFamily = fontFamily;
+    if (entry.container) {
+      entry.fitAddon.fit();
+    }
+  }
 }
 
 function tryLoadWebgl(terminal: Terminal): void {

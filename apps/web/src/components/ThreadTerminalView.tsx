@@ -1,6 +1,6 @@
 import { type ThreadId } from "@clui/contracts";
 import type { ClaudeSessionEvent } from "@clui/contracts";
-import { PlayIcon, PlusCircleIcon } from "lucide-react";
+import { PlayIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as claudeCache from "../lib/claudeTerminalCache";
@@ -43,30 +43,56 @@ function NewThreadView({
   }, [threadId, cwd]);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
-      <div className="flex flex-col items-center gap-2 text-center">
-        <PlusCircleIcon className="size-10 text-muted-foreground/50" aria-hidden="true" />
-        <h2 className="text-lg font-medium text-foreground">Start Conversation</h2>
-        {cwd && (
-          <p className="max-w-md truncate text-sm text-muted-foreground" title={cwd}>
-            {cwd}
+    <div className="flex h-full flex-col items-center justify-center p-8">
+      <div className="flex max-w-sm flex-col items-center gap-5">
+        {/* Icon with subtle glow */}
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full bg-primary/10 blur-xl" />
+          <div className="relative flex size-12 items-center justify-center rounded-xl border border-border/50 bg-card/80 shadow-sm dark:border-border/30 dark:bg-card/60">
+            <TerminalIcon className="size-5 text-muted-foreground/70" aria-hidden="true" />
+          </div>
+        </div>
+
+        {/* Copy */}
+        <div className="flex flex-col items-center gap-1.5 text-center">
+          <h2 className="text-sm font-medium text-foreground/90">New Claude Session</h2>
+          {cwd && (
+            <p
+              className="max-w-xs truncate font-mono text-[11px] text-muted-foreground/60"
+              title={cwd}
+            >
+              {cwd}
+            </p>
+          )}
+        </div>
+
+        {/* Launch button */}
+        <button
+          type="button"
+          disabled={starting || !cwd}
+          aria-busy={starting}
+          onClick={handleStart}
+          className="group relative inline-flex items-center gap-2 overflow-hidden rounded-lg border border-primary/80 bg-primary px-5 py-2 text-xs font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow-md disabled:opacity-50 dark:border-primary/60"
+        >
+          {starting ? (
+            <>
+              <span className="size-3 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
+              Starting...
+            </>
+          ) : (
+            <>
+              <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
+              Start Claude
+            </>
+          )}
+        </button>
+
+        {error && (
+          <p role="alert" className="text-center text-xs text-destructive">
+            {error}
           </p>
         )}
       </div>
-      <button
-        type="button"
-        disabled={starting || !cwd}
-        aria-busy={starting}
-        onClick={handleStart}
-        className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-      >
-        {starting ? "Starting..." : "Start Claude"}
-      </button>
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
     </div>
   );
 }
@@ -154,20 +180,32 @@ function DormantTerminalView({
 
   return (
     <div className="flex h-full flex-col">
-      <div ref={containerRef} className="min-h-0 flex-1 opacity-60" />
-      <div className="flex items-center justify-center gap-3 border-t border-border/60 bg-muted/30 px-4 py-3">
+      {/* Scrollback area — dimmed to signal read-only */}
+      <div ref={containerRef} className="min-h-0 flex-1 opacity-50 saturate-50 transition-opacity hover:opacity-70 hover:saturate-75" />
+
+      {/* Resume bar — compact, glass-like */}
+      <div className="flex items-center justify-center gap-3 border-t border-border/40 bg-card/60 px-4 py-2 backdrop-blur-sm dark:border-border/20 dark:bg-card/40">
         <button
           type="button"
           disabled={resuming || !cwd}
           aria-busy={resuming}
           onClick={handleResume}
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md border border-primary/60 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50 dark:border-primary/40 dark:bg-primary/8 dark:text-primary/90"
         >
-          <PlayIcon className="size-3.5" aria-hidden="true" />
-          {resuming ? "Resuming..." : "Resume Conversation"}
+          {resuming ? (
+            <>
+              <span className="size-2.5 animate-spin rounded-full border border-primary/30 border-t-primary" />
+              Resuming...
+            </>
+          ) : (
+            <>
+              <PlayIcon className="size-3" aria-hidden="true" />
+              Resume
+            </>
+          )}
         </button>
         {error && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-xs text-destructive">
             {error}
           </p>
         )}

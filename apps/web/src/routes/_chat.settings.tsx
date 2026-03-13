@@ -4,7 +4,15 @@ import { useCallback, useState } from "react";
 import { type ProviderKind } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import {
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  DEFAULT_TERMINAL_FONT_SIZE,
+  MAX_CUSTOM_MODEL_LENGTH,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+  useAppSettings,
+} from "../appSettings";
+import * as claudeCache from "../lib/claudeTerminalCache";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -495,6 +503,77 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Terminal</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure terminal appearance for Claude sessions.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="terminal-font-size" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Font size</span>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      id="terminal-font-size"
+                      type="number"
+                      min={MIN_TERMINAL_FONT_SIZE}
+                      max={MAX_TERMINAL_FONT_SIZE}
+                      value={settings.terminalFontSize}
+                      onChange={(event) => {
+                        const value = Number.parseInt(event.target.value, 10);
+                        if (Number.isNaN(value)) return;
+                        const clamped = Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, value));
+                        updateSettings({ terminalFontSize: clamped });
+                        claudeCache.updateFontSettings();
+                      }}
+                      className="w-24"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {MIN_TERMINAL_FONT_SIZE}–{MAX_TERMINAL_FONT_SIZE}px
+                    </span>
+                  </div>
+                </label>
+
+                <label htmlFor="terminal-font-family" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Font family</span>
+                  <Input
+                    id="terminal-font-family"
+                    value={settings.terminalFontFamily}
+                    onChange={(event) => {
+                      updateSettings({ terminalFontFamily: event.target.value });
+                      claudeCache.updateFontSettings();
+                    }}
+                    placeholder={DEFAULT_TERMINAL_FONT_FAMILY}
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    CSS font-family value. Leave blank for the default monospace font.
+                  </span>
+                </label>
+
+                {(settings.terminalFontSize !== defaults.terminalFontSize ||
+                  settings.terminalFontFamily !== defaults.terminalFontFamily) ? (
+                  <div className="flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        updateSettings({
+                          terminalFontSize: defaults.terminalFontSize,
+                          terminalFontFamily: defaults.terminalFontFamily,
+                        });
+                        claudeCache.updateFontSettings();
+                      }}
+                    >
+                      Reset terminal defaults
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

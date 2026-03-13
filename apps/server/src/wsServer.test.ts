@@ -1634,4 +1634,186 @@ describe("WebSocket Server", () => {
     const welcome = (await waitForMessage(authorizedWs)) as WsPush;
     expect(welcome.channel).toBe(WS_CHANNELS.serverWelcome);
   });
+
+  describe("claude session routes", () => {
+    function makeMockClaudeSession() {
+      const calls: Array<{ method: string; args: unknown[] }> = [];
+      const shape: ClaudeSessionManagerShape = {
+        startSession: (input) => {
+          calls.push({ method: "startSession", args: [input] });
+          return Effect.void;
+        },
+        hibernateSession: (threadId) => {
+          calls.push({ method: "hibernateSession", args: [threadId] });
+          return Effect.succeed("saved-scrollback");
+        },
+        getScrollback: (threadId) => {
+          calls.push({ method: "getScrollback", args: [threadId] });
+          return Effect.succeed("scrollback-data");
+        },
+        writeToSession: (threadId, data) => {
+          calls.push({ method: "writeToSession", args: [threadId, data] });
+          return Effect.void;
+        },
+        resizeSession: (threadId, cols, rows) => {
+          calls.push({ method: "resizeSession", args: [threadId, cols, rows] });
+          return Effect.void;
+        },
+        getSessionStatus: () => Effect.succeed("new" as const),
+        reconcileActiveSessions: () => Effect.void,
+        hibernateAll: () => Effect.void,
+        subscribe: () => Effect.succeed(() => {}),
+        getClaudeSessionId: () => Effect.succeed(null),
+        destroySession: () => Effect.void,
+        dispose: Effect.void,
+      };
+      return { calls, shape };
+    }
+
+    it("claude.start calls startSession with correct params and returns success", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      const response = await sendRequest(ws, WS_METHODS.claudeStart, {
+        threadId: "thread-1",
+        cwd: "/test/project",
+        cols: 80,
+        rows: 24,
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("startSession");
+      expect(calls[0]!.args[0]).toMatchObject({
+        threadId: "thread-1",
+        cwd: "/test/project",
+        cols: 80,
+        rows: 24,
+      });
+    });
+
+    it("claude.hibernate calls hibernateSession and returns scrollback", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      const response = await sendRequest(ws, WS_METHODS.claudeHibernate, {
+        threadId: "thread-1",
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("hibernateSession");
+      expect(calls[0]!.args[0]).toBe("thread-1");
+      expect(response.result).toBe("saved-scrollback");
+    });
+
+    it("claude.getScrollback calls getScrollback and returns scrollback data", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      const response = await sendRequest(ws, WS_METHODS.claudeGetScrollback, {
+        threadId: "thread-1",
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("getScrollback");
+      expect(calls[0]!.args[0]).toBe("thread-1");
+      expect(response.result).toEqual({ threadId: "thread-1", scrollback: "scrollback-data" });
+    });
+
+    it("claude.write calls writeToSession with correct data", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      const response = await sendRequest(ws, WS_METHODS.claudeWrite, {
+        threadId: "thread-1",
+        data: "hello world",
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("writeToSession");
+      expect(calls[0]!.args[0]).toBe("thread-1");
+      expect(calls[0]!.args[1]).toBe("hello world");
+    });
+
+    it("claude.resize calls resizeSession with correct dimensions", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      const response = await sendRequest(ws, WS_METHODS.claudeResize, {
+        threadId: "thread-1",
+        cols: 120,
+        rows: 40,
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("resizeSession");
+      expect(calls[0]!.args[0]).toBe("thread-1");
+      expect(calls[0]!.args[1]).toBe(120);
+      expect(calls[0]!.args[2]).toBe(40);
+    });
+
+    it("claude.start passes resumeSessionId when provided", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      const response = await sendRequest(ws, WS_METHODS.claudeStart, {
+        threadId: "thread-resume",
+        cwd: "/test/project",
+        cols: 80,
+        rows: 24,
+        resumeSessionId: "existing-session-id",
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("startSession");
+      expect(calls[0]!.args[0]).toMatchObject({
+        threadId: "thread-resume",
+        cwd: "/test/project",
+        cols: 80,
+        rows: 24,
+        resumeSessionId: "existing-session-id",
+      });
+    });
+  });
 });
