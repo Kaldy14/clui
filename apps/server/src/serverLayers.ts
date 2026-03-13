@@ -1,31 +1,15 @@
-import path from "node:path";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Cause, Effect, FileSystem, Layer } from "effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { Layer } from "effect";
 
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
-import { ServerConfig } from "./config";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
-import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
-import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor";
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
-import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
-import { ProviderUnsupportedError } from "./provider/Errors";
-import { makeClaudeCodeAdapterLive } from "./provider/Layers/ClaudeCodeAdapter";
-import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
-import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
-import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
-import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
-import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory";
-import { ProviderService } from "./provider/Services/ProviderService";
-import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { KeybindingsLive } from "./keybindings";
@@ -36,60 +20,6 @@ import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
-
-export function makeServerProviderLayer(): Layer.Layer<
-  ProviderService,
-  ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
-> {
-  return Effect.gen(function* () {
-    const { stateDir } = yield* ServerConfig;
-    const providerLogsDir = path.join(stateDir, "logs", "provider");
-    const providerEventLogPath = path.join(providerLogsDir, "events.log");
-    const nativeEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "native",
-    });
-    const canonicalEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "canonical",
-    });
-    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-      Layer.provide(ProviderSessionRuntimeRepositoryLive),
-    );
-    const codexAdapterLayer = makeCodexAdapterLive(
-      nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
-    const sql = yield* SqlClient.SqlClient;
-    const fullyProvidedSessionDirectoryLayer = providerSessionDirectoryLayer.pipe(
-      Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
-    );
-    const claudeAdapterLayer = makeClaudeCodeAdapterLive({
-      ...(nativeEventLogger ? { nativeEventLogger } : {}),
-      persistResumeCursor: (threadId, cursor) =>
-        Effect.gen(function* () {
-          const dir = yield* ProviderSessionDirectory;
-          yield* dir.upsert({
-            threadId,
-            provider: "claudeCode",
-            resumeCursor: cursor,
-          });
-        }).pipe(
-          Effect.provide(fullyProvidedSessionDirectoryLayer),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Cursor persist failed", { cause: Cause.pretty(cause) }),
-          ),
-        ),
-    });
-    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
-      Layer.provide(codexAdapterLayer),
-      Layer.provide(claudeAdapterLayer),
-      Layer.provideMerge(providerSessionDirectoryLayer),
-    );
-    return makeProviderServiceLive(
-      canonicalEventLogger ? { canonicalEventLogger } : undefined,
-    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
-  }).pipe(Layer.unwrap);
-}
 
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
@@ -112,21 +42,13 @@ export function makeServerRuntimeServicesLayer() {
     CheckpointStoreLive,
     checkpointDiffQueryLayer,
   );
-  const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-    Layer.provideMerge(gitCoreLayer),
-    Layer.provideMerge(textGenerationLayer),
-  );
   const checkpointReactorLayer = CheckpointReactorLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
   );
   const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
-    Layer.provideMerge(runtimeIngestionLayer),
-    Layer.provideMerge(providerCommandReactorLayer),
     Layer.provideMerge(checkpointReactorLayer),
+    Layer.provideMerge(gitCoreLayer),
+    Layer.provideMerge(textGenerationLayer),
   );
 
   const terminalLayer = TerminalManagerLive.pipe(

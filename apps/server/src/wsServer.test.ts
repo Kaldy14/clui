@@ -4,27 +4,20 @@ import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, PlatformError, Scope } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
 import { ServerConfig, type ServerConfigShape } from "./config";
-import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
+import { makeServerRuntimeServicesLayer } from "./serverLayers";
 
 import {
   DEFAULT_TERMINAL_ID,
   EDITORS,
-  EventId,
-  ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
-  ProviderItemId,
-  ThreadId,
-  TurnId,
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
-  type ProviderRuntimeEvent,
-  type ServerProviderStatus,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPush,
@@ -42,8 +35,6 @@ import type {
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager";
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient, SqlError } from "effect/unstable/sql";
-import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
-import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
@@ -59,28 +50,10 @@ interface PendingMessages {
 
 const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
 
-const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
-const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
-const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
   openInEditor: () => Effect.void,
-};
-
-const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
-  {
-    provider: "codex",
-    status: "ready",
-    available: true,
-    authStatus: "authenticated",
-    checkedAt: "2026-01-01T00:00:00.000Z",
-  },
-];
-
-const defaultProviderHealthService: ProviderHealthShape = {
-  getStatuses: Effect.succeed(defaultProviderStatuses),
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -390,8 +363,6 @@ describe("WebSocket Server", () => {
       authToken?: string;
       stateDir?: string;
       staticDir?: string;
-      providerLayer?: Layer.Layer<ProviderService, never>;
-      providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
@@ -405,11 +376,6 @@ describe("WebSocket Server", () => {
     const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
-    const providerLayer = options.providerLayer ?? makeServerProviderLayer();
-    const providerHealthLayer = Layer.succeed(
-      ProviderHealth,
-      options.providerHealth ?? defaultProviderHealthService,
-    );
     const openLayer = Layer.succeed(Open, options.open ?? defaultOpenService);
     const serverConfigLayer = Layer.succeed(ServerConfig, {
       mode: "web",
@@ -425,7 +391,6 @@ describe("WebSocket Server", () => {
       autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
       logWebSocketEvents: options.logWebSocketEvents ?? Boolean(options.devUrl),
     } satisfies ServerConfigShape);
-    const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
     const runtimeOverrides = Layer.mergeAll(
       options.gitManager ? Layer.succeed(GitManager, options.gitManager) : Layer.empty,
       options.gitCore
@@ -438,14 +403,13 @@ describe("WebSocket Server", () => {
 
     const runtimeLayer = Layer.merge(
       Layer.merge(
-        makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
-        infrastructureLayer,
+        makeServerRuntimeServicesLayer().pipe(Layer.provide(persistenceLayer)),
+        persistenceLayer,
       ),
       runtimeOverrides,
     );
     const dependenciesLayer = Layer.empty.pipe(
       Layer.provideMerge(runtimeLayer),
-      Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
@@ -755,7 +719,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
-      providers: defaultProviderStatuses,
+      providers: [],
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -781,7 +745,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
-      providers: defaultProviderStatuses,
+      providers: [],
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -817,7 +781,7 @@ describe("WebSocket Server", () => {
           message: expect.stringContaining("expected JSON array"),
         },
       ],
-      providers: defaultProviderStatuses,
+      providers: [],
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -852,7 +816,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
-      providers: ReadonlyArray<ServerProviderStatus>;
+      providers: ReadonlyArray<unknown>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -872,7 +836,7 @@ describe("WebSocket Server", () => {
     expect(result.keybindings).toHaveLength(DEFAULT_RESOLVED_KEYBINDINGS.length);
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
-    expect(result.providers).toEqual(defaultProviderStatuses);
+    expect(result.providers).toEqual([]);
     expectAvailableEditors(result.availableEditors);
   });
 
@@ -901,7 +865,7 @@ describe("WebSocket Server", () => {
     );
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
-      providers: defaultProviderStatuses,
+      providers: [],
     });
 
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
@@ -912,7 +876,7 @@ describe("WebSocket Server", () => {
         Array.isArray((push.data as { issues?: unknown[] }).issues) &&
         (push.data as { issues: unknown[] }).issues.length === 0,
     );
-    expect(successPush.data).toEqual({ issues: [], providers: defaultProviderStatuses });
+    expect(successPush.data).toEqual({ issues: [], providers: [] });
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -972,7 +936,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
-      providers: defaultProviderStatuses,
+      providers: [],
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -1020,7 +984,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
-      providers: defaultProviderStatuses,
+      providers: [],
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors(
@@ -1142,130 +1106,6 @@ describe("WebSocket Server", () => {
     });
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("exceeds current turn count");
-  });
-
-  it("keeps orchestration domain push behavior for provider runtime events", async () => {
-    const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-    const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
-      Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
-    };
-    const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
-    const providerService: ProviderServiceShape = {
-      startSession: (threadId) =>
-        Effect.succeed({
-          provider: "codex",
-          status: "ready",
-          runtimeMode: "full-access",
-          threadId,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }),
-      sendTurn: ({ threadId }) =>
-        Effect.succeed({
-          threadId,
-          turnId: asTurnId("provider-turn-1"),
-        }),
-      interruptTurn: () => unsupported(),
-      respondToRequest: () => unsupported(),
-      respondToUserInput: () => unsupported(),
-      stopSession: () => unsupported(),
-      listSessions: () => Effect.succeed([]),
-      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
-      getPersistedResumeCursor: () => Effect.succeed(undefined),
-      rollbackConversation: () => unsupported(),
-      stopAll: () => Effect.void,
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
-    };
-    const providerLayer = Layer.succeed(ProviderService, providerService);
-
-    server = await createTestServer({
-      cwd: "/test",
-      providerLayer,
-    });
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-
-    const ws = await connectWs(port);
-    connections.push(ws);
-    await waitForMessage(ws);
-
-    const workspaceRoot = makeTempDir("t3code-ws-project-");
-    const createdAt = new Date().toISOString();
-    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
-      type: "project.create",
-      commandId: "cmd-ws-project-create",
-      projectId: "project-1",
-      title: "WS Project",
-      workspaceRoot,
-      defaultModel: "gpt-5-codex",
-      createdAt,
-    });
-    expect(createProjectResponse.error).toBeUndefined();
-    const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
-      type: "thread.create",
-      commandId: "cmd-ws-runtime-thread-create",
-      threadId: "thread-1",
-      projectId: "project-1",
-      title: "Thread 1",
-      model: "gpt-5-codex",
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      createdAt,
-    });
-    expect(createThreadResponse.error).toBeUndefined();
-
-    const startTurnResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
-      type: "thread.turn.start",
-      commandId: "cmd-ws-runtime-turn-start",
-      threadId: "thread-1",
-      message: {
-        messageId: "msg-ws-runtime-1",
-        role: "user",
-        text: "hello",
-        attachments: [],
-      },
-      assistantDeliveryMode: "streaming",
-      runtimeMode: "approval-required",
-      interactionMode: "default",
-      createdAt,
-    });
-    expect(startTurnResponse.error).toBeUndefined();
-
-    await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
-      const event = push.data as { type?: string };
-      return event.type === "thread.session-set";
-    });
-
-    emitRuntimeEvent({
-      type: "content.delta",
-      eventId: asEventId("evt-ws-runtime-message-delta"),
-      provider: "codex",
-      threadId: asThreadId("thread-1"),
-      createdAt: new Date().toISOString(),
-      turnId: asTurnId("turn-1"),
-      itemId: asProviderItemId("item-1"),
-      payload: {
-        streamKind: "assistant_text",
-        delta: "hello from runtime",
-      },
-    } as unknown as ProviderRuntimeEvent);
-
-    const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
-      const event = push.data as { type?: string; payload?: { messageId?: string; text?: string } };
-      return (
-        event.type === "thread.message-sent" && event.payload?.messageId === "assistant:item-1"
-      );
-    });
-
-    const domainEvent = domainPush.data as {
-      type: string;
-      payload: { messageId: string; text: string };
-    };
-    expect(domainEvent.type).toBe("thread.message-sent");
-    expect(domainEvent.payload.messageId).toBe("assistant:item-1");
-    expect(domainEvent.payload.text).toBe("hello from runtime");
   });
 
   it("routes terminal RPC methods and broadcasts terminal events", async () => {

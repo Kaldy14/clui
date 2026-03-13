@@ -6,19 +6,18 @@ import { buildConversationSummary } from "./conversationSummary.ts";
 const now = new Date().toISOString();
 
 function makeMessage(
-  overrides: Partial<OrchestrationMessage> & { id?: string; role?: OrchestrationMessage["role"]; text?: string },
+  overrides: { id?: string; role?: OrchestrationMessage["role"]; text?: string } & Omit<Partial<OrchestrationMessage>, "id">,
 ): OrchestrationMessage {
+  const { id, ...rest } = overrides;
   return {
-    id: MessageId.makeUnsafe(overrides.id ?? "msg-1"),
-    role: overrides.role ?? "user",
-    text: overrides.text ?? "hello",
-    turnId: overrides.turnId ?? TurnId.makeUnsafe("turn-1"),
-    streaming: overrides.streaming ?? false,
-    createdAt: overrides.createdAt ?? now,
-    updatedAt: overrides.updatedAt ?? now,
-    ...overrides,
-    // Ensure id is always a MessageId brand
-    ...(overrides.id ? { id: MessageId.makeUnsafe(overrides.id) } : {}),
+    id: MessageId.makeUnsafe(id ?? "msg-1"),
+    role: rest.role ?? "user",
+    text: rest.text ?? "hello",
+    turnId: rest.turnId ?? TurnId.makeUnsafe("turn-1"),
+    streaming: rest.streaming ?? false,
+    createdAt: rest.createdAt ?? now,
+    updatedAt: rest.updatedAt ?? now,
+    ...rest,
   };
 }
 
