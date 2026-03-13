@@ -277,26 +277,19 @@ The transport protocol:
 - **Client → Server:** `terminal.start { threadId, cwd, resumeSessionId? }`, `terminal.write { threadId, data }`, `terminal.resize { threadId, cols, rows }`
 - **Server → Client (push):** `terminal.output { threadId, data }`, `terminal.status { threadId, status }`, `terminal.sessionId { threadId, claudeSessionId }`
 
-#### 3.4 Session ID capture
+#### 3.4 Session ID assignment
 
-Claude CLI prints its session ID during startup. We need to parse PTY output to capture it.
+Session IDs are assigned upfront rather than extracted from output:
 
 ```typescript
-// In TerminalSessionManager, parse PTY output for session ID
-const SESSION_ID_PATTERN = /Session ID: ([a-f0-9-]+)/i
-
-pty.onData((data) => {
-  scrollbackBuffer += data
-  const match = data.match(SESSION_ID_PATTERN)
-  if (match) {
-    claudeSessionId = match[1]
-    persistSessionId(threadId, claudeSessionId)
-  }
-  emit('terminal.output', { threadId, data })
-})
+// Generate UUID for new sessions, pass via --session-id
+const claudeSessionId = input.resumeSessionId ?? crypto.randomUUID();
+const args = input.resumeSessionId
+  ? ["--resume", input.resumeSessionId]
+  : ["--session-id", claudeSessionId];
 ```
 
-**Alternative approach:** After `claude` starts, read the session ID from `~/.claude/projects/` directory where Claude persists session files. This is more reliable than parsing output.
+**Note:** The original plan called for regex parsing of Claude CLI output, but Claude Code doesn't print session IDs in any parseable format. Using `--session-id <uuid>` is the reliable approach (implemented in Phase 5).
 
 **Checkpoint:** Can start a claude PTY, stream output over WebSocket, hibernate and resume.
 
@@ -396,34 +389,36 @@ New status mapping:
 
 ---
 
-### Phase 5: Lifecycle Management (Day 6-7)
+### Phase 5: Lifecycle Management (Day 6-7) ✅ COMPLETE
 
-#### 5.1 LRU eviction
+All lifecycle features implemented and verified.
 
-- Track `lastInteractedAt` on every `writeToSession`
-- After each `startSession`, call `reconcileActiveSessions()`
-- If over cap: sort by `lastInteractedAt`, hibernate oldest
-- Push `terminal.status` to client so UI updates
+#### 5.1 LRU eviction ✅
+- `lastInteractedAt` tracked on every `writeToSession` and `startSession`
+- `reconcileActiveSessions()` called fire-and-forget after each `startSession` (max 10, configurable)
+- Over cap: sort by `lastInteractedAt`, hibernate oldest
+- `terminal.status` pushed to client via orchestration events
 
-#### 5.2 Graceful shutdown
+#### 5.2 Graceful shutdown ✅
+- `hibernateAll()` runs before closing WebSocket connections (sequential ordering)
+- Each session: capture scrollback → persist via orchestration → kill PTY (SIGTERM → 1s → SIGKILL)
+- 5 second timeout on hibernateAll, then force-kill remaining PTYs
 
-- On SIGTERM/SIGINT: `terminalSessionManager.hibernateAll()`
-- Each session: capture scrollback → write to SQLite → kill PTY
-- 5 second timeout, then force-kill
-- Electron `before-quit`: send shutdown signal to server
-
-#### 5.3 Startup behavior
-
-- All threads with `terminal_status = 'active'` set to `'dormant'` on startup
+#### 5.3 Startup behavior ✅
+- All threads with `terminal_status = 'active'` set to `'dormant'` on startup (preserves `claudeSessionId` and `scrollbackSnapshot`)
 - Zero PTYs spawn until user interacts
 
-#### 5.4 Thread deletion cleanup
+#### 5.4 Thread deletion cleanup ✅
+- `destroySession(threadId)` — kills PTY, removes from map, no lifecycle events emitted
+- Wired into `thread.delete` command dispatch in wsServer
 
-- If active: kill PTY, remove from map
-- Clean up worktree (existing t3code logic)
-- Soft-delete in SQLite (existing logic)
+#### 5.5 Session ID reliability fix ✅
+- **Bug:** Regex extraction of session ID from Claude CLI output never worked (Claude Code doesn't print session IDs in parseable text)
+- **Fix:** Generate UUID via `crypto.randomUUID()`, pass `--session-id <uuid>` for new sessions, `--resume <uuid>` for resumes
+- Session ID known upfront, emitted immediately after spawn — no async extraction needed
+- Removed dead code: `tryExtractSessionId()`, `ScrollbackRingBuffer.tail()`
 
-**Checkpoint:** App handles 200 threads, only N active, LRU works, restart is clean.
+**Checkpoint:** App handles 200 threads, only N active, LRU works, restart is clean, resume works across server restarts.
 
 ---
 

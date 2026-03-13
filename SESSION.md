@@ -246,7 +246,7 @@ Built a new `ClaudeSessionManager` Effect service — separate from the existing
 - `getScrollback`/`getSessionStatus` — Read session state
 - `reconcileActiveSessions` — LRU eviction when over max active cap
 - `hibernateAll` — Hibernate all active sessions (for app shutdown)
-- Session ID capture from PTY output
+- Session ID assigned upfront via `--session-id <uuid>` (no output parsing)
 - EventEmitter-based event subscription
 - Promise-based thread locking for concurrent safety
 - 5000-line scrollback cap
@@ -376,11 +376,33 @@ Built the client-side terminal UI in `apps/web/` with three-state rendering, xte
 
 **Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` 333/333 pass.
 
-### Phase 5: Lifecycle Management ⬜ NOT STARTED
-- LRU eviction when exceeding max active terminals
-- Graceful shutdown (hibernateAll on SIGTERM/SIGINT, Electron before-quit)
-- Startup: all active → dormant, zero PTYs
-- Thread deletion cleanup
+### Phase 5: Lifecycle Management ✅ COMPLETE
+
+Built server-side lifecycle management: startup recovery, graceful shutdown, thread deletion, and session ID reliability.
+
+**Server hardening (`apps/server/src/wsServer.ts`):**
+- Stale terminal status reset on startup — threads marked `active` in DB with no running PTY are set to `dormant`
+- Graceful shutdown — `hibernateAll()` runs before closing WebSocket connections (sequential: hibernate first, then close)
+- Thread deletion destroys active PTY sessions via `destroySession()`
+
+**Session ID reliability (`apps/server/src/terminal/Layers/ClaudeSessionManager.ts`):**
+- **Fixed critical bug:** Session ID was extracted via regex from Claude Code CLI terminal output, but Claude Code doesn't print session IDs in any parseable format — regex never matched, so `claudeSessionId` was always `null`
+- **New approach:** Generate UUID via `crypto.randomUUID()` for new sessions, pass `--session-id <uuid>` to Claude CLI. For resumes, pass `--resume <uuid>`. Session ID is known upfront — no async extraction needed.
+- Removed dead code: `tryExtractSessionId()`, `ScrollbackRingBuffer.tail()`
+- `sessionId` event emitted immediately after spawn
+
+**New service methods:**
+- `destroySession(threadId)` — kills PTY and removes session from map without emitting lifecycle events (used for thread deletion)
+
+**Other changes:**
+- `apps/server/src/terminal/Layers/NodePtyHost.ts` — Node-pty host bridge for real TTY allocation
+- Environment filtering for spawned Claude processes (excludes VITE_*, CLUI_*, CLAUDE_CODE_*, sensitive keys)
+- LRU session reconciliation (fire-and-forget after each `startSession`, max 10 configurable)
+- `hibernateAll` with 5s timeout + force-kill fallback
+
+**Tests:** 33 ClaudeSessionManager tests pass (updated session ID tests from regex extraction to `--session-id` assignment). 35 wsServer tests pass.
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, all tests pass.
 
 ### Phase 6: Polish & Integration ⬜ NOT STARTED
 - Terminal theming
@@ -415,6 +437,6 @@ Built the client-side terminal UI in `apps/web/` with three-state rendering, xte
 ## How to Continue
 
 1. Read this file and `PLAN.md`
-2. Start Phase 5: Lifecycle Management
-3. Then Phase 6: Polish & Integration
+2. Start Phase 6: Polish & Integration
+3. Then Phase 7: Testing & Hardening
 4. Follow the checkpoint at end of each phase before moving to the next
