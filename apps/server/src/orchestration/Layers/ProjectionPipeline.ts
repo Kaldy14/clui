@@ -427,6 +427,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             worktreePath: event.payload.worktreePath,
             claudeSessionId: null,
             terminalStatus: "new",
+            scrollbackSnapshot: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -479,6 +480,23 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             interactionMode: event.payload.interactionMode,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.terminal-status-changed": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            terminalStatus: event.payload.terminalStatus,
+            claudeSessionId: event.payload.claudeSessionId,
+            scrollbackSnapshot: event.payload.scrollbackSnapshot,
             updatedAt: event.payload.updatedAt,
           });
           return;

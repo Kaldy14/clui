@@ -50,6 +50,7 @@ function makeSnapshot(input: {
         worktreePath: input.worktreePath,
         claudeSessionId: null,
         terminalStatus: "new",
+        scrollbackSnapshot: null,
         latestTurn: {
           turnId: TurnId.makeUnsafe("turn-1"),
           state: "completed",

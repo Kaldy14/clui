@@ -14,6 +14,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
+  type ClaudeSessionEvent,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -48,6 +49,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
+import { ClaudeSessionManager } from "./terminal/Services/ClaudeSession.ts";
 import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
@@ -211,6 +213,7 @@ export type ServerRuntimeServices =
   | GitManager
   | GitCore
   | TerminalManager
+  | ClaudeSessionManager
   | Keybindings
   | Open
   | AnalyticsService;
@@ -248,6 +251,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
+  const claudeSessionManager = yield* ClaudeSessionManager;
   const keybindingsManager = yield* Keybindings;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -701,12 +705,75 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
 
+  const onClaudeSessionEvent = Effect.fnUntraced(function* (event: ClaudeSessionEvent) {
+    yield* broadcastPush({
+      type: "push",
+      channel: WS_CHANNELS.claudeSessionEvent,
+      data: event,
+    });
+
+    if (event.type === "started") {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.terminal.statusChanged",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: ThreadId.makeUnsafe(event.threadId),
+        terminalStatus: "active",
+        claudeSessionId: null,
+        scrollbackSnapshot: null,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (event.type === "sessionId") {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.terminal.statusChanged",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: ThreadId.makeUnsafe(event.threadId),
+        terminalStatus: "active",
+        claudeSessionId: event.claudeSessionId,
+        scrollbackSnapshot: null,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (event.type === "hibernated" || event.type === "exited") {
+      const scrollback = yield* claudeSessionManager.getScrollback(event.threadId);
+      const claudeSessionId = yield* claudeSessionManager.getClaudeSessionId(event.threadId);
+      yield* orchestrationEngine.dispatch({
+        type: "thread.terminal.statusChanged",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: ThreadId.makeUnsafe(event.threadId),
+        terminalStatus: "dormant",
+        claudeSessionId: claudeSessionId,
+        scrollbackSnapshot: scrollback,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  });
+
+  const unsubscribeClaudeEvents = yield* claudeSessionManager.subscribe(
+    (event) =>
+      void Effect.runPromise(
+        onClaudeSessionEvent(event).pipe(
+          Effect.catch((error) =>
+            Effect.logError("claude session event handler failed", { cause: error }),
+          ),
+        ),
+      ),
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeClaudeEvents()));
+
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
 
   yield* Effect.addFinalizer(() =>
     Effect.all([
+      claudeSessionManager.hibernateAll().pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to hibernate claude sessions on shutdown", { cause: error }),
+        ),
+      ),
       closeAllClients,
       closeWebSocketServer.pipe(
         Effect.catch((error) =>
@@ -889,6 +956,48 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.terminalClose: {
         const body = stripRequestTag(request.body);
         return yield* terminalManager.close(body);
+      }
+
+      case WS_METHODS.claudeStart: {
+        const { threadId, cwd: requestedCwd, cols, rows, resumeSessionId } = stripRequestTag(request.body);
+
+        // Validate cwd is under the workspace root
+        const resolvedCwd = path.resolve(requestedCwd);
+        const resolvedRoot = path.resolve(cwd);
+        if (resolvedCwd !== resolvedRoot && !resolvedCwd.startsWith(`${resolvedRoot}/`)) {
+          return yield* new RouteRequestError({
+            message: `cwd must be within workspace root: ${cwd}`,
+          });
+        }
+
+        return yield* claudeSessionManager.startSession({
+          threadId,
+          cwd: resolvedCwd,
+          cols,
+          rows,
+          ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+        });
+      }
+
+      case WS_METHODS.claudeHibernate: {
+        const body = stripRequestTag(request.body);
+        return yield* claudeSessionManager.hibernateSession(body.threadId);
+      }
+
+      case WS_METHODS.claudeGetScrollback: {
+        const body = stripRequestTag(request.body);
+        const scrollback = yield* claudeSessionManager.getScrollback(body.threadId);
+        return { threadId: body.threadId, scrollback };
+      }
+
+      case WS_METHODS.claudeWrite: {
+        const { threadId, data } = stripRequestTag(request.body);
+        return yield* claudeSessionManager.writeToSession(threadId, data);
+      }
+
+      case WS_METHODS.claudeResize: {
+        const { threadId, cols, rows } = stripRequestTag(request.body);
+        return yield* claudeSessionManager.resizeSession(threadId, cols, rows);
       }
 
       case WS_METHODS.serverGetConfig:

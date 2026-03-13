@@ -42,6 +42,10 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import {
+  ClaudeSessionManager,
+  type ClaudeSessionManagerShape,
+} from "./terminal/Services/ClaudeSession.ts";
 
 interface PendingMessages {
   queue: unknown[];
@@ -186,6 +190,20 @@ class MockTerminalManager implements TerminalManagerShape {
 
   readonly dispose: TerminalManagerShape["dispose"] = Effect.void;
 }
+
+const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
+  startSession: () => Effect.void,
+  hibernateSession: () => Effect.succeed(""),
+  getScrollback: () => Effect.succeed(null),
+  writeToSession: () => Effect.void,
+  resizeSession: () => Effect.void,
+  getSessionStatus: () => Effect.succeed("new" as const),
+  reconcileActiveSessions: () => Effect.void,
+  hibernateAll: () => Effect.void,
+  subscribe: () => Effect.succeed(() => {}),
+  getClaudeSessionId: () => Effect.succeed(null),
+  dispose: Effect.void,
+};
 
 function connectWs(port: number, token?: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
@@ -367,6 +385,7 @@ describe("WebSocket Server", () => {
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
+      claudeSessionManager?: ClaudeSessionManagerShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -399,6 +418,10 @@ describe("WebSocket Server", () => {
       options.terminalManager
         ? Layer.succeed(TerminalManager, options.terminalManager)
         : Layer.empty,
+      Layer.succeed(
+        ClaudeSessionManager,
+        options.claudeSessionManager ?? defaultClaudeSessionManager,
+      ),
     );
 
     const runtimeLayer = Layer.merge(

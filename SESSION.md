@@ -214,12 +214,83 @@ Comprehensive backend review of Phase 0–2 changes identified P0/P1/P2 issues. 
 - Add snapshot query timing instrumentation
 - Add TODO comments for Phase 3 event types (terminal state transitions)
 
-### Phase 3: TerminalSessionManager (Server) ⬜ NOT STARTED
-- Create `TerminalSessionManager` Effect service managing PTY processes
-- Methods: startSession, hibernateSession, getScrollback, writeToSession, onSessionOutput, reconcileActiveSessions, hibernateAll
-- Wire into WebSocket server (terminal.start, terminal.write, terminal.output, terminal.resize, terminal.hibernate)
-- Session ID capture from claude CLI
-- Reuse existing `apps/server/src/terminal/` infrastructure (NodePtyAdapter)
+### Phase 3: ClaudeSessionManager (Server) ✅ COMPLETE
+
+Built a new `ClaudeSessionManager` Effect service — separate from the existing `TerminalManager` (which handles project shell terminals). Uses `PtyAdapter` to spawn `claude` CLI processes with full lifecycle management.
+
+**New files:**
+- `packages/contracts/src/claude-terminal.ts` — `ClaudeStartInput`, `ClaudeHibernateInput`, `ClaudeGetScrollbackInput`, `ClaudeSessionEvent` schemas
+- `apps/server/src/terminal/Services/ClaudeSession.ts` — Service interface: `ClaudeSessionManagerShape`, `ClaudeSessionError`, `ClaudeSessionState`, `ClaudeSessionManager` tag
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` — Full implementation: `ClaudeSessionManagerRuntime` class + `ClaudeSessionManagerLive` layer
+- `apps/server/src/persistence/Migrations/017_ScrollbackSnapshot.ts` — Idempotent migration adding `scrollback_snapshot` column
+
+**Modified files:**
+- `packages/contracts/src/ws.ts` — Added WS methods `claude.start`, `claude.hibernate`, `claude.getScrollback` + channel `claude.sessionEvent`
+- `packages/contracts/src/orchestration.ts` — Added `ThreadTerminalStatusChangedCommand`, `scrollbackSnapshot` field on `OrchestrationThread`, new event type `thread.terminal-status-changed`
+- `packages/contracts/src/index.ts` — Exports `claude-terminal` module
+- `apps/server/src/wsServer.ts` — Added `ClaudeSessionManager` to `ServerRuntimeServices`, 3 route cases, claude session event subscription with orchestration dispatch (started→active, sessionId→update, hibernated/exited→dormant), hibernateAll wired to graceful shutdown
+- `apps/server/src/serverLayers.ts` — Added `ClaudeSessionManagerLive` layer with shared `PtyAdapter`
+- `apps/server/src/persistence/Migrations.ts` — Registered migration 017
+- `apps/server/src/persistence/Services/ProjectionThreads.ts` — Added `scrollbackSnapshot` to schema
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts` — Added `scrollback_snapshot` to INSERT/SELECT/UPDATE queries
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` — Handler for `thread.terminal.statusChanged`, `scrollbackSnapshot: null` in `thread.created`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` — `scrollback_snapshot` in SELECT + thread assembly
+- `apps/server/src/orchestration/projector.ts` — In-memory projector for `thread.terminal-status-changed`
+- `apps/server/src/orchestration/Schemas.ts` — `ThreadTerminalStatusChangedPayload` alias
+- `apps/server/src/orchestration/decider.ts` — Case for `thread.terminal.statusChanged` command
+
+**ClaudeSessionManager features:**
+- `startSession` — Spawns `claude` or `claude --resume <id>` via PtyAdapter
+- `hibernateSession` — Captures scrollback, kills PTY (SIGTERM→1s→SIGKILL), sets dormant
+- `writeToSession`/`resizeSession` — PTY I/O for active sessions
+- `getScrollback`/`getSessionStatus` — Read session state
+- `reconcileActiveSessions` — LRU eviction when over max active cap
+- `hibernateAll` — Hibernate all active sessions (for app shutdown)
+- Session ID capture from PTY output
+- EventEmitter-based event subscription
+- Promise-based thread locking for concurrent safety
+- 5000-line scrollback cap
+
+**Tests fixed:** `store.test.ts`, `CheckpointDiffQuery.test.ts`, `commandInvariants.test.ts`, `ProjectionSnapshotQuery.test.ts`, `projector.test.ts`, `wsServer.test.ts`
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` 302/302 pass, `bun run build` 4/4 pass.
+
+### Post-Phase 3: Architecture Review Fixes ✅ COMPLETE
+
+6-agent architecture review identified 5 P0 and 9 P1 issues. All fixed via 5-worker team pipeline.
+
+**P0 fixes:**
+1. **Stale onProcessExit closure** — captured `expectedProcess` ref in exit callback, ignores stale exits when `entry.process !== expectedProcess`
+2. **Scrollback snapshot persistence** — wsServer reads scrollback from `getScrollback()` before dispatching dormant transition (was hardcoded `null`)
+3. **claudeSessionId preserved** — added `getClaudeSessionId()` to runtime/interface/layer; wsServer reads it before dormant dispatch (was wiped to `null`)
+4. **cwd validation** — `assertValidCwd()` in runtime + workspace root path-traversal check in wsServer route
+5. **requireThread in decider** — added missing invariant for `thread.terminal.statusChanged` (was the only thread command without it)
+
+**P1 fixes:**
+6. **ScrollbackRingBuffer** — O(1) append replacing O(n²) string concat. Line-based ring buffer with `append()`, `materialize()`, `tail()`, `clear()`
+7. **Write/resize WS routes** — `ClaudeWriteInput`/`ClaudeResizeInput` schemas in contracts, `claude.write`/`claude.resize` in WS_METHODS + WebSocketRequestBody, route handlers in wsServer
+8. **reconcileActiveSessions wired** — fire-and-forget call after each startSession (maxActiveSessions=10, configurable)
+9. **Enhanced env filtering** — added CLUI_* prefix, ANTHROPIC_API_KEY, OPENAI_API_KEY, DATABASE_URL, *_SECRET/*_TOKEN/*_KEY suffix patterns
+10. **Session ID split-chunk fix** — scans ring buffer `tail(512)` instead of just latest PTY data chunk
+11. **Shared terminalUtils.ts** — extracted `capHistory`, `shouldExcludeEnvKey`, `createSpawnEnv`, `runWithThreadLock`, `assertValidCwd` from Manager.ts and ClaudeSessionManager.ts into shared module
+12. **hibernateAll parallel + timeout** — `Promise.allSettled` with 5s timeout (was sequential, no timeout)
+13. **Fire-and-forget error handling** — wsServer claude event handler pipes through `Effect.catchAll` with `Effect.logError` (was swallowing errors)
+
+**New files:**
+- `apps/server/src/terminal/terminalUtils.ts` — shared terminal utility functions
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts` — 31 unit tests
+
+**Modified files:**
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` — all runtime fixes, ring buffer, shared utils integration
+- `apps/server/src/terminal/Services/ClaudeSession.ts` — added `getClaudeSessionId` to interface
+- `apps/server/src/terminal/Layers/Manager.ts` — replaced 5 local functions with imports from terminalUtils.ts
+- `packages/contracts/src/claude-terminal.ts` — added `ClaudeWriteInput`, `ClaudeResizeInput` schemas
+- `packages/contracts/src/ws.ts` — added `claudeWrite`/`claudeResize` to WS_METHODS + WebSocketRequestBody
+- `apps/server/src/orchestration/decider.ts` — added `requireThread` to `thread.terminal.statusChanged`
+- `apps/server/src/wsServer.ts` — scrollback/sessionId persistence on dormant, cwd validation, write/resize routes, error logging
+- `apps/server/src/wsServer.test.ts` — added `getClaudeSessionId` to mock shape
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` 333/333 pass (+31 new tests).
 
 ### Phase 4: Terminal UI (Client) ⬜ NOT STARTED
 - `ThreadTerminalView` — three-state renderer (new/active/dormant)
@@ -255,8 +326,12 @@ Comprehensive backend review of Phase 0–2 changes identified P0/P1/P2 issues. 
 | `PLAN.md` | Full implementation plan with file-level detail |
 | `AGENTS.md` | Build instructions, tech stack, project snapshot (symlinked as CLAUDE.md) |
 | `packages/contracts/src/orchestration.ts` | `TerminalStatus`, `OrchestrationThread` with terminal fields |
-| `apps/server/src/terminal/` | **TO REUSE** — Existing PTY infrastructure for Phase 3 |
-| `apps/server/src/wsServer.ts` | **TO MODIFY** — Add terminal WebSocket messages (Phase 3) |
+| `packages/contracts/src/claude-terminal.ts` | Claude terminal schemas (Start/Hibernate/Write/Resize/GetScrollback + SessionEvent) |
+| `packages/contracts/src/ws.ts` | WS_METHODS (includes claude.start/hibernate/write/resize/getScrollback) |
+| `apps/server/src/terminal/Services/ClaudeSession.ts` | ClaudeSessionManager service interface |
+| `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | ClaudeSessionManager implementation (ScrollbackRingBuffer, env filtering, kill escalation) |
+| `apps/server/src/terminal/terminalUtils.ts` | Shared utils (capHistory, env filtering, assertValidCwd, runWithThreadLock, createSpawnEnv) |
+| `apps/server/src/wsServer.ts` | WS routes for all claude.* methods + event subscription |
 | `apps/web/src/routes/_chat.$threadId.tsx` | **TO MODIFY** — Replace placeholder with terminal view (Phase 4) |
 | `apps/web/package.json` | Already has `@xterm/xterm` and `@xterm/addon-fit` |
 | `apps/server/package.json` | Already has `node-pty` |
@@ -264,6 +339,6 @@ Comprehensive backend review of Phase 0–2 changes identified P0/P1/P2 issues. 
 ## How to Continue
 
 1. Read this file and `PLAN.md`
-2. Start Phase 3: TerminalSessionManager (server-side PTY management)
-3. Then Phase 4: Terminal UI (client-side xterm.js)
+2. Start Phase 4: Terminal UI (client-side xterm.js)
+3. Then Phase 5: Lifecycle Management
 4. Follow the checkpoint at end of each phase before moving to the next

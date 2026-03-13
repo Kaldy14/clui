@@ -80,6 +80,7 @@ describe("orchestration projector", () => {
         worktreePath: null,
         claudeSessionId: null,
         terminalStatus: "new",
+        scrollbackSnapshot: null,
         latestTurn: null,
         createdAt: now,
         updatedAt: now,

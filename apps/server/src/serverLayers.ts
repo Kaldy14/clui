@@ -12,6 +12,7 @@ import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/Proj
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
+import { ClaudeSessionManagerLive } from "./terminal/Layers/ClaudeSessionManager";
 import { KeybindingsLive } from "./keybindings";
 import { GitManagerLive } from "./git/Layers/GitManager";
 import { GitCoreLive } from "./git/Layers/GitCore";
@@ -51,13 +52,14 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(textGenerationLayer),
   );
 
-  const terminalLayer = TerminalManagerLive.pipe(
-    Layer.provide(
-      typeof Bun !== "undefined" && process.platform !== "win32"
-        ? BunPtyAdapterLive
-        : NodePtyAdapterLive,
-    ),
-  );
+  const ptyAdapterLayer =
+    typeof Bun !== "undefined" && process.platform !== "win32"
+      ? BunPtyAdapterLive
+      : NodePtyAdapterLive;
+
+  const terminalLayer = TerminalManagerLive.pipe(Layer.provide(ptyAdapterLayer));
+
+  const claudeSessionLayer = ClaudeSessionManagerLive.pipe(Layer.provide(ptyAdapterLayer));
 
   const gitManagerLayer = GitManagerLive.pipe(
     Layer.provideMerge(gitCoreLayer),
@@ -70,6 +72,7 @@ export function makeServerRuntimeServicesLayer() {
     gitCoreLayer,
     gitManagerLayer,
     terminalLayer,
+    claudeSessionLayer,
     KeybindingsLive,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

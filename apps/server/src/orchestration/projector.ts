@@ -22,6 +22,7 @@ import {
   ThreadRuntimeModeSetPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
+  ThreadTerminalStatusChangedPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
@@ -259,6 +260,7 @@ export function projectEvent(
             worktreePath: payload.worktreePath,
             claudeSessionId: null,
             terminalStatus: "new",
+            scrollbackSnapshot: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -611,6 +613,24 @@ export function projectEvent(
             }),
           };
         }),
+      );
+
+    case "thread.terminal-status-changed":
+      return decodeForEvent(
+        ThreadTerminalStatusChangedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            terminalStatus: payload.terminalStatus,
+            claudeSessionId: payload.claudeSessionId,
+            scrollbackSnapshot: payload.scrollbackSnapshot,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
       );
 
     default:

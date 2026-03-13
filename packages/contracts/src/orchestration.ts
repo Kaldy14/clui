@@ -312,6 +312,9 @@ export const OrchestrationThread = Schema.Struct({
   terminalStatus: TerminalStatus.pipe(
     Schema.withDecodingDefault(() => "new" as const),
   ),
+  scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -591,6 +594,16 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTerminalStatusChangedCommand = Schema.Struct({
+  type: Schema.Literal("thread.terminal.statusChanged"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  terminalStatus: TerminalStatus,
+  claudeSessionId: Schema.NullOr(Schema.String),
+  scrollbackSnapshot: Schema.NullOr(Schema.String),
+  updatedAt: IsoDateTime,
+});
+
 const ThreadTurnUsageUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.usage.update"),
   commandId: CommandId,
@@ -614,6 +627,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTurnUsageUpdateCommand,
+  ThreadTerminalStatusChangedCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -645,6 +659,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.turn-diff-completed",
   "thread.activity-appended",
   "thread.turn-usage-updated",
+  "thread.terminal-status-changed",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -808,6 +823,15 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadTerminalStatusChangedPayload = Schema.Struct({
+  threadId: ThreadId,
+  terminalStatus: TerminalStatus,
+  claudeSessionId: Schema.NullOr(Schema.String),
+  scrollbackSnapshot: Schema.NullOr(Schema.String),
+  updatedAt: IsoDateTime,
+});
+export type ThreadTerminalStatusChangedPayload = typeof ThreadTerminalStatusChangedPayload.Type;
+
 export const ThreadTurnUsageUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -946,6 +970,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-usage-updated"),
     payload: ThreadTurnUsageUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.terminal-status-changed"),
+    payload: ThreadTerminalStatusChangedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

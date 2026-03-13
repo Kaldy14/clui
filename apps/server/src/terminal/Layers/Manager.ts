@@ -26,6 +26,12 @@ import {
   TerminalSessionState,
   TerminalStartInput,
 } from "../Services/Manager";
+import {
+  assertValidCwd,
+  capHistory,
+  createSpawnEnv,
+  runWithThreadLock,
+} from "../terminalUtils";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
@@ -34,8 +40,6 @@ const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
-const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
-
 const decodeTerminalOpenInput = Schema.decodeUnknownSync(TerminalOpenInput);
 const decodeTerminalWriteInput = Schema.decodeUnknownSync(TerminalWriteInput);
 const decodeTerminalResizeInput = Schema.decodeUnknownSync(TerminalResizeInput);
@@ -240,18 +244,6 @@ async function defaultSubprocessChecker(terminalPid: number): Promise<boolean> {
   return checkPosixSubprocessActivity(terminalPid);
 }
 
-function capHistory(history: string, maxLines: number): string {
-  if (history.length === 0) return history;
-  const hasTrailingNewline = history.endsWith("\n");
-  const lines = history.split("\n");
-  if (hasTrailingNewline) {
-    lines.pop();
-  }
-  if (lines.length <= maxLines) return history;
-  const capped = lines.slice(lines.length - maxLines).join("\n");
-  return hasTrailingNewline ? `${capped}\n` : capped;
-}
-
 function legacySafeThreadId(threadId: string): string {
   return threadId.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -266,35 +258,6 @@ function toSafeTerminalId(terminalId: string): string {
 
 function toSessionKey(threadId: string, terminalId: string): string {
   return `${threadId}\u0000${terminalId}`;
-}
-
-function shouldExcludeTerminalEnvKey(key: string): boolean {
-  const normalizedKey = key.toUpperCase();
-  if (normalizedKey.startsWith("T3CODE_")) {
-    return true;
-  }
-  if (normalizedKey.startsWith("VITE_")) {
-    return true;
-  }
-  return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
-}
-
-function createTerminalSpawnEnv(
-  baseEnv: NodeJS.ProcessEnv,
-  runtimeEnv?: Record<string, string> | null,
-): NodeJS.ProcessEnv {
-  const spawnEnv: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (value === undefined) continue;
-    if (shouldExcludeTerminalEnvKey(key)) continue;
-    spawnEnv[key] = value;
-  }
-  if (runtimeEnv) {
-    for (const [key, value] of Object.entries(runtimeEnv)) {
-      spawnEnv[key] = value;
-    }
-  }
-  return spawnEnv;
 }
 
 function normalizedRuntimeEnv(
@@ -360,7 +323,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   async open(raw: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
     const input = decodeTerminalOpenInput(raw);
     return this.runWithThreadLock(input.threadId, async () => {
-      await this.assertValidCwd(input.cwd);
+      await assertValidCwd(input.cwd);
 
       const sessionKey = toSessionKey(input.threadId, input.terminalId);
       const existing = this.sessions.get(sessionKey);
@@ -481,7 +444,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   async restart(raw: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
     const input = decodeTerminalOpenInput(raw);
     return this.runWithThreadLock(input.threadId, async () => {
-      await this.assertValidCwd(input.cwd);
+      await assertValidCwd(input.cwd);
 
       const sessionKey = toSessionKey(input.threadId, input.terminalId);
       let session = this.sessions.get(sessionKey);
@@ -590,7 +553,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     let startedShell: string | null = null;
     try {
       const shellCandidates = resolveShellCandidates(this.shellResolver);
-      const terminalEnv = createTerminalSpawnEnv(process.env, session.runtimeEnv);
+      const terminalEnv = createSpawnEnv(process.env, session.runtimeEnv);
       let lastSpawnError: unknown = null;
 
       const spawnWithCandidate = (candidate: ShellCandidate) =>
@@ -1050,21 +1013,6 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     }
   }
 
-  private async assertValidCwd(cwd: string): Promise<void> {
-    let stats: fs.Stats;
-    try {
-      stats = await fs.promises.stat(cwd);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new Error(`Terminal cwd does not exist: ${cwd}`, { cause: error });
-      }
-      throw error;
-    }
-    if (!stats.isDirectory()) {
-      throw new Error(`Terminal cwd is not a directory: ${cwd}`);
-    }
-  }
-
   private async closeSession(
     threadId: string,
     terminalId: string,
@@ -1148,22 +1096,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     return path.join(this.logsDir, `${legacySafeThreadId(threadId)}.log`);
   }
 
-  private async runWithThreadLock<T>(threadId: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.threadLocks.get(threadId) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.threadLocks.set(threadId, current);
-    await previous.catch(() => undefined);
-    try {
-      return await task();
-    } finally {
-      release();
-      if (this.threadLocks.get(threadId) === current) {
-        this.threadLocks.delete(threadId);
-      }
-    }
+  private runWithThreadLock<T>(threadId: string, task: () => Promise<T>): Promise<T> {
+    return runWithThreadLock(this.threadLocks, threadId, task);
   }
 }
 
