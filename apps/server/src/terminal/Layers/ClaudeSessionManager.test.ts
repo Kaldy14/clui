@@ -394,6 +394,50 @@ describe("ClaudeSessionManagerRuntime", () => {
     });
   });
 
+  // ── destroySession ─────────────────────────────────────────────
+
+  describe("destroySession", () => {
+    it("kills process and removes session without emitting lifecycle events", async () => {
+      const result = makeRuntime({ maxActiveSessions: 100 });
+      runtime = result.runtime;
+      const events = collectEvents(runtime);
+
+      await runtime.startSession(defaultInput());
+      const ptyProcess = result.ptyAdapter.processes[0]!;
+
+      // Clear events from startSession
+      events.length = 0;
+
+      await runtime.destroySession("thread-1");
+
+      expect(ptyProcess.killed).toBe(true);
+      // No hibernated/exited events emitted
+      expect(events.filter((e) => e.type === "hibernated" || e.type === "exited")).toHaveLength(0);
+      // Session completely removed — status returns "new"
+      expect(runtime.getSessionStatus("thread-1")).toBe("new");
+    });
+
+    it("is a no-op for unknown thread", async () => {
+      const result = makeRuntime();
+      runtime = result.runtime;
+
+      // Should not throw
+      await runtime.destroySession("nonexistent");
+    });
+
+    it("handles dormant session (no process)", async () => {
+      const result = makeRuntime();
+      runtime = result.runtime;
+
+      await runtime.startSession(defaultInput());
+      result.ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: null });
+      expect(runtime.getSessionStatus("thread-1")).toBe("dormant");
+
+      await runtime.destroySession("thread-1");
+      expect(runtime.getSessionStatus("thread-1")).toBe("new");
+    });
+  });
+
   // ── dispose ────────────────────────────────────────────────────
 
   describe("dispose", () => {
@@ -414,54 +458,48 @@ describe("ClaudeSessionManagerRuntime", () => {
     });
   });
 
-  // ── Session ID extraction ──────────────────────────────────────
+  // ── Session ID assignment ─────────────────────────────────────
 
-  describe("session ID extraction", () => {
-    it("emits sessionId event when output contains session_id pattern", async () => {
+  describe("session ID assignment", () => {
+    it("generates a session ID and passes --session-id for new sessions", async () => {
       const result = makeRuntime();
       runtime = result.runtime;
       const events = collectEvents(runtime);
 
       await runtime.startSession(defaultInput());
-      const ptyProcess = result.ptyAdapter.processes[0]!;
-      ptyProcess.emitData("session_id: abc-123-def\n");
 
+      // Should emit sessionId event immediately on start
       const sessionIdEvents = events.filter((e) => e.type === "sessionId");
       expect(sessionIdEvents).toHaveLength(1);
-      expect(sessionIdEvents[0]!.type === "sessionId" && sessionIdEvents[0]!.claudeSessionId).toBe("abc-123-def");
+      const emittedId =
+        sessionIdEvents[0]!.type === "sessionId" ? sessionIdEvents[0]!.claudeSessionId : null;
+      expect(emittedId).toMatch(/^[a-f0-9-]+$/);
+
+      // Should pass --session-id to the CLI
+      const spawnInput = result.ptyAdapter.spawnInputs[0]!;
+      expect(spawnInput.args).toContain("--session-id");
+      expect(spawnInput.args).toContain(emittedId);
     });
 
-    it("captures session ID from buffer tail on split chunks", async () => {
+    it("passes --resume for resumed sessions", async () => {
       const result = makeRuntime();
       runtime = result.runtime;
       const events = collectEvents(runtime);
 
-      await runtime.startSession(defaultInput());
-      const ptyProcess = result.ptyAdapter.processes[0]!;
-      // Emit partial data, then the rest
-      ptyProcess.emitData("session_id: ");
-      ptyProcess.emitData("abc-456\n");
+      await runtime.startSession(defaultInput({ resumeSessionId: "existing-session-abc" }));
 
-      // tryExtractSessionId scans buffer tail(512), so split chunks are captured
+      // Should emit sessionId event with the provided resume ID
       const sessionIdEvents = events.filter((e) => e.type === "sessionId");
       expect(sessionIdEvents).toHaveLength(1);
       expect(
         sessionIdEvents[0]!.type === "sessionId" && sessionIdEvents[0]!.claudeSessionId,
-      ).toBe("abc-456");
-    });
+      ).toBe("existing-session-abc");
 
-    it("only extracts session ID once", async () => {
-      const result = makeRuntime();
-      runtime = result.runtime;
-      const events = collectEvents(runtime);
-
-      await runtime.startSession(defaultInput());
-      const ptyProcess = result.ptyAdapter.processes[0]!;
-      ptyProcess.emitData("session_id: abc-123\n");
-      ptyProcess.emitData("session_id: def-456\n");
-
-      const sessionIdEvents = events.filter((e) => e.type === "sessionId");
-      expect(sessionIdEvents).toHaveLength(1);
+      // Should pass --resume (not --session-id) to the CLI
+      const spawnInput = result.ptyAdapter.spawnInputs[0]!;
+      expect(spawnInput.args).toContain("--resume");
+      expect(spawnInput.args).toContain("existing-session-abc");
+      expect(spawnInput.args).not.toContain("--session-id");
     });
   });
 
@@ -475,14 +513,14 @@ describe("ClaudeSessionManagerRuntime", () => {
       expect(runtime.getClaudeSessionId("unknown")).toBeNull();
     });
 
-    it("returns session ID after extraction", async () => {
+    it("returns the assigned session ID", async () => {
       const result = makeRuntime();
       runtime = result.runtime;
 
       await runtime.startSession(defaultInput());
-      result.ptyAdapter.processes[0]!.emitData("session_id: abc-123\n");
 
-      expect(runtime.getClaudeSessionId("thread-1")).toBe("abc-123");
+      const sessionId = runtime.getClaudeSessionId("thread-1");
+      expect(sessionId).toMatch(/^[a-f0-9-]+$/);
     });
   });
 
@@ -532,7 +570,7 @@ describe("ClaudeSessionManagerRuntime", () => {
   // ── Environment filtering ──────────────────────────────────────
 
   describe("environment filtering", () => {
-    it("excludes VITE_, T3CODE_, CLUI_, and sensitive env vars from spawn", async () => {
+    it("excludes VITE_, CLUI_, CLAUDE_CODE_, and sensitive env vars from spawn", async () => {
       const originalValues = new Map<string, string | undefined>();
       const setEnv = (key: string, value: string) => {
         if (!originalValues.has(key)) {
@@ -551,8 +589,8 @@ describe("ClaudeSessionManagerRuntime", () => {
       };
 
       setEnv("VITE_DEV_URL", "http://localhost:5173");
-      setEnv("T3CODE_PORT", "3773");
-      setEnv("CLUI_PORT", "3000");
+      setEnv("CLUI_PORT", "3773");
+      setEnv("CLAUDE_CODE_TEST_VAR", "should-be-excluded");
       setEnv("ANTHROPIC_API_KEY", "sk-test");
       setEnv("MY_SECRET", "secret-value");
       setEnv("MY_TOKEN", "token-value");
@@ -567,8 +605,8 @@ describe("ClaudeSessionManagerRuntime", () => {
 
         const spawnInput = result.ptyAdapter.spawnInputs[0]!;
         expect(spawnInput.env.VITE_DEV_URL).toBeUndefined();
-        expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
         expect(spawnInput.env.CLUI_PORT).toBeUndefined();
+        expect(spawnInput.env.CLAUDE_CODE_TEST_VAR).toBeUndefined();
         expect(spawnInput.env.ANTHROPIC_API_KEY).toBeUndefined();
         expect(spawnInput.env.MY_SECRET).toBeUndefined();
         expect(spawnInput.env.MY_TOKEN).toBeUndefined();
