@@ -21,6 +21,7 @@ import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
+import { NodePtyHostAdapterLive } from "./terminal/Layers/NodePtyHost";
 
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
@@ -52,9 +53,12 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(textGenerationLayer),
   );
 
+  // Bun.spawn({ terminal }) doesn't create a real tty (isatty() returns false),
+  // and node-pty's native addon crashes under Bun with ENXIO. Use NodePtyHost
+  // which delegates to a Node.js subprocess running node-pty for a real pty.
   const ptyAdapterLayer =
     typeof Bun !== "undefined" && process.platform !== "win32"
-      ? BunPtyAdapterLive
+      ? NodePtyHostAdapterLive
       : NodePtyAdapterLive;
 
   const terminalLayer = TerminalManagerLive.pipe(Layer.provide(ptyAdapterLayer));

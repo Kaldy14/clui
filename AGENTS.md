@@ -77,7 +77,7 @@ bun fmt              # oxfmt
 
 ### Key Environment Variables
 
-- `CLUI_PORT` — server port (default 3000)
+- `CLUI_PORT` — server port (default 4100)
 - `CLUI_MODE` — "web" or "desktop"
 - `CLUI_STATE_DIR` — state persistence directory
 - `VITE_WS_URL` — WebSocket URL for web dev mode

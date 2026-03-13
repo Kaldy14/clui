@@ -92,17 +92,17 @@ const makeCheckpointStore = Effect.gen(function* () {
       const operation = "CheckpointStore.captureCheckpoint";
 
       yield* Effect.acquireUseRelease(
-        fs.makeTempDirectory({ prefix: "t3-fs-checkpoint-" }),
+        fs.makeTempDirectory({ prefix: "clui-fs-checkpoint-" }),
         (tempDir) =>
           Effect.gen(function* () {
             const tempIndexPath = path.join(tempDir, `index-${randomUUID()}`);
             const commitEnv: NodeJS.ProcessEnv = {
               ...process.env,
               GIT_INDEX_FILE: tempIndexPath,
-              GIT_AUTHOR_NAME: "T3 Code",
-              GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
-              GIT_COMMITTER_NAME: "T3 Code",
-              GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+              GIT_AUTHOR_NAME: "Clui",
+              GIT_AUTHOR_EMAIL: "clui@users.noreply.github.com",
+              GIT_COMMITTER_NAME: "Clui",
+              GIT_COMMITTER_EMAIL: "clui@users.noreply.github.com",
             };
 
             const headExists = yield* hasHeadCommit(input.cwd);
@@ -138,7 +138,7 @@ const makeCheckpointStore = Effect.gen(function* () {
               });
             }
 
-            const message = `t3 checkpoint ref=${input.checkpointRef}`;
+            const message = `clui checkpoint ref=${input.checkpointRef}`;
             const commitTreeResult = yield* git.execute({
               operation,
               cwd: input.cwd,

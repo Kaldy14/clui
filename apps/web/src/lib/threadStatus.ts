@@ -1,8 +1,8 @@
-import type { GitStatusResult } from "@clui/contracts";
+import type { GitStatusResult, TerminalStatus } from "@clui/contracts";
 import type { Thread } from "../types";
 
 export interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Needs Input";
+  label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Needs Input" | "Running" | "Paused";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -94,6 +94,32 @@ export function threadStatusPill(
     };
   }
 
+  // Claude terminal status pills
+  const pill = claudeTerminalStatusPill(thread.terminalStatus);
+  if (pill) return pill;
+
+  return null;
+}
+
+export function claudeTerminalStatusPill(
+  terminalStatus: TerminalStatus | undefined,
+): ThreadStatusPill | null {
+  if (terminalStatus === "active") {
+    return {
+      label: "Running",
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      pulse: true,
+    };
+  }
+  if (terminalStatus === "dormant") {
+    return {
+      label: "Paused",
+      colorClass: "text-zinc-500 dark:text-zinc-400/70",
+      dotClass: "bg-zinc-400 dark:bg-zinc-500/70",
+      pulse: false,
+    };
+  }
   return null;
 }
 

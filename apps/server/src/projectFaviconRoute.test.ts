@@ -86,7 +86,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("serves a well-known favicon file from the project root", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-root-");
+    const projectDir = makeTempDir("clui-favicon-route-root-");
     fs.writeFileSync(path.join(projectDir, "favicon.svg"), "<svg>favicon</svg>", "utf8");
 
     await withRouteServer(async (baseUrl) => {
@@ -99,7 +99,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("resolves icon href from source files when no well-known favicon exists", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-source-");
+    const projectDir = makeTempDir("clui-favicon-route-source-");
     const iconPath = path.join(projectDir, "public", "brand", "logo.svg");
     fs.mkdirSync(path.dirname(iconPath), { recursive: true });
     fs.writeFileSync(
@@ -118,7 +118,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("resolves icon link when href appears before rel in HTML", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-html-order-");
+    const projectDir = makeTempDir("clui-favicon-route-html-order-");
     const iconPath = path.join(projectDir, "public", "brand", "logo.svg");
     fs.mkdirSync(path.dirname(iconPath), { recursive: true });
     fs.writeFileSync(
@@ -137,7 +137,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("resolves object-style icon metadata when href appears before rel", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-obj-order-");
+    const projectDir = makeTempDir("clui-favicon-route-obj-order-");
     const iconPath = path.join(projectDir, "public", "brand", "obj.svg");
     fs.mkdirSync(path.dirname(iconPath), { recursive: true });
     fs.mkdirSync(path.join(projectDir, "src"), { recursive: true });
@@ -158,7 +158,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("discovers a favicon inside a monorepo sub-app directory", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-monorepo-");
+    const projectDir = makeTempDir("clui-favicon-route-monorepo-");
     // Simulate apps/web/public/favicon.ico in a monorepo
     const iconPath = path.join(projectDir, "apps", "web", "public", "favicon.ico");
     fs.mkdirSync(path.dirname(iconPath), { recursive: true });
@@ -174,7 +174,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("discovers a favicon in a different monorepo sub-app (e.g. apps/admin)", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-monorepo-admin-");
+    const projectDir = makeTempDir("clui-favicon-route-monorepo-admin-");
     const iconPath = path.join(projectDir, "apps", "admin", "public", "favicon.svg");
     fs.mkdirSync(path.dirname(iconPath), { recursive: true });
     fs.writeFileSync(iconPath, "<svg>admin</svg>", "utf8");
@@ -189,7 +189,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("prefers root-level favicon over monorepo sub-app favicon", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-monorepo-priority-");
+    const projectDir = makeTempDir("clui-favicon-route-monorepo-priority-");
     // Root-level favicon
     fs.writeFileSync(path.join(projectDir, "favicon.svg"), "<svg>root</svg>", "utf8");
     // Sub-app favicon
@@ -206,7 +206,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("resolves icon href from source files in a monorepo sub-app", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-monorepo-source-");
+    const projectDir = makeTempDir("clui-favicon-route-monorepo-source-");
     const appDir = path.join(projectDir, "apps", "web");
     const iconPath = path.join(appDir, "public", "brand", "logo.svg");
     fs.mkdirSync(path.dirname(iconPath), { recursive: true });
@@ -222,7 +222,7 @@ describe("tryHandleProjectFaviconRequest", () => {
   });
 
   it("serves a fallback favicon when no icon exists", async () => {
-    const projectDir = makeTempDir("t3code-favicon-route-fallback-");
+    const projectDir = makeTempDir("clui-favicon-route-fallback-");
 
     await withRouteServer(async (baseUrl) => {
       const pathname = `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`;

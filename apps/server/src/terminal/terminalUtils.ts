@@ -26,8 +26,11 @@ export function capHistory(history: string, maxLines: number): string {
 export function shouldExcludeEnvKey(key: string): boolean {
   const normalized = key.toUpperCase();
   if (normalized.startsWith("VITE_")) return true;
-  if (normalized.startsWith("T3CODE_")) return true;
   if (normalized.startsWith("CLUI_")) return true;
+  // Strip Claude Code env vars to prevent nested-session detection (forces --print mode).
+  // Strip CMUX vars so the cmux claude wrapper does a clean pass-through.
+  if (normalized === "CLAUDECODE" || normalized.startsWith("CLAUDE_CODE_")) return true;
+  if (normalized.startsWith("CMUX_")) return true;
   if (TERMINAL_ENV_BLOCKLIST.has(normalized)) return true;
   for (const suffix of SENSITIVE_SUFFIX_PATTERNS) {
     if (normalized.endsWith(suffix)) return true;

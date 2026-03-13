@@ -302,7 +302,7 @@ pty.onData((data) => {
 
 ---
 
-### Phase 4: Terminal UI — Client Side (Day 4-6)
+### Phase 4: Terminal UI — Client Side (Day 4-6) ✅ COMPLETE
 
 **Goal:** Replace the chat view with a terminal view per thread.
 
@@ -383,6 +383,16 @@ New status mapping:
 | `apps/web/package.json` | Add `@xterm/addon-webgl`, `@xterm/addon-search`, `@xterm/addon-web-links` |
 
 **Checkpoint:** Click thread → see terminal → type → claude responds. Switch threads preserved. Dormant threads show scrollback.
+
+#### Post-Phase 4: Frontend Architecture Review ✅ COMPLETE
+
+5-agent parallel review (style, quality, accessibility, browser/platform, test-engineer). 12 fixes applied:
+
+**P0:** WebGL addon leak (WeakSet tracking), missing `disposed` guard in ActiveTerminalView, route placeholder in sheet branch, duplicated `terminalThemeFromApp()` extracted to `lib/terminalTheme.ts`.
+
+**P1:** `pointer-events: none` → `disableStdin` (enables copy/paste on dormant), `handleResume` reads actual cached terminal dims, error `role="alert"`, icons `aria-hidden`, `aria-busy` on buttons, `ResizeObserver` on terminal container, exhaustive switch in `writeEvent`, stale `cached` ref → ownership flag.
+
+**Deferred to Phase 6:** keyboard escape binding, `screenReaderMode` setting, MutationObserver debounce, `makeThread` fixture extraction, terminal font size docs.
 
 ---
 
@@ -468,6 +478,221 @@ New status mapping:
 
 ---
 
+### Phase 8: Claude Code Hooks Integration (Badge System)
+
+**Goal:** Use Claude Code's `--settings` hooks to drive rich sidebar badges — replace terminal output parsing with structured hook callbacks.
+
+**Reference:** Take heavy inspiration from `../cmux` which implements this pattern well. Key cmux files:
+- `Resources/bin/claude` — wrapper that injects `--settings` with hook JSON and `--session-id`
+- `CLI/cmux.swift` (lines 8450-8867) — hook handler: `session-start`, `stop`, `notification` subcommands
+- `CLI/cmux.swift` (lines 238-303) — `ClaudeHookSessionStore` for session→workspace mapping with 7-day retention
+- `Sources/TerminalController.swift` — `notify_target` and `set_status`/`clear_status` commands for badge updates
+- `Sources/TerminalNotificationStore.swift` — in-memory notification state with disk persistence
+
+**cmux approach summary:** A `claude` wrapper script checks if running inside cmux (via `CMUX_SURFACE_ID` env var), verifies the cmux socket is live (0.75s timeout to avoid blocking startup), then injects `--session-id` (UUID) and `--settings` with hook JSON pointing to `cmux claude-hook <event>` commands. The hook handler maps sessions to workspaces/surfaces, sets status badges ("Running" with bolt icon, "Needs input" with bell icon), and routes notifications to the correct tab. Notification text is classified (Permission/Error/Waiting/Attention) and truncated to 180 chars.
+
+Claude Code CLI supports `--settings <path>` which accepts a JSON file defining hooks for lifecycle events (`SessionStart`, `Stop`, `Notification`). By injecting a settings file at spawn time, we get structured callbacks instead of fragile output parsing.
+
+#### 8.1 Hook settings injection
+
+| File | Action |
+|------|--------|
+| `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | Generate per-session hook settings JSON and pass `--settings <path>` when spawning claude. Also inject `--session-id <uuid>` for session tracking (as cmux does). |
+
+Settings JSON structure (mirroring cmux's `HOOKS_JSON`):
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "curl -s http://localhost:$PORT/hooks/session-start?thread=$THREAD_ID", "timeout": 10 }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "curl -s http://localhost:$PORT/hooks/stop?thread=$THREAD_ID", "timeout": 10 }] }],
+    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "curl -s http://localhost:$PORT/hooks/notification?thread=$THREAD_ID", "timeout": 10 }] }]
+  }
+}
+```
+
+Key details from cmux:
+- Clear `CLAUDECODE` env var to prevent nested session detection
+- Timeout hooks (10s) to avoid blocking Claude startup
+- Verify server is reachable before injecting hooks (graceful degradation if not)
+
+#### 8.2 Hook receiver endpoint
+
+| File | Action |
+|------|--------|
+| `apps/server/src/hooks/hookReceiver.ts` (NEW) | Lightweight HTTP handler for hook callbacks |
+| `apps/server/src/server.ts` | Register hook routes on the existing HTTP server |
+
+Endpoint receives hook events, maps them to thread IDs, and emits internal events. Reuse cmux's notification classification logic:
+- Parse notification JSON for event type, message, nested data
+- Classify: "Permission/Approve/Approval" → Permission, "Error/Failed/Exception" → Error, "Idle/Wait/Input/Prompt" → Waiting, default → Attention
+- Truncate notification body to 180 chars
+
+#### 8.3 Session-to-thread mapping store
+
+| File | Action |
+|------|--------|
+| `apps/server/src/hooks/hookSessionStore.ts` (NEW) | Map `sessionId → { threadId, surfaceId, startedAt, updatedAt, lastSubtitle }` (inspired by cmux's `ClaudeHookSessionStore`) |
+
+- Persist to SQLite (or JSON file like cmux's `claude-hook-sessions.json`)
+- 7-day retention policy for stale records
+- Thread-safe updates
+
+#### 8.4 New ClaudeSessionEvent types
+
+| File | Action |
+|------|--------|
+| `packages/contracts/src/terminal.ts` | Add hook-derived event types: `claude.working`, `claude.needsInput`, `claude.pendingApproval`, `claude.completed`, `claude.error`, `claude.notification` |
+
+#### 8.5 Wire hooks into sidebar badge system
+
+| File | Action |
+|------|--------|
+| `apps/web/src/lib/threadStatus.ts` | Map hook events to badge types with icons and colors (inspired by cmux's `set_status`) |
+
+Badge mapping (mirroring cmux's status icons/colors):
+- `SessionStart` → "Working" (bolt icon, blue, pulsing)
+- `Notification` (needs input) → "Needs Input" (bell icon, amber)
+- `Notification` (pending approval) → "Pending Approval" (amber)
+- `Notification` (error) → "Error" (red)
+- `Stop` → "Completed" (gray)
+- PTY still running, no recent hook → "Running" (blue)
+- PTY exited → "Paused" (gray)
+
+#### 8.6 OS-level notifications
+
+| File | Action |
+|------|--------|
+| `apps/server/src/hooks/notifications.ts` (NEW) | Forward hook events as OS notifications (Notification API in web, native in Electron) |
+
+Reuse cmux's notification routing pattern:
+- Route notifications to the correct thread/tab
+- Show OS notification when thread is not in focus
+- Custom notification sound support (future)
+
+#### 8.7 Cleanup
+
+- Remove any terminal output parsing used for status detection
+- Settings JSON files cleaned up on session end
+- Clear status on session dispose
+
+**Checkpoint:** Sidebar badges update in real-time based on Claude Code lifecycle. OS notifications fire when threads need attention. No output parsing needed.
+
+---
+
+### Phase 9: Auto-Generate Thread Titles
+
+**Goal:** Threads should have meaningful titles instead of "New Thread" — derive a title from the initial prompt sent to Claude Code.
+
+#### 9.1 Capture initial prompt text
+
+| File | Action |
+|------|--------|
+| `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | After session starts, watch the first chunk of terminal output for the user's initial prompt (the text after the Claude banner before the first response) |
+
+Two approaches (try in order):
+1. **Parse terminal output:** After the Claude Code banner renders, the next user input line is the initial prompt. Capture it from PTY output.
+2. **Use hook data:** If `SessionStart` hook provides context about the prompt, extract it there.
+
+#### 9.2 Title generation
+
+| File | Action |
+|------|--------|
+| `apps/server/src/terminal/titleGenerator.ts` (NEW) | Generate a short title from the initial prompt |
+
+Strategies (cheapest first):
+1. **Truncate:** First 60 chars of the prompt, cleaned up (strip newlines, trim)
+2. **AI summary:** If an API key is available, call Claude Haiku to generate a 3-6 word title from the prompt (fire-and-forget, don't block the session)
+3. **Fallback:** If no prompt captured within 30s, keep the default name
+
+#### 9.3 Push title update to sidebar
+
+| File | Action |
+|------|--------|
+| `packages/contracts/src/terminal.ts` | Add `terminal.titleUpdate` push event: `{ threadId, title }` |
+| `apps/server/src/wsServer.ts` | Emit `terminal.titleUpdate` when title is generated |
+| `apps/web/src/components/Sidebar/` | Handle `terminal.titleUpdate` — update thread name in real-time |
+
+#### 9.4 Allow manual override
+
+- User can still rename threads manually via sidebar (existing functionality)
+- Auto-generated title only applies if the thread name hasn't been manually set
+- Store a `titleSource: "auto" | "manual"` flag to avoid overwriting user renames
+
+**Checkpoint:** New thread → type prompt → sidebar title updates within a few seconds to reflect what the thread is about.
+
+---
+
+### Phase 10: Restore Git Workflow UI (from t3code)
+
+**Goal:** Bring back t3code's git workflow that was lost during the refactor — branch/worktree selection on new thread creation, and the action toolbar for commit/push/PR.
+
+**Reference:** Research `../t3code` extensively before implementing. The original repo has the full git workflow UI — branch picker, worktree creation, commit/push/PR toolbar, and recent actions. Key areas to study:
+- `apps/web/src/components/` — look for BranchToolbar, GitToolbar, NewThread, worktree picker components
+- `apps/web/src/lib/` — git-related hooks and state management
+- `apps/server/src/git/` — server-side git RPC handlers and worktree management
+- `packages/contracts/src/` — git-related schemas and types
+
+t3code had a great git workflow: when creating a new thread, you could choose between local or a worktree, pick the branch to start from, and the top toolbar had buttons for commit, push, create PR, and recent actions. This needs to come back.
+
+#### 10.1 New thread creation flow — branch/worktree picker
+
+| File | Action |
+|------|--------|
+| `apps/web/src/components/NewThreadView.tsx` | Restore branch/worktree selection UI from t3code's thread creation flow |
+
+New thread creation should offer:
+- **Local:** Run in the project's main directory (current branch)
+- **Worktree:** Create a new worktree from a selected branch
+- Branch picker dropdown (list local + remote branches)
+- Option to create a new branch from current HEAD
+- Worktree path auto-generated from branch name
+
+#### 10.2 Git action toolbar
+
+| File | Action |
+|------|--------|
+| `apps/web/src/components/GitToolbar.tsx` (NEW or restore from t3code) | Top toolbar with git action buttons |
+
+Toolbar buttons:
+- **Commit** — Opens commit dialog (staged changes summary, message input)
+- **Push** — Push current branch to remote
+- **Create PR** — Opens PR creation flow (title, description, base branch)
+- **Pull** — Pull latest from remote
+- **Branch indicator** — Shows current branch, click to switch
+
+#### 10.3 Recent actions / activity feed
+
+| File | Action |
+|------|--------|
+| `apps/web/src/components/RecentActions.tsx` (NEW or restore) | Show recent git actions (commits, pushes, PRs) per thread |
+
+- Compact list of recent operations with timestamps
+- Click to see details (commit diff, PR link, etc.)
+- Sourced from git log and server-tracked action history
+
+#### 10.4 Wire git operations to thread context
+
+| File | Action |
+|------|--------|
+| `apps/server/src/git/` | Ensure all git RPC methods respect the thread's cwd (worktree path) |
+| `apps/web/src/lib/` | Git operation hooks pass the active thread's worktree cwd |
+
+Key: Every git operation must run in the context of the thread's worktree, not the project root. t3code already had this wiring — restore it.
+
+#### 10.5 Branch toolbar integration with terminal
+
+| File | Action |
+|------|--------|
+| `apps/web/src/components/BranchToolbar.tsx` | Ensure branch switching restarts the terminal in the new cwd |
+
+- Switching branches updates the thread's cwd
+- If a terminal is active, prompt to restart in new context
+- Worktree threads always use the worktree path as cwd
+
+**Checkpoint:** New thread offers branch/worktree choice. Active threads show git toolbar with commit/push/PR. Branch switching works end-to-end with terminal restart.
+
+---
+
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
@@ -507,5 +732,8 @@ New status mapping:
 | 5 | Lifecycle Management | Day 6-7 |
 | 6 | Polish & Integration | Day 7-9 |
 | 7 | Testing & Hardening | Day 9-10 |
+| 8 | Claude Code Hooks (Badge System) | Day 10-12 |
+| 9 | Auto-Generate Thread Titles | Day 12-13 |
+| 10 | Restore Git Workflow UI | Day 13-16 |
 
-**MVP (Phases 0-5):** ~7 days | **Polished v1:** ~10 days
+**MVP (Phases 0-5):** ~7 days | **Polished v1:** ~10 days | **Full v1 with hooks:** ~12 days | **Complete v1:** ~16 days

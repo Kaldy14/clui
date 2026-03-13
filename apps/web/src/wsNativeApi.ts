@@ -1,4 +1,5 @@
 import {
+  ClaudeSessionEvent,
   MCP_WS_METHODS,
   OrchestrationEvent,
   ORCHESTRATION_WS_CHANNELS,
@@ -217,6 +218,18 @@ export function createWsNativeApi(): NativeApi {
       setServers: (input) => transport.request(MCP_WS_METHODS.mcpSetServers, input),
       reconnectServer: (input) => transport.request(MCP_WS_METHODS.mcpReconnectServer, input),
       toggleServer: (input) => transport.request(MCP_WS_METHODS.mcpToggleServer, input),
+    },
+    claude: {
+      start: (input) => transport.request(WS_METHODS.claudeStart, input),
+      hibernate: (input) => transport.request(WS_METHODS.claudeHibernate, input),
+      write: (input) => transport.request(WS_METHODS.claudeWrite, input),
+      resize: (input) => transport.request(WS_METHODS.claudeResize, input),
+      getScrollback: (input) => transport.request(WS_METHODS.claudeGetScrollback, input),
+      onSessionEvent: (callback) =>
+        transport.subscribe(WS_CHANNELS.claudeSessionEvent, (data) => {
+          const payload = decodeAndWarnOnFailure(ClaudeSessionEvent, data);
+          if (payload) callback(payload);
+        }),
     },
   };
 

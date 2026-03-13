@@ -25,7 +25,7 @@ const makeKeybindingsLayer = () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const { join } = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-server-config-test-" });
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "clui-server-config-test-" });
           const configPath = join(dir, "keybindings.json");
           return { keybindingsConfigPath: configPath } as ServerConfigShape;
         }),

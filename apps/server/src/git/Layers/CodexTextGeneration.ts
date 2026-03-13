@@ -130,7 +130,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     prefix: string,
     content: string,
   ): Effect.Effect<string, TextGenerationError> => {
-    const filePath = path.join(tempDir, `t3code-${prefix}-${process.pid}-${randomUUID()}.tmp`);
+    const filePath = path.join(tempDir, `clui-${prefix}-${process.pid}-${randomUUID()}.tmp`);
     return fileSystem.writeFileString(filePath, content).pipe(
       Effect.mapError(
         (cause) =>

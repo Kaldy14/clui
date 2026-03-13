@@ -26,8 +26,10 @@ export interface AppState {
   projectOrder: string[];
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
+const PERSISTED_STATE_KEY = "clui:renderer-state:v8";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "clui:renderer-state:v7",
+  "t3code:renderer-state:v8",
   "t3code:renderer-state:v7",
   "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
@@ -355,6 +357,9 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           files: checkpoint.files.map((file) => ({ ...file })),
         })),
         activities: thread.activities.map((activity) => ({ ...activity })),
+        terminalStatus: thread.terminalStatus ?? "new",
+        claudeSessionId: thread.claudeSessionId ?? null,
+        scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
       };
     });
   return {
