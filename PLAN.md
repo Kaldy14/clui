@@ -486,7 +486,7 @@ All Phase 6 features implemented and verified.
 
 ---
 
-### Phase 8: Claude Code Hooks Integration (Badge System)
+### Phase 8: Claude Code Hooks Integration (Badge System) ✅ COMPLETE
 
 **Goal:** Use Claude Code's `--settings` hooks to drive rich sidebar badges — replace terminal output parsing with structured hook callbacks.
 
@@ -583,11 +583,11 @@ Reuse cmux's notification routing pattern:
 - Settings JSON files cleaned up on session end
 - Clear status on session dispose
 
-**Checkpoint:** Sidebar badges update in real-time based on Claude Code lifecycle. OS notifications fire when threads need attention. No output parsing needed.
+**Checkpoint:** Sidebar badges update in real-time based on Claude Code lifecycle. OS notifications fire when threads need attention. No output parsing needed. `bun typecheck` 6/6, `bun lint` 0 errors, `bun run test` 399 server + 345 web tests pass.
 
 ---
 
-### Phase 9: Auto-Generate Thread Titles
+### Phase 9: Auto-Generate Thread Titles ✅ COMPLETE
 
 **Goal:** Threads should have meaningful titles instead of "New Thread" — derive a title from the initial prompt sent to Claude Code.
 
@@ -630,7 +630,7 @@ Strategies (cheapest first):
 
 ---
 
-### Phase 10: Restore Git Workflow UI (from t3code)
+### Phase 10: Restore Git Workflow UI (from t3code) ✅ COMPLETE (kept from t3code)
 
 **Goal:** Bring back t3code's git workflow that was lost during the refactor — branch/worktree selection on new thread creation, and the action toolbar for commit/push/PR.
 
@@ -706,8 +706,9 @@ Key: Every git operation must run in the context of the thread's worktree, not t
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Claude CLI session ID format changes | Resume breaks | Also store session path from `~/.claude/projects/`; fall back to fresh start |
-| xterm.js memory leak with many cached instances | Memory grows | Dispose instances for dormant threads; only cache active ones |
-| PTY scrollback buffer grows unbounded | Memory grows | Ring buffer with 500KB cap per session |
+| xterm.js memory leak with many cached instances | Memory grows | ✅ **Solved:** LRU cap (50), 2-hour idle sweep, WebGL disposal on detach. Busy threads protected from eviction. |
+| WebGL GPU context exhaustion (~16 limit) | New terminals fall back to canvas | ✅ **Solved:** WebGL addon disposed on detach, re-created on attach. Only the active terminal holds a GPU context. |
+| PTY scrollback buffer grows unbounded | Memory grows | Ring buffer with 5,000-line cap per session (server-side) |
 | node-pty Electron version mismatch | Build breaks | Use `electron-rebuild`; pin node-pty version |
 | Claude CLI not installed | App useless | Check PATH on startup; show install instructions |
 | WebSocket disconnect during session | Lost output | Buffer server-side; replay on reconnect |
@@ -740,8 +741,8 @@ Key: Every git operation must run in the context of the thread's worktree, not t
 | 5 | Lifecycle Management | Day 6-7 |
 | 6 | Polish & Integration | Day 7-9 |
 | 7 | Testing & Hardening | Day 9-10 |
-| 8 | Claude Code Hooks (Badge System) | Day 10-12 |
-| 9 | Auto-Generate Thread Titles | Day 12-13 |
+| 8 | Claude Code Hooks (Badge System) ✅ | Day 10-12 |
+| 9 | Auto-Generate Thread Titles ✅ | Day 12-13 |
 | 10 | Restore Git Workflow UI | Day 13-16 |
 
 **MVP (Phases 0-5):** ~7 days | **Polished v1:** ~10 days | **Full v1 with hooks:** ~12 days | **Complete v1:** ~16 days

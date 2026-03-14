@@ -428,6 +428,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             claudeSessionId: null,
             terminalStatus: "new",
             scrollbackSnapshot: null,
+            titleSource: "auto",
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -442,14 +443,20 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           if (Option.isNone(existingRow)) {
             return;
           }
+          // Skip auto-title updates if thread was manually renamed
+          const skipTitle =
+            event.payload.titleSource === "auto" &&
+            existingRow.value.titleSource === "manual" &&
+            event.payload.title !== undefined;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(!skipTitle && event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
+            ...(!skipTitle && event.payload.titleSource !== undefined ? { titleSource: event.payload.titleSource } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

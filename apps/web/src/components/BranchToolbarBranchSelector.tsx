@@ -50,7 +50,6 @@ interface BranchToolbarBranchSelectorProps {
   envLocked: boolean;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
-  onComposerFocusRequest?: () => void;
 }
 
 function toBranchActionErrorMessage(error: unknown): string {
@@ -81,7 +80,6 @@ export function BranchToolbarBranchSelector({
   envLocked,
   onSetThreadBranch,
   onCheckoutPullRequestRequest,
-  onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
@@ -162,7 +160,7 @@ export function BranchToolbarBranchSelector({
     if (isSelectingWorktreeBase) {
       onSetThreadBranch(branch.name, null);
       setIsBranchMenuOpen(false);
-      onComposerFocusRequest?.();
+
       return;
     }
 
@@ -176,7 +174,7 @@ export function BranchToolbarBranchSelector({
     if (selectionTarget.reuseExistingWorktree) {
       onSetThreadBranch(branch.name, selectionTarget.nextWorktreePath);
       setIsBranchMenuOpen(false);
-      onComposerFocusRequest?.();
+
       return;
     }
 
@@ -185,7 +183,7 @@ export function BranchToolbarBranchSelector({
       : branch.name;
 
     setIsBranchMenuOpen(false);
-    onComposerFocusRequest?.();
+
 
     runBranchAction(async () => {
       setOptimisticBranch(selectedBranchName);
@@ -220,7 +218,7 @@ export function BranchToolbarBranchSelector({
     if (!api || !branchCwd || !name || isBranchActionPending) return;
 
     setIsBranchMenuOpen(false);
-    onComposerFocusRequest?.();
+
 
     runBranchAction(async () => {
       setOptimisticBranch(name);
@@ -342,7 +340,7 @@ export function BranchToolbarBranchSelector({
             }
             setIsBranchMenuOpen(false);
             setBranchQuery("");
-            onComposerFocusRequest?.();
+      
             onCheckoutPullRequestRequest(prReference);
           }}
         >
@@ -414,8 +412,8 @@ export function BranchToolbarBranchSelector({
       value={resolvedActiveBranch}
     >
       <ComboboxTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className="text-muted-foreground/70 hover:text-foreground/80"
+        render={<Button variant="outline" size="xs" />}
+        className="border-border/50 bg-muted/40 text-foreground/80 shadow-none hover:bg-muted hover:text-foreground dark:border-border/30 dark:bg-muted/20 dark:hover:bg-muted/40"
         disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
       >
         <span className="max-w-[140px] truncate">{triggerLabel}</span>
@@ -426,12 +424,17 @@ export function BranchToolbarBranchSelector({
           <ComboboxInput
             className="[&_input]:font-sans rounded-md"
             inputClassName="ring-0"
-            placeholder="Search branches..."
+            placeholder="Search or create branch..."
             showTrigger={false}
             size="sm"
             value={branchQuery}
             onChange={(event) => setBranchQuery(event.target.value)}
           />
+          {!isSelectingWorktreeBase && !branchQuery && (
+            <p className="px-2 pb-1 text-[10px] text-muted-foreground/50">
+              Type a new name to create a branch
+            </p>
+          )}
         </div>
         <ComboboxEmpty>No branches found.</ComboboxEmpty>
 

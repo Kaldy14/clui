@@ -7,7 +7,6 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: ThreadId.makeUnsafe("thread-1"),
-    codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
     model: "gpt-5.3-codex",
@@ -27,6 +26,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     terminalStatus: "new",
     claudeSessionId: null,
     scrollbackSnapshot: null,
+    titleSource: "auto" as const,
+    hookStatus: null,
     ...overrides,
   };
 }

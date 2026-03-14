@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clui — Generate Icon PNGs</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0e0e14;
+      color: #e0e0e8;
+      padding: 48px;
+      min-height: 100vh;
+    }
+    h1 { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+    p.sub { color: #888; margin-bottom: 40px; font-size: 14px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 24px;
+    }
+    .card {
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .card h2 { font-size: 14px; font-weight: 500; color: #aaa; }
+    .card canvas {
+      border-radius: 8px;
+      image-rendering: pixelated;
+    }
+    .card a {
+      display: inline-block;
+      padding: 8px 20px;
+      background: #4F6AE5;
+      color: white;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .card a:hover { background: #3d58d0; }
+    .preview {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      margin-bottom: 40px;
+    }
+    .preview img { border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Clui Icon Generator</h1>
+  <p class="sub">Open this file in a browser. Click each download button to save the PNG favicons.</p>
+
+  <div class="grid" id="grid"></div>
+
+  <script>
+    const BRAND = '#4F6AE5';
+    const BG_DARK = '#1E1E2E';
+
+    // SVG template — solid background (for app icons / apple-touch)
+    function logoSolidSVG(size) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 512 512" fill="none">
+        <rect width="512" height="512" rx="96" fill="${BG_DARK}"/>
+        <path d="M112 148 L268 256 L112 364" stroke="${BRAND}" stroke-width="52" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <line x1="296" y1="364" x2="408" y2="364" stroke="${BRAND}" stroke-width="52" stroke-linecap="round"/>
+      </svg>`;
+    }
+
+    // SVG template — transparent background (for favicons)
+    function logoTransparentSVG(size) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 512 512" fill="none">
+        <path d="M80 128 L256 256 L80 384" stroke="${BRAND}" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <line x1="296" y1="384" x2="432" y2="384" stroke="${BRAND}" stroke-width="64" stroke-linecap="round"/>
+      </svg>`;
+    }
+
+    const icons = [
+      { name: 'favicon-16x16.png',        size: 16,   svg: logoTransparentSVG, desc: 'Favicon 16x16' },
+      { name: 'favicon-32x32.png',        size: 32,   svg: logoTransparentSVG, desc: 'Favicon 32x32' },
+      { name: 'favicon-48x48.png',        size: 48,   svg: logoTransparentSVG, desc: 'Favicon 48x48 (for .ico)' },
+      { name: 'apple-touch-icon.png',     size: 180,  svg: logoSolidSVG,       desc: 'Apple Touch Icon 180x180' },
+      { name: 'icon-192.png',             size: 192,  svg: logoSolidSVG,       desc: 'PWA Icon 192x192' },
+      { name: 'icon-512.png',             size: 512,  svg: logoSolidSVG,       desc: 'PWA Icon 512x512' },
+      { name: 'icon-1024.png',            size: 1024, svg: logoSolidSVG,       desc: 'App Store 1024x1024' },
+    ];
+
+    const grid = document.getElementById('grid');
+
+    icons.forEach(icon => {
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const h2 = document.createElement('h2');
+      h2.textContent = `${icon.desc} (${icon.size}px)`;
+      card.appendChild(h2);
+
+      const canvas = document.createElement('canvas');
+      const displaySize = Math.min(icon.size, 256);
+      canvas.width = icon.size;
+      canvas.height = icon.size;
+      canvas.style.width = displaySize + 'px';
+      canvas.style.height = displaySize + 'px';
+      card.appendChild(canvas);
+
+      const link = document.createElement('a');
+      link.textContent = `Download ${icon.name}`;
+      link.download = icon.name;
+      card.appendChild(link);
+
+      grid.appendChild(card);
+
+      // Render SVG to canvas
+      const svgStr = icon.svg(icon.size);
+      const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, icon.size, icon.size);
+        ctx.drawImage(img, 0, 0, icon.size, icon.size);
+        URL.revokeObjectURL(url);
+        link.href = canvas.toDataURL('image/png');
+      };
+      img.src = url;
+    });
+  </script>
+</body>
+</html>

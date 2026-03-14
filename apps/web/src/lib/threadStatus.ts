@@ -1,8 +1,8 @@
-import type { GitStatusResult, TerminalStatus } from "@clui/contracts";
+import type { ClaudeHookStatus, GitStatusResult, TerminalStatus } from "@clui/contracts";
 import type { Thread } from "../types";
 
 export interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Needs Input" | "Running" | "Paused";
+  label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Needs Input" | "Running" | "Paused" | "Error";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -94,8 +94,8 @@ export function threadStatusPill(
     };
   }
 
-  // Claude terminal status pills
-  const pill = claudeTerminalStatusPill(thread.terminalStatus);
+  // Claude terminal status pills (with hook-derived rich status)
+  const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
   if (pill) return pill;
 
   return null;
@@ -103,24 +103,63 @@ export function threadStatusPill(
 
 export function claudeTerminalStatusPill(
   terminalStatus: TerminalStatus | undefined,
+  hookStatus?: ClaudeHookStatus | null,
 ): ThreadStatusPill | null {
   if (terminalStatus === "active") {
-    return {
-      label: "Running",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
-      pulse: true,
-    };
+    // Rich hook-derived status when available.
+    // When hookStatus is null (idle at prompt), show no badge —
+    // the terminal being alive is obvious from the terminal content.
+    if (hookStatus) {
+      return hookStatusPill(hookStatus);
+    }
+    return null;
   }
   if (terminalStatus === "dormant") {
-    return {
-      label: "Paused",
-      colorClass: "text-zinc-500 dark:text-zinc-400/70",
-      dotClass: "bg-zinc-400 dark:bg-zinc-500/70",
-      pulse: false,
-    };
+    // No badge for dormant terminals — "Paused" state is obvious from
+    // the dormant terminal view and adds visual noise to the sidebar.
+    return null;
   }
   return null;
+}
+
+function hookStatusPill(hookStatus: ClaudeHookStatus): ThreadStatusPill {
+  switch (hookStatus) {
+    case "working":
+      return {
+        label: "Working",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: true,
+      };
+    case "needsInput":
+      return {
+        label: "Needs Input",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    case "pendingApproval":
+      return {
+        label: "Pending Approval",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    case "error":
+      return {
+        label: "Error",
+        colorClass: "text-red-600 dark:text-red-400/90",
+        dotClass: "bg-red-500 dark:bg-red-400/90",
+        pulse: false,
+      };
+    case "completed":
+      return {
+        label: "Completed",
+        colorClass: "text-zinc-500 dark:text-zinc-400/70",
+        dotClass: "bg-zinc-400 dark:bg-zinc-500/70",
+        pulse: false,
+      };
+  }
 }
 
 export function terminalStatusFromRunningIds(

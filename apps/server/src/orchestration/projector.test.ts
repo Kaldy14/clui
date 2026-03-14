@@ -81,6 +81,7 @@ describe("orchestration projector", () => {
         claudeSessionId: null,
         terminalStatus: "new",
         scrollbackSnapshot: null,
+        titleSource: "auto",
         latestTurn: null,
         createdAt: now,
         updatedAt: now,

@@ -13,6 +13,8 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   TerminalStatus,
+  TitleSource,
+  ClaudeHookStatus,
 } from "@clui/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -96,7 +98,6 @@ export interface Project {
 
 export interface Thread {
   id: ThreadId;
-  codexThreadId: string | null;
   projectId: ProjectId;
   title: string;
   model: string;
@@ -117,6 +118,8 @@ export interface Thread {
   terminalStatus: TerminalStatus;
   claudeSessionId: string | null;
   scrollbackSnapshot: string | null;
+  titleSource: TitleSource;
+  hookStatus: ClaudeHookStatus | null;
 }
 
 export interface ThreadSession {

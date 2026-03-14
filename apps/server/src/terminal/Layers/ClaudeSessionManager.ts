@@ -4,6 +4,7 @@ import type { ClaudeSessionEvent, TerminalStatus } from "@clui/contracts";
 import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
+import { buildHookSettingsJson } from "../../hooks/hookSettings";
 import { PtyAdapter, type PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
 import {
   ClaudeSessionError,
@@ -12,6 +13,7 @@ import {
   type ClaudeSessionState,
 } from "../Services/ClaudeSession";
 import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
+import { ServerConfig } from "../../config";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -69,11 +71,17 @@ interface ClaudeSessionManagerEvents {
   event: [event: ClaudeSessionEvent];
 }
 
+export interface HookConfig {
+  /** Port the Clui HTTP server listens on (for hook callback URLs). */
+  serverPort: number;
+}
+
 interface ClaudeSessionManagerOptions {
   ptyAdapter: PtyAdapterShape;
   processKillGraceMs?: number;
   historyLineLimit?: number;
   maxActiveSessions?: number;
+  hookConfig?: HookConfig | undefined;
 }
 
 export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManagerEvents> {
@@ -84,6 +92,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private readonly processKillGraceMs: number;
   private readonly historyLineLimit: number;
   private readonly maxActiveSessions: number;
+  private readonly hookConfig: HookConfig | null;
   private readonly logger = createLogger("claude-session");
 
   constructor(options: ClaudeSessionManagerOptions) {
@@ -92,6 +101,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     this.processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     this.maxActiveSessions = options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
+    this.hookConfig = options.hookConfig ?? null;
   }
 
   async startSession(input: {
@@ -137,6 +147,21 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         args.push("--resume", input.resumeSessionId);
       } else {
         args.push("--session-id", claudeSessionId);
+      }
+
+      // Inject hook settings as inline JSON (matching cmux's approach).
+      // Claude Code merges --settings additively with the user's own settings.json.
+      if (this.hookConfig) {
+        const settingsJson = buildHookSettingsJson(
+          this.hookConfig.serverPort,
+          input.threadId,
+          claudeSessionId,
+        );
+        args.push("--settings", settingsJson);
+        this.logger.info("hook settings injected", {
+          threadId: input.threadId,
+          port: this.hookConfig.serverPort,
+        });
       }
 
       try {
@@ -440,8 +465,15 @@ export const ClaudeSessionManagerLive = Layer.effect(
   ClaudeSessionManager,
   Effect.gen(function* () {
     const ptyAdapter = yield* PtyAdapter;
+
+    // Resolve hook config from ServerConfig
+    const serverConfig = yield* ServerConfig;
+    const hookConfig: HookConfig = {
+      serverPort: serverConfig.port,
+    };
+
     const runtime = yield* Effect.acquireRelease(
-      Effect.sync(() => new ClaudeSessionManagerRuntime({ ptyAdapter })),
+      Effect.sync(() => new ClaudeSessionManagerRuntime({ ptyAdapter, hookConfig })),
       (r) => Effect.sync(() => r.dispose()),
     );
 

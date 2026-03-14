@@ -17,7 +17,7 @@ import { KeybindingsLive } from "./keybindings";
 import { GitManagerLive } from "./git/Layers/GitManager";
 import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitHubCliLive } from "./git/Layers/GitHubCli";
-import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
+import { ClaudeCliTextGenerationLive } from "./git/Layers/ClaudeCliTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
@@ -25,7 +25,7 @@ import { NodePtyHostAdapterLive } from "./terminal/Layers/NodePtyHost";
 
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
-  const textGenerationLayer = CodexTextGenerationLive;
+  const textGenerationLayer = ClaudeCliTextGenerationLive;
 
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionPipelineLive),
@@ -75,6 +75,7 @@ export function makeServerRuntimeServicesLayer() {
     orchestrationReactorLayer,
     gitCoreLayer,
     gitManagerLayer,
+    textGenerationLayer,
     terminalLayer,
     claudeSessionLayer,
     KeybindingsLive,

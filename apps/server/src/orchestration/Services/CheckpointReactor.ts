@@ -8,6 +8,7 @@
  */
 import { ServiceMap } from "effect";
 import type { Effect, Scope } from "effect";
+import type { ThreadId } from "@clui/contracts";
 
 /**
  * CheckpointReactorShape - Service API for checkpoint reactor lifecycle.
@@ -23,6 +24,23 @@ export interface CheckpointReactorShape {
    * internal queue.
    */
   readonly start: Effect.Effect<void, never, Scope.Scope>;
+
+  /**
+   * Ensure a baseline checkpoint exists for the thread's current turn count.
+   * Called on UserPromptSubmit to capture the "before" state.
+   */
+  readonly ensureBaseline: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<void>;
+
+  /**
+   * Capture a checkpoint after a terminal turn completes (Stop hook).
+   * Computes the diff against the baseline and dispatches a
+   * thread.turn.diff.complete command into the orchestration pipeline.
+   */
+  readonly captureTerminalTurnCheckpoint: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<void>;
 }
 
 /**

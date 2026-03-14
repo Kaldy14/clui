@@ -12,6 +12,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   TerminalStatus,
+  TitleSource,
   ThreadId,
   TurnId,
 } from "@clui/contracts";
@@ -32,6 +33,7 @@ export const ProjectionThread = Schema.Struct({
   claudeSessionId: Schema.NullOr(Schema.String),
   terminalStatus: TerminalStatus,
   scrollbackSnapshot: Schema.NullOr(Schema.String),
+  titleSource: TitleSource,
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

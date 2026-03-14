@@ -5,6 +5,7 @@ import {
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
+  type ClaudeHookStatus,
 } from "@clui/contracts";
 import {
   getModelOptions,
@@ -290,7 +291,6 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
       const existing = existingThreadById.get(thread.id);
       return {
         id: thread.id,
-        codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
         model: resolveModelSlugForProvider(
@@ -360,6 +360,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         terminalStatus: thread.terminalStatus ?? "new",
         claudeSessionId: thread.claudeSessionId ?? null,
         scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
+        titleSource: thread.titleSource ?? "auto",
+        hookStatus: existing?.hookStatus ?? null,
       };
     });
   return {
@@ -467,6 +469,47 @@ export function setThreadBranch(
   return threads === state.threads ? state : { ...state, threads };
 }
 
+export function addOptimisticThread(
+  state: AppState,
+  input: {
+    id: ThreadId;
+    projectId: Project["id"];
+    title: string;
+    branch: string | null;
+    worktreePath: string | null;
+    createdAt: string;
+  },
+): AppState {
+  // Skip if thread already exists
+  if (state.threads.some((t) => t.id === input.id)) return state;
+  const thread: Thread = {
+    id: input.id,
+    projectId: input.projectId,
+    title: input.title,
+    model: "",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    proposedPlans: [],
+    error: null,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    latestTurn: null,
+    lastVisitedAt: input.createdAt,
+    branch: input.branch,
+    worktreePath: input.worktreePath,
+    turnDiffSummaries: [],
+    activities: [],
+    terminalStatus: "new",
+    claudeSessionId: null,
+    scrollbackSnapshot: null,
+    titleSource: "auto",
+    hookStatus: null,
+  };
+  return { ...state, threads: [...state.threads, thread] };
+}
+
 export function setProjectOrder(state: AppState, order: string[]): AppState {
   return { ...state, projectOrder: order };
 }
@@ -499,6 +542,15 @@ interface AppStore extends AppState {
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
   setProjectOrder: (order: string[]) => void;
+  setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
+  addOptimisticThread: (input: {
+    id: ThreadId;
+    projectId: Project["id"];
+    title: string;
+    branch: string | null;
+    worktreePath: string | null;
+    createdAt: string;
+  }) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -516,6 +568,15 @@ export const useStore = create<AppStore>((set) => ({
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
   setProjectOrder: (order) => set((state) => setProjectOrder(state, order)),
+  addOptimisticThread: (input) => set((state) => addOptimisticThread(state, input)),
+  setHookStatus: (threadId, hookStatus) =>
+    set((state) => {
+      const threads = updateThread(state.threads, threadId, (thread) => {
+        if (thread.hookStatus === hookStatus) return thread;
+        return { ...thread, hookStatus };
+      });
+      return threads === state.threads ? state : { ...state, threads };
+    }),
 }));
 
 // Persist state changes with debouncing to avoid localStorage thrashing

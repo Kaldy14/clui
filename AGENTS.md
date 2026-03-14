@@ -62,6 +62,22 @@ Long term maintainability is a core priority. If you add new functionality, firs
 - `server.welcome` — initial connection payload
 - `server.configUpdated` — config changes
 
+## Terminal Instance Management
+
+Two-tier terminal management: server-side PTY processes and client-side xterm.js instances.
+
+### Server-side (PTY processes) — `ClaudeSessionManager`
+- LRU eviction: max 10 active PTYs (configurable). Over cap → oldest hibernated (scrollback saved to SQLite, PTY killed).
+- Graceful shutdown: `hibernateAll()` with 5s timeout, SIGTERM → 1s → SIGKILL.
+- Thread locks prevent concurrent start/hibernate race conditions.
+
+### Client-side (xterm.js instances) — `claudeTerminalCache.ts`
+- **LRU cap:** 50 cached instances. Over cap → oldest detached non-busy terminals disposed.
+- **Idle sweep:** Every 5 min, detached terminals untouched for 2+ hours are disposed.
+- **WebGL on detach:** GPU context disposed on detach, re-created on attach (only active terminal holds a context).
+- **Busy thread protection:** Threads with `terminalStatus === "active"` or `hookStatus` of `"working"` / `"needsInput"` / `"pendingApproval"` are never evicted.
+- **Eviction guard:** Registered in `_chat.tsx` via `setEvictionGuard()`, reads store state without subscribing to re-renders.
+
 ## Development
 
 ```bash

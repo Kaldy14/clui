@@ -26,6 +26,8 @@ export const providerQueryKeys = {
       input.toTurnCount,
       input.cacheScope ?? null,
     ] as const,
+  workingTreeDiff: (threadId: ThreadId | null) =>
+    ["providers", "workingTreeDiff", threadId] as const,
 };
 
 function decodeCheckpointDiffRequest(input: CheckpointDiffQueryInput) {
@@ -120,5 +122,24 @@ export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
       isCheckpointTemporarilyUnavailable(error)
         ? Math.min(5_000, 250 * 2 ** (attempt - 1))
         : Math.min(1_000, 100 * 2 ** (attempt - 1)),
+  });
+}
+
+export function workingTreeDiffQueryOptions(input: {
+  threadId: ThreadId | null;
+  enabled?: boolean;
+}) {
+  return queryOptions({
+    queryKey: providerQueryKeys.workingTreeDiff(input.threadId),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.threadId) {
+        throw new Error("Working tree diff requires a thread ID.");
+      }
+      return await api.orchestration.getWorkingTreeDiff({ threadId: input.threadId });
+    },
+    enabled: (input.enabled ?? true) && !!input.threadId,
+    staleTime: 30_000, // Refetch after 30s since working tree changes frequently
+    retry: 2,
   });
 }

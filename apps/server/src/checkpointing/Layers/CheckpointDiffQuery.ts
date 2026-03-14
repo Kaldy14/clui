@@ -3,6 +3,7 @@ import {
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
+  type OrchestrationGetWorkingTreeDiffResult,
 } from "@clui/contracts";
 import { Effect, Layer, Schema } from "effect";
 
@@ -10,6 +11,7 @@ import { ProjectionSnapshotQuery } from "../../orchestration/Services/Projection
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
 import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "../Utils.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
+import { execFile } from "node:child_process";
 import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
@@ -160,9 +162,72 @@ const make = Effect.gen(function* () {
       toTurnCount: input.toTurnCount,
     }).pipe(Effect.map((result): OrchestrationGetFullThreadDiffResult => result));
 
+  const getWorkingTreeDiff: CheckpointDiffQueryShape["getWorkingTreeDiff"] = (input) =>
+    Effect.gen(function* () {
+      const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+      const thread = snapshot.threads.find((entry) => entry.id === input.threadId);
+      if (!thread) {
+        return yield* new CheckpointInvariantError({
+          operation: "CheckpointDiffQuery.getWorkingTreeDiff",
+          detail: `Thread '${input.threadId}' not found.`,
+        });
+      }
+
+      const workspaceCwd = resolveThreadWorkspaceCwd({
+        thread,
+        projects: snapshot.projects,
+      });
+      if (!workspaceCwd) {
+        return yield* new CheckpointInvariantError({
+          operation: "CheckpointDiffQuery.getWorkingTreeDiff",
+          detail: `Workspace path missing for thread '${input.threadId}'.`,
+        });
+      }
+
+      const isGit = yield* checkpointStore.isGitRepository(workspaceCwd);
+      if (!isGit) {
+        const result: OrchestrationGetWorkingTreeDiffResult = {
+          threadId: input.threadId,
+          diff: "",
+        };
+        return result;
+      }
+
+      // git diff HEAD shows all uncommitted changes (staged + unstaged)
+      const diff = yield* Effect.tryPromise({
+        try: () =>
+          new Promise<string>((resolve, reject) => {
+            execFile(
+              "git",
+              ["diff", "HEAD", "--patch", "--minimal", "--no-color"],
+              { cwd: workspaceCwd, maxBuffer: 10 * 1024 * 1024 },
+              (error, stdout) => {
+                if (error && !stdout) {
+                  reject(error);
+                } else {
+                  resolve(stdout);
+                }
+              },
+            );
+          }),
+        catch: (error) =>
+          new CheckpointInvariantError({
+            operation: "CheckpointDiffQuery.getWorkingTreeDiff",
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+      });
+
+      const result: OrchestrationGetWorkingTreeDiffResult = {
+        threadId: input.threadId,
+        diff,
+      };
+      return result;
+    });
+
   return {
     getTurnDiff,
     getFullThreadDiff,
+    getWorkingTreeDiff,
   } satisfies CheckpointDiffQueryShape;
 });
 

@@ -619,7 +619,7 @@ describe("WebSocket Server", () => {
           id: bootstrapProjectId,
           workspaceRoot: "/test/bootstrap-workspace",
           title: "bootstrap-workspace",
-          defaultModel: "gpt-5-codex",
+          defaultModel: "claude-opus-4-6",
         }),
       ]),
     );
@@ -629,7 +629,7 @@ describe("WebSocket Server", () => {
           id: bootstrapThreadId,
           projectId: bootstrapProjectId,
           title: "New thread",
-          model: "gpt-5-codex",
+          model: "claude-opus-4-6",
           branch: null,
           worktreePath: null,
         }),
@@ -1104,7 +1104,7 @@ describe("WebSocket Server", () => {
       projectId: "project-diff",
       title: "Diff Project",
       workspaceRoot,
-      defaultModel: "gpt-5-codex",
+      defaultModel: "claude-opus-4-6",
       createdAt,
     });
     expect(createProjectResponse.error).toBeUndefined();
@@ -1114,7 +1114,7 @@ describe("WebSocket Server", () => {
       threadId: "thread-diff",
       projectId: "project-diff",
       title: "Diff Thread",
-      model: "gpt-5-codex",
+      model: "claude-opus-4-6",
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,

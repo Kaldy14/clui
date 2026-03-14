@@ -1,6 +1,25 @@
 import { Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas";
 
+// ── Hook-derived status types ─────────────────────────────────────────
+
+export const ClaudeHookStatus = Schema.Literals([
+  "working",
+  "needsInput",
+  "pendingApproval",
+  "error",
+  "completed",
+]);
+export type ClaudeHookStatus = typeof ClaudeHookStatus.Type;
+
+export const ClaudeHookNotificationCategory = Schema.Literals([
+  "permission",
+  "error",
+  "waiting",
+  "attention",
+]);
+export type ClaudeHookNotificationCategory = typeof ClaudeHookNotificationCategory.Type;
+
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(20)).check(
   Schema.isLessThanOrEqualTo(400),
 );
@@ -79,6 +98,21 @@ const ClaudeErrorEvent = Schema.Struct({
   message: Schema.String,
 });
 
+const ClaudeHookStatusEvent = Schema.Struct({
+  ...ClaudeSessionEventBase.fields,
+  type: Schema.Literal("hookStatus"),
+  hookStatus: ClaudeHookStatus,
+});
+
+const ClaudeHookNotificationEvent = Schema.Struct({
+  ...ClaudeSessionEventBase.fields,
+  type: Schema.Literal("hookNotification"),
+  title: Schema.String,
+  subtitle: Schema.String,
+  body: Schema.String,
+  category: ClaudeHookNotificationCategory,
+});
+
 export const ClaudeSessionEvent = Schema.Union([
   ClaudeOutputEvent,
   ClaudeStartedEvent,
@@ -86,5 +120,7 @@ export const ClaudeSessionEvent = Schema.Union([
   ClaudeExitedEvent,
   ClaudeSessionIdEvent,
   ClaudeErrorEvent,
+  ClaudeHookStatusEvent,
+  ClaudeHookNotificationEvent,
 ]);
 export type ClaudeSessionEvent = typeof ClaudeSessionEvent.Type;

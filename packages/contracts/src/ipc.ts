@@ -39,6 +39,8 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetWorkingTreeDiffInput,
+  OrchestrationGetWorkingTreeDiffResult,
   OrchestrationGetSessionMetricsInput,
   OrchestrationGetSessionMetricsResult,
   OrchestrationGetTurnDiffInput,
@@ -183,6 +185,9 @@ export interface NativeApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    getWorkingTreeDiff: (
+      input: OrchestrationGetWorkingTreeDiffInput,
+    ) => Promise<OrchestrationGetWorkingTreeDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     getSessionMetrics: (
       input: OrchestrationGetSessionMetricsInput,
