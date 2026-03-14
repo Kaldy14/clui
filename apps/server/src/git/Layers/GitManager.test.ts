@@ -202,6 +202,8 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
             }),
         ),
       ),
+    generateThreadTitle: () =>
+      Effect.succeed({ title: "Test Title" }),
   };
 }
 

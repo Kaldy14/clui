@@ -13,7 +13,6 @@ import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./t
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: ThreadId.makeUnsafe("thread-1"),
-    codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
     model: "gpt-5-codex",
@@ -33,6 +32,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     terminalStatus: "new",
     claudeSessionId: null,
     scrollbackSnapshot: null,
+    titleSource: "auto" as const,
+    hookStatus: null,
     ...overrides,
   };
 }
@@ -68,6 +69,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     claudeSessionId: null,
     terminalStatus: "new",
     scrollbackSnapshot: null,
+    titleSource: "auto" as const,
     latestTurn: null,
     createdAt: "2026-02-27T00:00:00.000Z",
     updatedAt: "2026-02-27T00:00:00.000Z",

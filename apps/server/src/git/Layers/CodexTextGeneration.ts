@@ -457,10 +457,14 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     });
   };
 
+  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = () =>
+    Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail: "Not implemented in Codex backend" }));
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateThreadTitle,
   } satisfies TextGenerationShape;
 });
 

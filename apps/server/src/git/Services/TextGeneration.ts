@@ -52,6 +52,14 @@ export interface BranchNameGenerationResult {
   branch: string;
 }
 
+export interface ThreadTitleGenerationInput {
+  promptText: string;
+}
+
+export interface ThreadTitleGenerationResult {
+  title: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -84,6 +92,10 @@ export interface TextGenerationShape {
   readonly generateBranchName: (
     input: BranchNameGenerationInput,
   ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
+
+  readonly generateThreadTitle: (
+    input: ThreadTitleGenerationInput,
+  ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
 }
 
 /**

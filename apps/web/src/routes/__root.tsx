@@ -23,6 +23,7 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import {
   dispatchActivityNotification,
+  dispatchHookNotification,
   dispatchSessionSetNotification,
   requestNotificationPermission,
 } from "../lib/notifications";
@@ -327,6 +328,57 @@ function EventRouter() {
           hasRunningSubprocess,
         );
     });
+    // Track when threads were marked completed to ignore late Notification hooks
+    // that arrive after the Stop hook (race condition).
+    const completedAt = new Map<string, number>();
+    const COMPLETED_GRACE_MS = 2000;
+    const unsubClaudeSessionEvent = api.claude.onSessionEvent((event) => {
+      if (event.type === "hookStatus") {
+        const threadId = ThreadId.makeUnsafe(event.threadId);
+
+        if (event.hookStatus === "completed") {
+          completedAt.set(event.threadId, Date.now());
+          useStore.getState().setHookStatus(threadId, "completed");
+        } else if (event.hookStatus === "working") {
+          // "working" means user sent a new prompt — clear the grace window
+          completedAt.delete(event.threadId);
+          useStore.getState().setHookStatus(threadId, event.hookStatus);
+        } else {
+          // For needsInput/pendingApproval/error: ignore if within grace period after completed
+          const doneTs = completedAt.get(event.threadId);
+          if (doneTs && Date.now() - doneTs < COMPLETED_GRACE_MS) {
+            // Late hook after Stop — ignore
+          } else {
+            useStore.getState().setHookStatus(threadId, event.hookStatus);
+          }
+        }
+      }
+      // Clear hook status when terminal goes dormant
+      if (event.type === "hibernated" || event.type === "exited") {
+        completedAt.delete(event.threadId);
+        useStore.getState().setHookStatus(
+          ThreadId.makeUnsafe(event.threadId),
+          null,
+        );
+      }
+      // Forward hook notifications as OS notifications
+      if (event.type === "hookNotification") {
+        const currentThreadId = getCurrentThreadId();
+        const isCurrentThread = event.threadId === currentThreadId;
+        if (!isCurrentThread || !document.hasFocus()) {
+          const threads = useStore.getState().threads;
+          const thread = threads.find((t) => t.id === event.threadId);
+          dispatchHookNotification(
+            event.subtitle,
+            event.body,
+            thread?.title ?? "Thread",
+            () => {
+              void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
+            },
+          );
+        }
+      }
+    });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
         await syncSnapshot();
@@ -399,8 +451,10 @@ function EventRouter() {
       disposed = true;
       needsProviderInvalidation = false;
       domainEventFlushThrottler.cancel();
+      completedAt.clear();
       unsubDomainEvent();
       unsubTerminalEvent();
+      unsubClaudeSessionEvent();
       unsubWelcome();
       unsubServerConfigUpdated();
     };

@@ -11,6 +11,8 @@ import type {
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
+  OrchestrationGetWorkingTreeDiffInput,
+  OrchestrationGetWorkingTreeDiffResult,
 } from "@clui/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -38,6 +40,14 @@ export interface CheckpointDiffQueryShape {
   readonly getFullThreadDiff: (
     input: OrchestrationGetFullThreadDiffInput,
   ) => Effect.Effect<OrchestrationGetFullThreadDiffResult, CheckpointServiceError>;
+
+  /**
+   * Compute a diff of the current working tree against HEAD.
+   * Shows all uncommitted changes without requiring checkpoints.
+   */
+  readonly getWorkingTreeDiff: (
+    input: OrchestrationGetWorkingTreeDiffInput,
+  ) => Effect.Effect<OrchestrationGetWorkingTreeDiffResult, CheckpointServiceError>;
 }
 
 /**

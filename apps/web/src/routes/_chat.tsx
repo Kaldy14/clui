@@ -1,7 +1,7 @@
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ResolvedKeybindingsConfig } from "@clui/contracts";
+import type { ResolvedKeybindingsConfig, ThreadId } from "@clui/contracts";
 
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";
@@ -10,7 +10,10 @@ import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { projectTerminalThreadId } from "../types";
 import { isMacPlatform } from "../lib/utils";
+import { setEvictionGuard } from "../lib/claudeTerminalCache";
 import {
+  isProjectTerminalToggleShortcut,
+  isTerminalToggleShortcut,
   isThreadNextShortcut,
   isThreadPrevShortcut,
   isThreadSearchShortcut,
@@ -56,6 +59,9 @@ function ProjectTerminalDrawers() {
   );
 }
 
+/** Hook statuses that indicate the thread is busy and should not be evicted. */
+const BUSY_HOOK_STATUSES = new Set(["working", "needsInput", "pendingApproval"]);
+
 function ChatRouteLayout() {
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -63,6 +69,18 @@ function ChatRouteLayout() {
     ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
   });
+
+  // Register eviction guard so the terminal cache never disposes busy threads.
+  // Uses getState() to read the latest snapshot without subscribing to re-renders.
+  useEffect(() => {
+    setEvictionGuard((threadId) => {
+      const thread = useStore.getState().threads.find((t) => t.id === threadId);
+      if (!thread) return false;
+      if (thread.terminalStatus === "active") return true;
+      if (thread.hookStatus && BUSY_HOOK_STATUSES.has(thread.hookStatus)) return true;
+      return false;
+    });
+  }, []);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -81,12 +99,44 @@ function ChatRouteLayout() {
   }, [navigate]);
 
   const threads = useStore((s) => s.threads);
+  const terminalStateByThreadId = useTerminalStateStore((s) => s.terminalStateByThreadId);
+  const setTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
+  const setProjectTerminalOpen = useTerminalStateStore((s) => s.setProjectTerminalOpen);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isThreadSearchShortcut(event, keybindings)) {
         event.preventDefault();
         setSearchOpen(true);
+        return;
+      }
+
+      // Cmd+J: Toggle thread terminal drawer
+      if (isTerminalToggleShortcut(event, keybindings)) {
+        event.preventDefault();
+        const params = window.location.pathname.match(/\/([^/]+)$/);
+        const currentThreadId = params?.[1];
+        if (currentThreadId) {
+          const threadId = currentThreadId as ThreadId;
+          const isOpen = terminalStateByThreadId[threadId]?.terminalOpen ?? false;
+          setTerminalOpen(threadId, !isOpen);
+        }
+        return;
+      }
+
+      // Cmd+Shift+J: Toggle project terminal drawer
+      if (isProjectTerminalToggleShortcut(event, keybindings)) {
+        event.preventDefault();
+        const params = window.location.pathname.match(/\/([^/]+)$/);
+        const currentThreadId = params?.[1];
+        const currentThread = currentThreadId
+          ? threads.find((t) => t.id === currentThreadId)
+          : undefined;
+        if (currentThread) {
+          const syntheticId = projectTerminalThreadId(currentThread.projectId);
+          const isOpen = terminalStateByThreadId[syntheticId]?.terminalOpen ?? false;
+          setProjectTerminalOpen(syntheticId, !isOpen);
+        }
         return;
       }
 
@@ -124,7 +174,7 @@ function ChatRouteLayout() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, threads, navigate]);
+  }, [keybindings, threads, navigate, terminalStateByThreadId, setTerminalOpen, setProjectTerminalOpen]);
 
   const handleSearchClick = useCallback(() => setSearchOpen(true), []);
 

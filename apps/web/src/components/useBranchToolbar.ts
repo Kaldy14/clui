@@ -41,6 +41,11 @@ export function useBranchToolbar(threadId: ThreadId) {
           })
           .catch(() => undefined);
       }
+      // Hibernate the claude terminal when cwd changes so it restarts in the
+      // new worktree directory on next interaction.
+      if (worktreePath !== activeWorktreePath && api) {
+        void api.claude.hibernate({ threadId: activeThreadId }).catch(() => undefined);
+      }
       if (api && hasServerThread) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",

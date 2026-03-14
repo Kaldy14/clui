@@ -93,3 +93,25 @@ export function dispatchSessionSetNotification(
 
   fireNotification(title, threadTitle, `session:${threadId}`, onNavigate);
 }
+
+// ── Hook-based notifications (Claude Code lifecycle) ──────────────────
+
+/**
+ * Notify when a Claude Code hook fires a notification (needs input, approval, error).
+ * Only fires when the thread is not focused or the window is hidden.
+ */
+export function dispatchHookNotification(
+  subtitle: string,
+  body: string,
+  threadTitle: string,
+  onNavigate?: () => void,
+): void {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  fireNotification(
+    `${subtitle} — ${threadTitle}`,
+    body,
+    `hook:${Date.now()}`,
+    onNavigate,
+  );
+}

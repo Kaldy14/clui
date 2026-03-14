@@ -1,0 +1,7 @@
+<svg width="32" height="32" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Clui Favicon — transparent background variant -->
+  <!-- Chevron ">" -->
+  <path d="M80 128 L256 256 L80 384" stroke="#4F6AE5" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Cursor "_" -->
+  <line x1="296" y1="384" x2="432" y2="384" stroke="#4F6AE5" stroke-width="64" stroke-linecap="round"/>
+</svg>

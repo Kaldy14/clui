@@ -470,6 +470,31 @@ describe("terminalNavigationShortcutData", () => {
     assert.isNull(terminalNavigationShortcutData(event({ key: "a", altKey: true }), "MacIntel"));
   });
 
+  it("maps Cmd+Backspace on macOS to kill line", () => {
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "Backspace", metaKey: true }), "MacIntel"),
+      "\u0015",
+    );
+  });
+
+  it("does not map Cmd+Backspace on non-macOS", () => {
+    assert.isNull(
+      terminalNavigationShortcutData(event({ key: "Backspace", metaKey: true }), "Linux"),
+    );
+  });
+
+  it("does not map plain Backspace", () => {
+    assert.isNull(
+      terminalNavigationShortcutData(event({ key: "Backspace" }), "MacIntel"),
+    );
+  });
+
+  it("does not map Option+Backspace", () => {
+    assert.isNull(
+      terminalNavigationShortcutData(event({ key: "Backspace", altKey: true }), "MacIntel"),
+    );
+  });
+
   it("ignores non-keydown events", () => {
     assert.isNull(
       terminalNavigationShortcutData(

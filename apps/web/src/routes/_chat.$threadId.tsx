@@ -5,11 +5,15 @@ import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 import TerminalToolbar from "~/components/TerminalToolbar";
 import ThreadTerminalView from "~/components/ThreadTerminalView";
 
+const ThreadTerminalDrawer = lazy(() => import("../components/ThreadTerminalDrawer"));
+
+const newTerminalId = () => crypto.randomUUID().slice(0, 8);
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
@@ -103,6 +107,49 @@ const DiffPanelInlineSidebar = (props: {
   );
 };
 
+function ThreadTerminalDrawerContainer({ threadId }: { threadId: ThreadId }) {
+  const thread = useStore((s) => s.threads.find((t) => t.id === threadId));
+  const project = useStore((s) => s.projects.find((p) => p.id === thread?.projectId));
+  const terminalState = useTerminalStateStore((s) =>
+    selectThreadTerminalState(s.terminalStateByThreadId, threadId),
+  );
+  const setTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
+  const setTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
+  const splitTerminal = useTerminalStateStore((s) => s.splitTerminal);
+  const newTerminal = useTerminalStateStore((s) => s.newTerminal);
+  const setActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
+  const closeTerminal = useTerminalStateStore((s) => s.closeTerminal);
+
+  const cwd = thread?.worktreePath ?? project?.cwd;
+  if (!terminalState.terminalOpen || !cwd) return null;
+
+  return (
+    <Suspense fallback={null}>
+      <ThreadTerminalDrawer
+        threadId={threadId}
+        cwd={cwd}
+        height={terminalState.terminalHeight}
+        terminalIds={terminalState.terminalIds}
+        activeTerminalId={terminalState.activeTerminalId}
+        terminalGroups={terminalState.terminalGroups}
+        activeTerminalGroupId={terminalState.activeTerminalGroupId}
+        focusRequestId={0}
+        onSplitTerminal={() => splitTerminal(threadId, newTerminalId())}
+        onNewTerminal={() => newTerminal(threadId, newTerminalId())}
+        onActiveTerminalChange={(id) => setActiveTerminal(threadId, id)}
+        onCloseTerminal={(id) => {
+          closeTerminal(threadId, id);
+          // If no terminals left, close the drawer
+          if (terminalState.terminalIds.length <= 1) {
+            setTerminalOpen(threadId, false);
+          }
+        }}
+        onHeightChange={(h) => setTerminalHeight(threadId, h)}
+      />
+    </Suspense>
+  );
+}
+
 function ChatThreadRouteView() {
   const threadsHydrated = useStore((store) => store.threadsHydrated);
   const navigate = useNavigate();
@@ -153,10 +200,11 @@ function ChatThreadRouteView() {
       <>
         <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
           <div className="flex h-full flex-col">
-            <TerminalToolbar threadId={threadId} />
+            <TerminalToolbar threadId={threadId} diffOpen={diffOpen} />
             <div className="min-h-0 flex-1">
               <ThreadTerminalView threadId={threadId} />
             </div>
+            <ThreadTerminalDrawerContainer threadId={threadId} />
           </div>
         </SidebarInset>
         <DiffPanelInlineSidebar diffOpen={diffOpen} onCloseDiff={closeDiff} onOpenDiff={openDiff} />
@@ -168,10 +216,11 @@ function ChatThreadRouteView() {
     <>
       <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
         <div className="flex h-full flex-col">
-          <TerminalToolbar threadId={threadId} />
+          <TerminalToolbar threadId={threadId} diffOpen={diffOpen} />
           <div className="min-h-0 flex-1">
             <ThreadTerminalView threadId={threadId} />
           </div>
+          <ThreadTerminalDrawerContainer threadId={threadId} />
         </div>
       </SidebarInset>
       <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>

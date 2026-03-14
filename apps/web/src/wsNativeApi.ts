@@ -198,6 +198,8 @@ export function createWsNativeApi(): NativeApi {
       getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
       getFullThreadDiff: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),
+      getWorkingTreeDiff: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.getWorkingTreeDiff, input),
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       getSessionMetrics: (input) =>

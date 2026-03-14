@@ -29,6 +29,8 @@ describe("hasUnseenCompletion", () => {
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
         proposedPlans: [],
         session: null,
+        terminalStatus: "new",
+        hookStatus: null,
       }),
     ).toBe(true);
   });
@@ -75,6 +77,8 @@ describe("resolveThreadStatusPill", () => {
       updatedAt: "2026-03-09T10:00:00.000Z",
       orchestrationStatus: "running" as const,
     },
+    terminalStatus: "new" as const,
+    hookStatus: null,
   };
 
   it("shows pending approval before all other statuses", () => {

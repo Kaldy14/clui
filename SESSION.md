@@ -39,11 +39,39 @@ A fork of [t3code](https://github.com/pingdotgg/t3code) that replaces the Agent 
 
 ### xterm.js Instance Management
 
-- Keep `Map<ThreadId, Terminal>` in a Zustand store
-- Switching threads: detach old Terminal from DOM (don't dispose), attach new one
-- Switching back: reattach — instant, no re-render
-- Only dispose on hibernation or thread deletion
-- Uses WebGL renderer addon for GPU acceleration
+Client-side terminal instances are managed in `apps/web/src/lib/claudeTerminalCache.ts` — a module-level `Map<ThreadId, CachedTerminal>` with three layers of memory management:
+
+#### Lifecycle
+- **Attach:** `terminal.open(container)` + WebGL addon loaded. Moves entry to end of Map (most-recently-used).
+- **Detach (switch away):** DOM children removed, WebGL addon **disposed** (frees GPU context), Terminal instance stays alive in cache with scrollback intact.
+- **Re-attach (switch back):** Terminal re-opened in new container, fresh WebGL addon created. Instant — no re-render or scrollback re-fetch.
+- **Dispose:** Terminal fully destroyed, removed from cache. Happens on thread deletion, hibernation, or eviction.
+
+#### Memory Management
+
+**1. LRU cap (50 instances)**
+When the cache exceeds `MAX_CACHED_TERMINALS = 50`, the oldest *detached* and *non-busy* terminals are disposed. Triggered on every `attach()` and `getOrCreate()`. Map insertion order tracks recency.
+
+**2. Idle sweep (2-hour TTL)**
+A background timer runs every 5 minutes and disposes detached terminals whose `lastAccessedAt` exceeds 2 hours. This catches terminals the user opened once and forgot about.
+
+**3. WebGL context reclaim on detach**
+GPU contexts are disposed immediately when a terminal is detached from the DOM and re-created on re-attach. This means only the currently-viewed terminal holds a WebGL context, well within the browser's ~16 context limit.
+
+#### Eviction Protection (busy threads)
+An eviction guard registered in `_chat.tsx` prevents eviction of threads that are actively doing work. A thread is considered "busy" when:
+- `terminalStatus === "active"` (PTY process is running server-side)
+- `hookStatus` is `"working"`, `"needsInput"`, or `"pendingApproval"`
+
+Busy threads are protected from both LRU cap eviction and idle sweep, ensuring the user never loses cached scrollback for an active session.
+
+#### Key constants
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `MAX_CACHED_TERMINALS` | 50 | LRU eviction threshold |
+| `IDLE_TTL_MS` | 2 hours | Idle sweep TTL for detached terminals |
+| `IDLE_SWEEP_INTERVAL_MS` | 5 minutes | How often idle sweep runs |
+| `scrollback` | 10,000 lines | Per-terminal scrollback buffer size |
 
 ### Architecture
 
@@ -460,26 +488,247 @@ Added 45 new tests across unit and integration layers, bringing total server tes
 
 **Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` all packages pass (372 server, 345 web, 46 contracts, 26 shared, 26 desktop, 18 scripts).
 
+### Phase 8: Claude Code Hooks Integration (Badge System) ✅ COMPLETE
+
+Implemented Claude Code hooks integration: the server generates per-session `--settings` JSON files that configure Claude Code lifecycle hooks (SessionStart, Stop, Notification) to call back to the Clui server via HTTP. Hook events drive rich sidebar badges and OS notifications.
+
+**New files:**
+- `apps/server/src/hooks/hookSettings.ts` — Generates per-session hook settings JSON, writes/removes temp files. Hook commands use `curl -s -X POST` to call back to the Clui server.
+- `apps/server/src/hooks/hookReceiver.ts` — HTTP handler for `/hooks/session-start`, `/hooks/stop`, `/hooks/notification`. Parses Claude Code hook JSON (robust extraction of session_id, cwd from multiple key conventions and nested objects). Classifies notifications into Permission/Error/Waiting/Attention categories (mirroring cmux). Truncates body to 180 chars. Builds typed `ClaudeSessionEvent` events.
+- `apps/server/src/hooks/hookReceiver.test.ts` — 16 tests: input parsing, notification classification, event building
+- `apps/server/src/hooks/hookSettings.test.ts` — 11 tests: settings JSON structure, URL encoding, file write/remove, directory creation
+
+**Modified files:**
+- `packages/contracts/src/claude-terminal.ts` — Added `ClaudeHookStatus` (working/needsInput/pendingApproval/error/completed), `ClaudeHookNotificationCategory` (permission/error/waiting/attention), `ClaudeHookStatusEvent`, `ClaudeHookNotificationEvent` to `ClaudeSessionEvent` union
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` — Added `HookConfig` (serverPort + settingsDir). Generates hook settings JSON and passes `--settings <path>` when spawning claude CLI. Cleans up settings files on session end (stopProcess). Resolves `ServerConfig` via `Effect.serviceOption` in the layer.
+- `apps/server/src/wsServer.ts` — Added HTTP route handlers for `/hooks/session-start`, `/hooks/stop`, `/hooks/notification`. Parses threadId from URL query param, reads JSON body, builds events, broadcasts via WS push. Runs outside the Effect pipeline for minimal overhead.
+- `apps/web/src/types.ts` — Added `hookStatus: ClaudeHookStatus | null` to `Thread`
+- `apps/web/src/store.ts` — Added `setHookStatus` action. Preserves `hookStatus` across read model syncs.
+- `apps/web/src/routes/__root.tsx` — Global `claude.onSessionEvent` subscription: updates hookStatus on `hookStatus` events, clears on `hibernated`/`exited`, dispatches OS notifications on `hookNotification` (only when thread not focused or window hidden).
+- `apps/web/src/lib/threadStatus.ts` — `claudeTerminalStatusPill()` now accepts optional `hookStatus` for rich badges: Working (blue, pulsing), Needs Input (amber), Pending Approval (amber), Error (red), Completed (gray). Falls back to simple Running/Paused when no hook status.
+- `apps/web/src/lib/notifications.ts` — Added `dispatchHookNotification()` for OS-level notifications from hook events.
+- `apps/web/src/components/TerminalToolbar.tsx` — `TerminalStatusBadge` now renders from `claudeTerminalStatusPill()` with dynamic color tints based on hook status. Replaces hardcoded "Live"/"Paused" badges.
+- `apps/web/src/components/ThreadTerminalView.tsx` — Added `hookStatus`/`hookNotification` to exhaustive switch in `writeEvent`
+- `apps/web/src/store.test.ts` — Added `hookStatus: null` to `makeThread` helper
+- `apps/web/src/worktreeCleanup.test.ts` — Added `hookStatus: null` to `makeThread` helper
+
+**Hook lifecycle flow:**
+1. `ClaudeSessionManager.startSession()` generates hook settings JSON → writes to `stateDir/hook-settings/<threadId>.json` → passes `--settings <path>` to claude CLI
+2. Claude Code fires hooks → `curl` POSTs to `http://127.0.0.1:PORT/hooks/<event>?thread=<id>&session=<id>` with JSON body on stdin
+3. Server HTTP handler parses body, classifies notification (if applicable), builds `ClaudeSessionEvent`s
+4. Events broadcast via WS push to all clients
+5. Client `EventRouter` updates `hookStatus` in Zustand store + dispatches OS notifications
+6. Sidebar badges and toolbar badge render rich status from `hookStatus`
+7. Settings JSON files cleaned up on session end (hibernate/exit/destroy)
+
+**Badge mapping:**
+| Hook Event | Status | Label | Color | Animation |
+|------------|--------|-------|-------|-----------|
+| SessionStart | working | Working | Blue (sky) | Pulsing |
+| Notification (permission) | pendingApproval | Pending Approval | Amber | Static |
+| Notification (waiting) | needsInput | Needs Input | Amber | Static |
+| Notification (error) | error | Error | Red | Static |
+| Stop | completed | Completed | Gray | Static |
+| No hook data + active PTY | — | Running | Green | Pulsing |
+| Dormant PTY | — | Paused | Gray | Static |
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` all packages pass (399 server, 345 web, 46 contracts, 26 shared, 26 desktop, 18 scripts).
+
+### Phase 9: Auto-Generate Thread Titles ✅ COMPLETE
+
+Implemented auto-title generation from the user's initial prompt via Claude Code hooks. Threads now get meaningful titles instead of "New Thread" when the user sends their first message.
+
+**New files:**
+- `apps/server/src/terminal/titleGenerator.ts` — `extractPromptText()` extracts prompt text from `UserPromptSubmit` hook JSON body (searches `prompt`, `message`, `text`, `input` fields at top level and nested in `data`/`context`/`event`). `generateTitleFromPrompt()` strips ANSI codes, takes first non-empty line, collapses whitespace, truncates to 60 chars with ellipsis.
+- `apps/server/src/terminal/titleGenerator.test.ts` — 21 tests for prompt extraction and title generation
+- `apps/server/src/persistence/Migrations/018_TitleSource.ts` — Idempotent migration adding `title_source TEXT NOT NULL DEFAULT 'auto'` column to `projection_threads`
+
+**Modified files:**
+- `packages/contracts/src/orchestration.ts` — Added `TitleSource` schema (`"auto" | "manual"`), added `titleSource` field to `OrchestrationThread` (with decoding default `"auto"`), `ThreadMetaUpdateCommand` (optional), and `ThreadMetaUpdatedPayload` (optional)
+- `apps/server/src/persistence/Migrations.ts` — Registered migration 018
+- `apps/server/src/persistence/Services/ProjectionThreads.ts` — Added `titleSource: TitleSource` to `ProjectionThread` schema
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts` — Added `title_source` to INSERT/SELECT/UPDATE SQL queries
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` — `thread.created` sets `titleSource: "auto"`. `thread.meta-updated` propagates `titleSource`, with safeguard: skips auto-title updates when thread's `titleSource` is `"manual"`.
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` — Added `title_source AS "titleSource"` to thread SELECT, added `titleSource` to thread assembly
+- `apps/server/src/orchestration/projector.ts` — In-memory projector: `thread.created` sets `titleSource: "auto"`, `thread.meta-updated` propagates `titleSource`
+- `apps/server/src/orchestration/decider.ts` — `thread.meta.update` case includes `titleSource` in event payload
+- `apps/server/src/wsServer.ts` — Added `autoTitledThreads` Set to track threads already titled in this session. On `user-prompt-submit` hook: extracts prompt text via `extractPromptText()`, generates title via `generateTitleFromPrompt()`, dispatches `thread.meta.update` with `titleSource: "auto"` (fire-and-forget). Only runs once per thread per server session.
+- `apps/web/src/types.ts` — Added `titleSource: TitleSource` to `Thread` interface
+- `apps/web/src/store.ts` — Maps `titleSource` from read model in `syncServerReadModel`
+- `apps/web/src/components/TerminalToolbar.tsx` — `EditableTitle` sends `titleSource: "manual"` on manual rename
+- `apps/web/src/components/Sidebar.tsx` — Thread rename sends `titleSource: "manual"`
+
+**Auto-title flow:**
+1. User sends first prompt in a thread
+2. Claude Code fires `UserPromptSubmit` hook → `curl` POSTs to `/hooks/user-prompt-submit?thread=<id>`
+3. Server extracts prompt text from hook JSON body
+4. `generateTitleFromPrompt()` cleans and truncates to 60 chars
+5. Server dispatches `thread.meta.update` with generated title and `titleSource: "auto"`
+6. Orchestration pipeline persists title + titleSource, broadcasts domain event
+7. Sidebar updates in real-time via snapshot sync
+
+**Manual override protection:**
+- `titleSource: "auto"` — initial/auto-generated (eligible for auto-title)
+- `titleSource: "manual"` — user renamed (protected from auto-title)
+- Server tracks `autoTitledThreads` Set to avoid repeated auto-titles per session
+- Projector safeguard: skips auto-title updates when existing `titleSource` is `"manual"`
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors, `bun run test` all packages pass (424 server, 345 web, 46 contracts, 26 shared, 26 desktop, 18 scripts).
+
+### Phase 10: Restore Git Workflow UI ✅ COMPLETE
+
+**Goal:** Bring back t3code's git workflow that was lost during the refactor — branch/worktree selection on new thread creation, git action toolbar, and terminal drawer shortcuts.
+
+**Key finding:** All git components already existed intact from the t3code fork. The work was purely **wiring existing components into the Clui UI**, not rebuilding them.
+
+**Modified files:**
+
+1. **`apps/web/src/components/TerminalToolbar.tsx`** — Replaced static branch badge with interactive `BranchToolbarBranchSelector` (searchable branch combobox with checkout, create branch, worktree support). Added `GitActionsControl` split button (smart quick action: commit/push/PR with commit dialog, default-branch protection, toast progress). Added `PullRequestThreadDialog` for PR checkout from branch picker. Used `useBranchToolbar` hook for branch state management.
+
+2. **`apps/web/src/components/ThreadTerminalView.tsx`** — Enhanced `NewThreadView` with Local/Worktree toggle + `BranchToolbarBranchSelector` before "Start Claude". Handles worktree creation on start (creates worktree → updates thread metadata → starts Claude in worktree cwd). Shows contextual cwd info ("Worktree from main" vs path). Added `PullRequestThreadDialog` for PR checkout flow.
+
+3. **`apps/web/src/components/useBranchToolbar.ts`** — Bug fix: added missing `api.claude.hibernate()` call when worktree path changes (matching `BranchToolbar.tsx` behavior). Without this, switching branches wouldn't restart the terminal in the new cwd.
+
+4. **`apps/web/src/store.ts`** — Added `addOptimisticThread` action for instant thread availability on creation. Creates a minimal thread in the Zustand store so the route has it immediately when navigating, avoiding a race condition where the thread doesn't exist in the store yet.
+
+5. **`apps/web/src/components/Sidebar.tsx`** — Fixed race condition: optimistic thread insert via `addOptimisticThread` before navigation, fire-and-forget server dispatch (changed `await` to `void`). Previously, navigating to the new thread route before the server snapshot synced caused a blank page.
+
+6. **`apps/web/src/routes/_chat.tsx`** — Wired `Cmd+J` (`terminal.toggle`) and `Cmd+Shift+J` (`projectTerminal.toggle`) keyboard handlers. The shortcut matchers and default bindings existed but were never wired into the keyboard handler.
+
+7. **`apps/web/src/routes/_chat.$threadId.tsx`** — Added `ThreadTerminalDrawerContainer` that renders the `ThreadTerminalDrawer` (shell terminal split panel) when `terminalOpen` is true. Wired to `useTerminalStateStore` for all state management (split, new, close, resize, active terminal tracking).
+
+**Components wired (not rebuilt):**
+- `GitActionsControl` (840 lines) — commit/push/PR split button with dialogs
+- `BranchToolbarBranchSelector` (466 lines) — searchable branch combobox
+- `PullRequestThreadDialog` (284 lines) — PR resolve + checkout flow
+- `ThreadTerminalDrawer` (920 lines) — resizable shell terminal drawer
+- `useBranchToolbar` hook — branch state management
+- `gitReactQuery.ts` — TanStack Query wrappers (polling, caching, mutations)
+- Server git module (`apps/server/src/git/`) — 3-tier Effect services
+
+**Toolbar layout:**
+```
+[Title] [Branch▾] [Status] | [Git Actions▾] | [Stop/Resume/Restart]
+```
+
+**Keyboard shortcuts wired:**
+- `Cmd+J` — Toggle thread shell terminal drawer
+- `Cmd+Shift+J` — Toggle project shell terminal drawer
+
+**Post-Phase 10 bug fixes (same session):**
+- **Worktree cwd validation** — `wsServer.ts` `claude.start` route rejected worktree paths outside the workspace root. Fixed by also allowing the thread's registered `worktreePath` from the snapshot.
+- **Worktree branch name input** — Added branch name input field in NewThreadView when worktree mode is active, prefilled with `feature/ITE-`. Passes `newBranch` to `createWorktree` API. Start button disabled when branch name ends with `/` or `-` (prevents creating branches with just the prefix).
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors (12 warnings, baseline), `bun run test` all packages pass (424 server, 345 web, 46 contracts, 26 shared, 26 desktop, 18 scripts).
+
 ## Key Files for Next Session
 
 | File | Purpose |
 |------|---------|
 | `PLAN.md` | Full implementation plan with file-level detail |
 | `AGENTS.md` | Build instructions, tech stack, project snapshot (symlinked as CLAUDE.md) |
-| `packages/contracts/src/orchestration.ts` | `TerminalStatus`, `OrchestrationThread` with terminal fields |
-| `packages/contracts/src/claude-terminal.ts` | Claude terminal schemas (Start/Hibernate/Write/Resize/GetScrollback + SessionEvent) |
-| `packages/contracts/src/ws.ts` | WS_METHODS (includes claude.start/hibernate/write/resize/getScrollback) |
-| `packages/contracts/src/ipc.ts` | NativeApi interface with `claude` namespace |
-| `apps/server/src/terminal/Services/ClaudeSession.ts` | ClaudeSessionManager service interface |
+| `apps/web/src/components/TerminalToolbar.tsx` | Terminal toolbar with branch selector + git actions + status badge |
+| `apps/web/src/components/ThreadTerminalView.tsx` | Three-state terminal view with branch/worktree picker in NewThreadView |
+| `apps/web/src/components/useBranchToolbar.ts` | Branch state management hook (hibernate on cwd change) |
+| `apps/web/src/components/GitActionsControl.tsx` | Commit/push/PR split button (wired, not modified) |
+| `apps/web/src/components/BranchToolbarBranchSelector.tsx` | Branch picker combobox (wired, not modified) |
+| `apps/web/src/store.ts` | Zustand store with `addOptimisticThread` |
+| `apps/web/src/routes/_chat.tsx` | Layout with Cmd+J/Cmd+Shift+J terminal shortcuts |
+| `apps/web/src/routes/_chat.$threadId.tsx` | Thread route with ThreadTerminalDrawerContainer |
 | `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | ClaudeSessionManager implementation |
-| `apps/server/src/terminal/terminalUtils.ts` | Shared terminal utilities (env filtering, cwd validation, thread locks) |
-| `apps/server/src/wsServer.ts` | WS routes for all claude.* methods + event subscription |
-| `apps/web/src/components/ThreadTerminalView.tsx` | Three-state terminal view (new/active/dormant) |
-| `apps/web/src/components/TerminalToolbar.tsx` | Terminal toolbar (title, branch, status, actions) |
-| `apps/web/src/lib/claudeTerminalCache.ts` | xterm.js instance cache with WebGL + theme |
+| `apps/server/src/wsServer.ts` | WS routes + hook HTTP routes + auto-title dispatch |
 
 ## How to Continue
 
-1. Read this file and `PLAN.md`
-2. Consider Phase 8 (Claude Code Hooks for sidebar badges) or Phase 9 (auto-generate thread titles)
-4. Follow the checkpoint at end of each phase before moving to the next
+Next session prompt:
+
+```
+Continue Clui implementation — Phase 11: Terminal Input Enhancement + Polish
+
+Read SESSION.md and PLAN.md first. They contain the full project context, architecture decisions, and completed phase details.
+
+Clui is a terminal multiplexer for Claude Code CLI — each thread is a real terminal running claude via node-pty. Phases 0–10 are complete: Agent SDK removed, DB schema, ClaudeSessionManager service, terminal UI (ThreadTerminalView with three-state routing), lifecycle management (LRU eviction, graceful shutdown, startup recovery, session resume via --session-id), polish (terminal toolbar, keyboard shortcuts, configurable font settings, git branch integration), testing (45+ new tests), Claude Code hooks integration (badge system with sidebar + toolbar badges, OS notifications), auto-title generation (extracts prompt from UserPromptSubmit hook, generates ≤60-char title, titleSource: auto/manual protection), and git workflow UI restoration (GitActionsControl commit/push/PR toolbar, BranchToolbarBranchSelector in toolbar + NewThreadView, PullRequestThreadDialog, worktree creation on start with branch name input prefilled feature/ITE-, optimistic thread creation, Cmd+J/Cmd+Shift+J terminal drawer shortcuts, worktree cwd validation fix).
+
+Phase 11 scope (SESSION.md § Phase 11):
+
+1. Terminal input enhancement — macOS shortcuts in xterm.js:
+   - Cmd+Left → \x01 (Ctrl-A, beginning of line)
+   - Cmd+Right → \x05 (Ctrl-E, end of line)
+   - Cmd+Backspace → \x15 (Ctrl-U, kill line)
+   - Option+Left/Right → word movement (\x1bb / \x1bf)
+   - Use xterm.js `attachCustomKeyEventHandler` to intercept before browser
+
+2. Polish and bug fixes from manual testing of Phase 10:
+   - Test branch switching with active terminals
+   - Test worktree creation flow in NewThreadView (branch name input, worktree cwd validation)
+   - Test GitActionsControl commit/push/PR in thread context
+   - Test Cmd+J / Cmd+Shift+J terminal drawer toggle
+   - Verify PullRequestThreadDialog checkout flow
+
+3. Make the worktree branch name prefix (feature/ITE-) configurable per project instead of hardcoded
+
+4. Any cleanup items found during testing
+
+Before starting work:
+- Run bun typecheck && bun lint && bun run test to confirm green baseline (expect 6/6 typecheck, 0 lint errors, 424+ server tests, 345+ web tests).
+
+Rules: Both bun lint and bun typecheck must pass. Use bun run test (never bun test). Prioritize correctness and maintainability. Don't duplicate logic — extract shared modules. ultrathink
+```
+
+## Phase 11: Terminal Input Enhancement + Polish ✅ COMPLETE
+
+**Goal:** Fix keyboard shortcuts in Claude terminals, configurable branch prefix.
+
+### 11.1 Terminal input enhancement ✅
+
+The navigation shortcuts (`terminalNavigationShortcutData`, `isTerminalClearShortcut`) already existed in `keybindings.ts` and were wired into the shell terminal drawers (ThreadTerminalDrawer, ProjectTerminalDrawer), but were **NOT** wired into the Claude terminal's `ActiveTerminalView`. Fixed by adding `attachCustomKeyEventHandler` to `ActiveTerminalView` in `ThreadTerminalView.tsx`.
+
+**Shortcuts now working in Claude terminals:**
+- `Cmd+Left` → `\x01` (Ctrl-A, beginning of line)
+- `Cmd+Right` → `\x05` (Ctrl-E, end of line)
+- `Cmd+Backspace` → `\x15` (Ctrl-U, kill line) — **NEW** shortcut added to `keybindings.ts`
+- `Option+Left/Right` → `\x1bb` / `\x1bf` (word movement)
+- `Cmd+K` / `Ctrl+L` → terminal clear
+
+### 11.2 Configurable worktree branch prefix ✅
+
+Replaced hardcoded `"feature/ITE-"` with per-project configurable prefix stored in `localStorage` (key `clui:worktree-branch-prefix`).
+
+- Default: `"feature/ITE-"` (backward compatible)
+- Editable via "prefix" button in NewThreadView when worktree mode is active
+- Persisted per project cwd — different projects can have different prefixes
+- No server-side changes needed (purely client-side)
+
+### 11.3 Tests ✅
+
++4 new tests in `keybindings.test.ts`:
+- `maps Cmd+Backspace on macOS to kill line`
+- `does not map Cmd+Backspace on non-macOS`
+- `does not map plain Backspace`
+- `does not map Option+Backspace`
+
+**Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors (12 warnings, baseline), `bun run test` all packages pass (424 server, 349 web (+4), 46 contracts, 26 shared, 26 desktop, 18 scripts).
+
+## Key Files for Next Session
+
+| File | Purpose |
+|------|---------|
+| `PLAN.md` | Full implementation plan with file-level detail |
+| `AGENTS.md` | Build instructions, tech stack, project snapshot (symlinked as CLAUDE.md) |
+| `apps/web/src/components/TerminalToolbar.tsx` | Terminal toolbar with branch selector + git actions + status badge |
+| `apps/web/src/components/ThreadTerminalView.tsx` | Three-state terminal view with key handler, branch prefix config |
+| `apps/web/src/keybindings.ts` | Terminal navigation shortcuts (Cmd+Left/Right, Cmd+Backspace, Option+Left/Right) |
+| `apps/web/src/components/useBranchToolbar.ts` | Branch state management hook (hibernate on cwd change) |
+| `apps/web/src/components/GitActionsControl.tsx` | Commit/push/PR split button |
+| `apps/web/src/components/BranchToolbarBranchSelector.tsx` | Branch picker combobox |
+| `apps/web/src/store.ts` | Zustand store with `addOptimisticThread` |
+| `apps/web/src/routes/_chat.tsx` | Layout with Cmd+J/Cmd+Shift+J terminal shortcuts |
+| `apps/web/src/routes/_chat.$threadId.tsx` | Thread route with ThreadTerminalDrawerContainer |
+| `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | ClaudeSessionManager implementation |
+| `apps/server/src/wsServer.ts` | WS routes + hook HTTP routes + auto-title dispatch |
+
+## Future Phases
+
+### Phase 12: Split Terminal View
+- Multiple threads visible simultaneously
+- Drag-to-split terminal panes

@@ -35,7 +35,6 @@
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@clui/desktop",
     "fmt": "oxfmt",
-    "probe:cursor-acp": "node scripts/cursor-acp-probe.mjs",
     "fmt:check": "oxfmt --check",
     "build:contracts": "turbo run build --filter=@clui/contracts",
     "dist:desktop:artifact": "node scripts/build-desktop-artifact.ts",
@@ -45,8 +44,7 @@
     "dist:desktop:linux": "node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64",
     "dist:desktop:win": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
-    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo"
   },
   "devDependencies": {
     "@types/node": "catalog:",

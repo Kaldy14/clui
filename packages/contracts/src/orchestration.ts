@@ -20,6 +20,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getWorkingTreeDiff: "orchestration.getWorkingTreeDiff",
   replayEvents: "orchestration.replayEvents",
   getSessionMetrics: "orchestration.getSessionMetrics",
   getSlashCommands: "orchestration.getSlashCommands",
@@ -295,6 +296,9 @@ export type OrchestrationSessionMetrics = typeof OrchestrationSessionMetrics.Typ
 export const TerminalStatus = Schema.Literals(["new", "active", "dormant"]);
 export type TerminalStatus = typeof TerminalStatus.Type;
 
+export const TitleSource = Schema.Literals(["auto", "manual"]);
+export type TitleSource = typeof TitleSource.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -314,6 +318,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(() => null),
+  ),
+  titleSource: TitleSource.pipe(
+    Schema.withDecodingDefault(() => "auto" as const),
   ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -391,6 +398,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  titleSource: Schema.optional(TitleSource),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -717,6 +725,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  titleSource: Schema.optional(TitleSource),
   updatedAt: IsoDateTime,
 });
 
@@ -1071,6 +1080,17 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
+
+export const OrchestrationGetWorkingTreeDiffInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationGetWorkingTreeDiffInput = typeof OrchestrationGetWorkingTreeDiffInput.Type;
+
+export const OrchestrationGetWorkingTreeDiffResult = Schema.Struct({
+  threadId: ThreadId,
+  diff: Schema.String,
+});
+export type OrchestrationGetWorkingTreeDiffResult = typeof OrchestrationGetWorkingTreeDiffResult.Type;
 
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,

@@ -4,6 +4,7 @@ import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 import {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetWorkingTreeDiffInput,
   ORCHESTRATION_WS_METHODS,
   OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffInput,
@@ -133,6 +134,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(ORCHESTRATION_WS_METHODS.getSnapshot, OrchestrationGetSnapshotInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getTurnDiff, OrchestrationGetTurnDiffInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getFullThreadDiff, OrchestrationGetFullThreadDiffInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getWorkingTreeDiff, OrchestrationGetWorkingTreeDiffInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.replayEvents, OrchestrationReplayEventsInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getSessionMetrics, OrchestrationGetSessionMetricsInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getSlashCommands, OrchestrationGetSlashCommandsInput),

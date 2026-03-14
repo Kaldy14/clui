@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
-import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
+import { checkpointDiffQueryOptions, workingTreeDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "../terminal-links";
@@ -254,13 +254,20 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
   }, [orderedTurnDiffSummaries, selectedTurn]);
+  const hasTurns = orderedTurnDiffSummaries.length > 0;
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions({
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: isGitRepo,
+      enabled: isGitRepo && hasTurns,
+    }),
+  );
+  const workingTreeDiffQuery = useQuery(
+    workingTreeDiffQueryOptions({
+      threadId: activeThreadId,
+      enabled: isGitRepo && !hasTurns,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -269,15 +276,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const conversationCheckpointDiff = selectedTurn
     ? undefined
     : activeCheckpointDiffQuery.data?.diff;
-  const isLoadingCheckpointDiff = activeCheckpointDiffQuery.isLoading;
+  const isLoadingCheckpointDiff = hasTurns
+    ? activeCheckpointDiffQuery.isLoading
+    : workingTreeDiffQuery.isLoading;
   const checkpointDiffError =
     activeCheckpointDiffQuery.error instanceof Error
       ? activeCheckpointDiffQuery.error.message
       : activeCheckpointDiffQuery.error
         ? "Failed to load checkpoint diff."
-        : null;
+        : workingTreeDiffQuery.error instanceof Error
+          ? workingTreeDiffQuery.error.message
+          : null;
 
-  const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
+  const selectedPatch = hasTurns
+    ? (selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff)
+    : workingTreeDiffQuery.data?.diff;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
@@ -545,9 +558,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
-      ) : orderedTurnDiffSummaries.length === 0 ? (
+      ) : orderedTurnDiffSummaries.length === 0 && !workingTreeDiffQuery.data?.diff ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          No completed turns yet.
+          {workingTreeDiffQuery.isLoading
+            ? "Loading workspace changes..."
+            : "No changes detected."}
         </div>
       ) : (
         <>

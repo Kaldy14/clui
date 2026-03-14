@@ -30,6 +30,7 @@ const TERMINAL_WORD_BACKWARD = "\u001bb";
 const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
+const TERMINAL_KILL_LINE = "\u0015";
 
 function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
@@ -305,6 +306,15 @@ export function terminalNavigationShortcutData(
   if (event.shiftKey) return null;
 
   const key = normalizeEventKey(event.key);
+
+  // Cmd+Backspace → kill line (Ctrl-U)
+  if (key === "backspace") {
+    if (isMacPlatform(platform) && event.metaKey && !event.altKey && !event.ctrlKey) {
+      return TERMINAL_KILL_LINE;
+    }
+    return null;
+  }
+
   if (key !== "arrowleft" && key !== "arrowright") {
     return null;
   }

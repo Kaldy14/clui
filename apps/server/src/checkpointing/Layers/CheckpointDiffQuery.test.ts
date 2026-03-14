@@ -51,6 +51,7 @@ function makeSnapshot(input: {
         claudeSessionId: null,
         terminalStatus: "new",
         scrollbackSnapshot: null,
+        titleSource: "auto" as const,
         latestTurn: {
           turnId: TurnId.makeUnsafe("turn-1"),
           state: "completed",

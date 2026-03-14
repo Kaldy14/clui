@@ -1,4 +1,5 @@
 import type { Thread } from "../types";
+import { claudeTerminalStatusPill } from "../lib/threadStatus";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
@@ -10,7 +11,11 @@ export interface ThreadStatusPill {
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
-    | "Plan Ready";
+    | "Needs Input"
+    | "Plan Ready"
+    | "Running"
+    | "Paused"
+    | "Error";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -18,7 +23,7 @@ export interface ThreadStatusPill {
 
 type ThreadStatusInput = Pick<
   Thread,
-  "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
+  "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session" | "terminalStatus" | "hookStatus"
 >;
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
@@ -102,6 +107,10 @@ export function resolveThreadStatusPill(input: {
       pulse: false,
     };
   }
+
+  // Claude terminal status (hook-derived rich status or basic active/dormant)
+  const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  if (terminalPill) return terminalPill;
 
   return null;
 }

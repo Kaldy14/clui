@@ -55,6 +55,7 @@ import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
+import { CheckpointReactor } from "./orchestration/Services/CheckpointReactor";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
@@ -74,6 +75,16 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import {
+  readRequestBody,
+  buildStopEvents,
+  buildNotificationEvents,
+  buildUserPromptSubmitEvents,
+  buildPermissionRequestEvents,
+  buildPostToolUseEvents,
+} from "./hooks/hookReceiver";
+import { extractPromptText } from "./terminal/titleGenerator";
+import { TextGeneration } from "./git/Services/TextGeneration.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -206,12 +217,14 @@ export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
   | CheckpointDiffQuery
-  | OrchestrationReactor;
+  | OrchestrationReactor
+  | CheckpointReactor;
 
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
   | GitManager
   | GitCore
+  | TextGeneration
   | TerminalManager
   | ClaudeSessionManager
   | Keybindings
@@ -250,6 +263,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const availableEditors = resolveAvailableEditors();
 
   const gitManager = yield* GitManager;
+  const textGeneration = yield* TextGeneration;
   const terminalManager = yield* TerminalManager;
   const claudeSessionManager = yield* ClaudeSessionManager;
   const keybindingsManager = yield* Keybindings;
@@ -414,6 +428,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     } satisfies OrchestrationCommand;
   });
 
+  // Track threads that have already been auto-titled (in-memory, per server session)
+  const autoTitledThreads = new Set<string>();
+
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
     const respond = (
@@ -424,6 +441,130 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       res.writeHead(statusCode, headers);
       res.end(body);
     };
+
+    // Handle hook callbacks outside Effect pipeline for minimal overhead
+    const rawUrl = req.url ?? "/";
+    if (req.method === "POST" && rawUrl.startsWith("/hooks/")) {
+      const hookUrl = new URL(rawUrl, `http://localhost:${port}`);
+      const hookPath = hookUrl.pathname;
+      const threadId = hookUrl.searchParams.get("thread");
+      if (!threadId) {
+        res.writeHead(400, { "Content-Type": "text/plain" });
+        res.end("Missing thread query param");
+        return;
+      }
+
+      void (async () => {
+        try {
+          const body = await readRequestBody(req);
+          let events: ClaudeSessionEvent[] = [];
+
+          if (hookPath === "/hooks/user-prompt-submit") {
+            events = buildUserPromptSubmitEvents(threadId);
+
+            // Capture baseline checkpoint for diff comparison
+            Effect.runPromise(
+              checkpointReactor.ensureBaseline({
+                threadId: ThreadId.makeUnsafe(threadId),
+              }),
+            ).catch((err) => logger.warn("ensureBaseline promise rejected", { threadId, error: String(err) }));
+
+            // Auto-title: generate a thread title from the first prompt
+            if (!autoTitledThreads.has(threadId)) {
+              const promptText = extractPromptText(body);
+              if (promptText) {
+                // Mark optimistically to prevent duplicate attempts while generation is in-flight.
+                // On failure, remove from the set so the next prompt retries.
+                autoTitledThreads.add(threadId);
+
+                // Truncate prompt into a simple fallback title (first sentence or first 50 chars)
+                const fallbackTitle = promptText.length <= 50
+                  ? promptText
+                  : `${promptText.slice(0, 49)}\u2026`;
+
+                void Effect.runPromise(
+                  textGeneration
+                    .generateThreadTitle({ promptText })
+                    .pipe(
+                      Effect.map(({ title }) => title),
+                      // On AI failure, use the truncated prompt as fallback title
+                      Effect.catch(() =>
+                        Effect.gen(function* () {
+                          yield* Effect.logWarning("auto-title AI generation failed, using fallback");
+                          return fallbackTitle;
+                        }),
+                      ),
+                      Effect.flatMap((title) =>
+                        orchestrationEngine.dispatch({
+                          type: "thread.meta.update",
+                          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+                          threadId: ThreadId.makeUnsafe(threadId),
+                          title,
+                          titleSource: "auto",
+                        }),
+                      ),
+                      Effect.catch((error) => {
+                        // Dispatch itself failed — allow retry on next prompt
+                        autoTitledThreads.delete(threadId);
+                        return Effect.logError("auto-title dispatch failed", { cause: error });
+                      }),
+                    ),
+                );
+              }
+            }
+          } else if (hookPath === "/hooks/permission-request") {
+            events = buildPermissionRequestEvents(threadId, body);
+          } else if (hookPath === "/hooks/post-tool-use") {
+            events = buildPostToolUseEvents(threadId);
+          } else if (hookPath === "/hooks/stop") {
+            events = buildStopEvents(threadId);
+
+            // Capture checkpoint and compute diff for the DiffPanel
+            Effect.runPromise(
+              checkpointReactor.captureTerminalTurnCheckpoint({
+                threadId: ThreadId.makeUnsafe(threadId),
+              }),
+            ).catch((err) => logger.warn("captureTerminalTurnCheckpoint promise rejected", { threadId, error: String(err) }));
+          } else if (hookPath === "/hooks/notification") {
+            events = buildNotificationEvents(threadId, body);
+          } else {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Unknown hook");
+            return;
+          }
+
+          logger.info("hook received", { hookPath, threadId, eventCount: events.length });
+
+          for (const event of events) {
+            void Effect.runPromise(
+              broadcastPush({
+                type: "push",
+                channel: WS_CHANNELS.claudeSessionEvent,
+                data: event,
+              }).pipe(
+                Effect.catch((error) =>
+                  Effect.logError("hook broadcast failed", { cause: error }),
+                ),
+              ),
+            );
+          }
+
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("OK");
+        } catch (error) {
+          logger.warn("hook handler error", {
+            hookPath,
+            threadId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          if (!res.headersSent) {
+            res.writeHead(500, { "Content-Type": "text/plain" });
+            res.end("Internal error");
+          }
+        }
+      })();
+      return;
+    }
 
     void Effect.runPromise(
       Effect.gen(function* () {
@@ -606,6 +747,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
+  const checkpointReactor = yield* CheckpointReactor;
   const { openInEditor } = yield* Open;
 
   const subscriptionsScope = yield* Scope.make("sequential");
@@ -678,7 +820,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const createdAt = new Date().toISOString();
         bootstrapProjectId = ProjectId.makeUnsafe(crypto.randomUUID());
         const bootstrapProjectTitle = path.basename(cwd) || "project";
-        bootstrapProjectDefaultModel = "gpt-5-codex";
+        bootstrapProjectDefaultModel = "claude-opus-4-6";
         yield* orchestrationEngine.dispatch({
           type: "project.create",
           commandId: CommandId.makeUnsafe(crypto.randomUUID()),
@@ -690,7 +832,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         });
       } else {
         bootstrapProjectId = existingProject.id;
-        bootstrapProjectDefaultModel = existingProject.defaultModel ?? "gpt-5-codex";
+        bootstrapProjectDefaultModel = existingProject.defaultModel ?? "claude-opus-4-6";
       }
 
       const existingThread = snapshot.threads.find(
@@ -842,6 +984,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case ORCHESTRATION_WS_METHODS.getFullThreadDiff: {
         const body = stripRequestTag(request.body);
         return yield* checkpointDiffQuery.getFullThreadDiff(body);
+      }
+
+      case ORCHESTRATION_WS_METHODS.getWorkingTreeDiff: {
+        const body = stripRequestTag(request.body);
+        return yield* checkpointDiffQuery.getWorkingTreeDiff(body);
       }
 
       case ORCHESTRATION_WS_METHODS.replayEvents: {
@@ -1001,13 +1148,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.claudeStart: {
         const { threadId, cwd: requestedCwd, cols, rows, resumeSessionId } = stripRequestTag(request.body);
 
-        // Validate cwd is under the workspace root
+        // Validate cwd is under the workspace root or the thread's registered worktree
         const resolvedCwd = path.resolve(requestedCwd);
         const resolvedRoot = path.resolve(cwd);
-        if (resolvedCwd !== resolvedRoot && !resolvedCwd.startsWith(`${resolvedRoot}/`)) {
-          return yield* new RouteRequestError({
-            message: `cwd must be within workspace root: ${cwd}`,
-          });
+        const isUnderRoot = resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
+        if (!isUnderRoot) {
+          // Allow if the cwd matches the thread's registered worktree path
+          const snapshot = yield* projectionReadModelQuery.getSnapshot();
+          const thread = snapshot.threads.find((t) => t.id === threadId);
+          const threadWorktree = thread?.worktreePath ? path.resolve(thread.worktreePath) : null;
+          const isThreadWorktree = threadWorktree != null &&
+            (resolvedCwd === threadWorktree || resolvedCwd.startsWith(`${threadWorktree}/`));
+          if (!isThreadWorktree) {
+            return yield* new RouteRequestError({
+              message: `cwd must be within workspace root: ${cwd}`,
+            });
+          }
         }
 
         return yield* claudeSessionManager.startSession({

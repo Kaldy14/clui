@@ -25,6 +25,8 @@ describe("OrchestrationReactor", () => {
             start: Effect.sync(() => {
               started.push("checkpoint-reactor");
             }),
+            ensureBaseline: () => Effect.void,
+            captureTerminalTurnCheckpoint: () => Effect.void,
           }),
         ),
       ),
