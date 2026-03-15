@@ -1140,7 +1140,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case WS_METHODS.claudeStart: {
-        const { threadId, cwd: requestedCwd, cols, rows, resumeSessionId } = stripRequestTag(request.body);
+        const { threadId, cwd: requestedCwd, cols, rows, resumeSessionId, dangerouslySkipPermissions } = stripRequestTag(request.body);
 
         // Validate cwd is under the workspace root or the thread's registered worktree
         const resolvedCwd = path.resolve(requestedCwd);
@@ -1166,6 +1166,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           cols,
           rows,
           ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+          ...(dangerouslySkipPermissions !== undefined ? { dangerouslySkipPermissions } : {}),
         });
       }
 

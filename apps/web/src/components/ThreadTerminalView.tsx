@@ -51,6 +51,7 @@ function NewThreadView({
 }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dangerouslySkipPermissions, setDangerouslySkipPermissions] = useState(false);
   const [envMode, setEnvMode] = useState<EnvMode>("local");
   const [prDialogOpen, setPrDialogOpen] = useState(false);
   const [prInitialReference, setPrInitialReference] = useState<string | null>(null);
@@ -93,24 +94,23 @@ function NewThreadView({
         cwd: startCwd,
         cols: 120,
         rows: 40,
+        ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions } : {}),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start session");
       setStarting(false);
     }
-  }, [threadId, cwd, isWorktreePending, thread.branch, project?.cwd, branchToolbar, trimmedWorktreeBranch]);
+  }, [threadId, cwd, isWorktreePending, thread.branch, project?.cwd, branchToolbar, trimmedWorktreeBranch, dangerouslySkipPermissions]);
 
   const showBranchInput = isWorktreePending && !!thread.branch;
 
   return (
     <div className="flex h-full flex-col items-center justify-center p-8">
       <div className="flex w-72 flex-col items-center gap-5 animate-fade-in">
-        {/* Icon with subtle glow */}
+        {/* App logo with subtle glow */}
         <div className="relative animate-zoom-fade-in">
           <div className="absolute inset-0 rounded-full bg-primary/10 blur-xl" />
-          <div className="relative flex size-12 items-center justify-center rounded-xl border border-border/50 bg-card/80 shadow-sm dark:border-border/30 dark:bg-card/60">
-            <TerminalIcon className="size-5 text-muted-foreground/70" aria-hidden="true" />
-          </div>
+          <img src="/favicon.svg" alt="" aria-hidden="true" className="relative size-12" />
         </div>
 
         {/* Copy — fixed height to prevent shift */}
@@ -205,6 +205,17 @@ function NewThreadView({
           </div>
         )}
 
+        {/* Auto-accept toggle */}
+        <label className={`flex items-center gap-2 text-xs animate-fade-in-up-delay ${dangerouslySkipPermissions ? "text-red-500" : "text-muted-foreground/70"}`}>
+          <input
+            type="checkbox"
+            checked={dangerouslySkipPermissions}
+            onChange={(e) => setDangerouslySkipPermissions(e.target.checked)}
+            className="size-3.5 rounded border-border/40 accent-red-500"
+          />
+          <span>{dangerouslySkipPermissions ? "YOLO mode" : "YOLO mode"}</span>
+        </label>
+
         {/* Launch button */}
         <button
           type="button"
@@ -281,7 +292,10 @@ function DormantTerminalView({
     if (cached) {
       claudeCache.attach(threadId, el);
       cached.terminal.options.disableStdin = true;
+      // Fit after layout so the read-only scrollback renders at correct dimensions
+      const rafId = requestAnimationFrame(() => cached.fitAddon.fit());
       return () => {
+        cancelAnimationFrame(rafId);
         claudeCache.detach(threadId);
       };
     }
@@ -290,6 +304,8 @@ function DormantTerminalView({
     let ownsCacheEntry = true;
     const entry = claudeCache.attach(threadId, el);
     entry.terminal.options.disableStdin = true;
+    // Fit after layout
+    const rafId = requestAnimationFrame(() => entry.fitAddon.fit());
     const api = readNativeApi();
     if (!api) return;
 
@@ -303,6 +319,7 @@ function DormantTerminalView({
 
     return () => {
       disposed = true;
+      cancelAnimationFrame(rafId);
       claudeCache.detach(threadId);
       // Dispose dormant terminals on unmount — they're cheap to recreate
       // and we don't want stale scrollback accumulating in memory.
@@ -318,12 +335,13 @@ function DormantTerminalView({
     setResuming(true);
     setError(null);
     try {
-      // Read actual terminal dimensions before disposing
+      // Read terminal dimensions from the cached instance. Do NOT dispose the
+      // cached terminal here — ActiveTerminalView will reuse it, preserving
+      // full client-side scrollback. Disposing destroys all scrollback history,
+      // forcing a server fetch that returns only a truncated snapshot.
       const cached = claudeCache.get(threadId);
       const cols = cached?.terminal.cols ?? 120;
       const rows = cached?.terminal.rows ?? 40;
-      // Dispose the read-only terminal so ActiveTerminalView gets a fresh one
-      claudeCache.dispose(threadId);
       await api.claude.start({
         threadId,
         cwd,
@@ -352,7 +370,7 @@ function DormantTerminalView({
   return (
     <div className="flex h-full flex-col">
       {/* Scrollback area — dimmed to signal read-only */}
-      <div ref={containerRef} className="min-h-0 flex-1 opacity-50 saturate-50 transition-opacity hover:opacity-70 hover:saturate-75" />
+      <div ref={containerRef} className="min-h-0 flex-1 opacity-70 saturate-75 transition-opacity hover:opacity-85 hover:saturate-100" />
 
       {/* Resume bar — compact, glass-like */}
       <div className="flex items-center justify-center gap-3 border-t border-border/40 bg-card/60 px-4 py-2 backdrop-blur-sm dark:border-border/20 dark:bg-card/40">
@@ -405,8 +423,13 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     const eventBuffer: ClaudeSessionEvent[] = [];
     let terminalReady = false;
 
+    // Check if we're reusing a cached terminal that already has scrollback
+    const hadCachedContent = claudeCache.has(threadId);
     const entry = claudeCache.attach(threadId, el);
     const { terminal, fitAddon } = entry;
+    // If the terminal was reparented (not freshly created), it already holds
+    // its full scrollback in the xterm buffer — no need to fetch from server.
+    const reusingScrollback = hadCachedContent && terminal.buffer.normal.length > terminal.rows;
     searchAddonRef.current = entry.searchAddon;
     terminal.options.disableStdin = false;
 
@@ -439,31 +462,36 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       writeEvent(event);
     });
 
-    // Get any scrollback we may have missed, then flush buffered events
-    void api.claude
-      .getScrollback({ threadId })
-      .then((result) => {
-        if (disposed) return;
-        if (result.scrollback) {
-          terminal.write("\u001bc"); // reset terminal first
-          terminal.write(result.scrollback);
-        }
-        // Flush events that arrived during getScrollback
-        terminalReady = true;
-        for (const event of eventBuffer) {
-          writeEvent(event);
-        }
-        eventBuffer.length = 0;
-      })
-      .catch(() => {
-        if (disposed) return;
-        // Even if scrollback fetch fails, start processing live events
-        terminalReady = true;
-        for (const event of eventBuffer) {
-          writeEvent(event);
-        }
-        eventBuffer.length = 0;
-      });
+    if (reusingScrollback) {
+      // Terminal already has full scrollback — just start processing live events
+      terminalReady = true;
+    } else {
+      // Get any scrollback we may have missed, then flush buffered events
+      void api.claude
+        .getScrollback({ threadId })
+        .then((result) => {
+          if (disposed) return;
+          if (result.scrollback) {
+            terminal.write("\u001bc"); // reset terminal first
+            terminal.write(result.scrollback);
+          }
+          // Flush events that arrived during getScrollback
+          terminalReady = true;
+          for (const event of eventBuffer) {
+            writeEvent(event);
+          }
+          eventBuffer.length = 0;
+        })
+        .catch(() => {
+          if (disposed) return;
+          // Even if scrollback fetch fails, start processing live events
+          terminalReady = true;
+          for (const event of eventBuffer) {
+            writeEvent(event);
+          }
+          eventBuffer.length = 0;
+        });
+    }
 
     // Intercept macOS navigation shortcuts before the browser captures them
     terminal.attachCustomKeyEventHandler((event) => {
@@ -496,6 +524,40 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
         return false;
       }
 
+      // Shift+Enter / Option+Enter — send CSI 13;2u so Claude Code CLI
+      // inserts a newline instead of submitting. xterm.js onData sends \r
+      // for all Enter variants, losing the modifier, so we intercept here.
+      if (event.type === "keydown" && event.key === "Enter" && (event.shiftKey || event.altKey) && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        void api.claude.write({ threadId, data: "\x1b[13;2u" }).catch(() => undefined);
+        return false;
+      }
+
+      // Ctrl+Z — prevent browser "undo" so SIGTSTP (suspend) reaches the PTY.
+      // On Mac Cmd+Z is the undo shortcut so Ctrl+Z is free; on other platforms
+      // we still want it to go to the terminal when focused.
+      if (event.type === "keydown" && event.key === "z" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        void api.claude.write({ threadId, data: "\x1a" }).catch(() => undefined);
+        return false;
+      }
+
+      // Ctrl+F on Mac — let it pass through to the PTY (Claude Code uses it
+      // to kill background agents). Cmd+F already opens terminal search above.
+      if (
+        event.type === "keydown" &&
+        event.key.toLowerCase() === "f" &&
+        isMacPlatform(navigator.platform) &&
+        event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void api.claude.write({ threadId, data: "\x06" }).catch(() => undefined);
+        return false;
+      }
+
       return true;
     });
 
@@ -509,17 +571,21 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       void api.claude.resize({ threadId, cols, rows }).catch(() => undefined);
     });
 
-    // Fit to container
-    fitAddon.fit();
-
-    // Send initial resize
-    void api.claude
-      .resize({ threadId, cols: terminal.cols, rows: terminal.rows })
-      .catch(() => undefined);
-
-    // Focus the terminal
-    window.requestAnimationFrame(() => {
-      if (!disposed) terminal.focus();
+    // Defer fit + resize to after the browser has laid out the container.
+    // Calling fitAddon.fit() synchronously during mount often reads stale
+    // container dimensions (especially when reparenting a cached terminal),
+    // which sends wrong cols/rows to the PTY and causes Claude Code's TUI
+    // to render overlapping lines.
+    const initialFitRafId = requestAnimationFrame(() => {
+      if (disposed) return;
+      fitAddon.fit();
+      // Always send resize after reattach — even if cols/rows look unchanged,
+      // the PTY may have been started with default dimensions or the previous
+      // attach may have sent wrong values.
+      void api.claude
+        .resize({ threadId, cols: terminal.cols, rows: terminal.rows })
+        .catch(() => undefined);
+      terminal.focus();
     });
 
     // Watch for window resize
@@ -552,6 +618,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     return () => {
       disposed = true;
       searchAddonRef.current = null;
+      cancelAnimationFrame(initialFitRafId);
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       window.removeEventListener("resize", onWindowResize);
       resizeObserver.disconnect();

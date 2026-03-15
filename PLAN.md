@@ -100,7 +100,7 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 
 ## Implementation Phases
 
-### Phase 0: Fork & Setup (Day 1)
+### Phase 0: Fork & Setup (Day 1) ✅ COMPLETE
 
 **Goal:** Clean fork of t3code, verify it builds, rename.
 
@@ -167,7 +167,7 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 
 ---
 
-### Phase 2: Database Schema Changes (Day 2)
+### Phase 2: Database Schema Changes (Day 2) ✅ COMPLETE
 
 **Goal:** Add terminal-specific columns, remove provider-specific ones.
 
@@ -194,8 +194,8 @@ INSERT OR IGNORE INTO terminal_settings (key, value) VALUES ('max_active_termina
 
 | File | Action |
 |------|--------|
-| `packages/contracts/src/orchestration.ts` `OrchestrationThread` (line 295) | Add fields: `claudeSessionId: string \| null`, `terminalStatus: "new" \| "active" \| "dormant"` |
-| Remove fields from `OrchestrationThread` | `session` (the old provider session), `proposedPlans`, `activities`, `checkpoints` |
+| `packages/contracts/src/orchestration.ts` `OrchestrationThread` (line 295) | Add fields: `claudeSessionId: string \| null`, `terminalStatus: "new" \| "active" \| "dormant"` ✅ |
+| Old fields (`session`, `proposedPlans`, `activities`, `checkpoints`) | **Kept** — still actively used by projector, CheckpointReactor, and persistence layers |
 
 #### 2.3 Update projection queries
 
@@ -207,7 +207,7 @@ INSERT OR IGNORE INTO terminal_settings (key, value) VALUES ('max_active_termina
 
 ---
 
-### Phase 3: TerminalSessionManager — Server Side (Day 2-4)
+### Phase 3: TerminalSessionManager — Server Side (Day 2-4) ✅ COMPLETE
 
 **Goal:** Build the core server-side terminal management using Effect and node-pty.
 
@@ -733,10 +733,10 @@ Key: Every git operation must run in the context of the thread's worktree, not t
 
 | Phase | Scope | Duration |
 |-------|-------|----------|
-| 0 | Fork & Setup | Day 1 |
-| 1 | Delete Agent SDK | Day 1-2 |
-| 2 | Database Schema | Day 2 |
-| 3 | TerminalSessionManager (server) | Day 2-4 |
+| 0 | Fork & Setup ✅ | Day 1 |
+| 1 | Delete Agent SDK ✅ | Day 1-2 |
+| 2 | Database Schema ✅ | Day 2 |
+| 3 | TerminalSessionManager (server) ✅ | Day 2-4 |
 | 4 | Terminal UI (client) | Day 4-6 |
 | 5 | Lifecycle Management | Day 6-7 |
 | 6 | Polish & Integration | Day 7-9 |
