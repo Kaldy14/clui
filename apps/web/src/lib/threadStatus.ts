@@ -155,8 +155,8 @@ function hookStatusPill(hookStatus: ClaudeHookStatus): ThreadStatusPill {
     case "completed":
       return {
         label: "Completed",
-        colorClass: "text-zinc-500 dark:text-zinc-400/70",
-        dotClass: "bg-zinc-400 dark:bg-zinc-500/70",
+        colorClass: "text-emerald-600 dark:text-emerald-300/90",
+        dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
         pulse: false,
       };
   }

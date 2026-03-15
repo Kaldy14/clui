@@ -7,10 +7,9 @@ export function requestNotificationPermission(): void {
   }
 }
 
-function shouldNotify(): boolean {
+function canNotify(): boolean {
   if (!("Notification" in window)) return false;
   if (Notification.permission !== "granted") return false;
-  if (document.hasFocus()) return false;
   return true;
 }
 
@@ -47,9 +46,10 @@ function buildActivityNotification(
 export function dispatchActivityNotification(
   activity: OrchestrationThreadActivity,
   threadTitle: string,
+  isCurrentThread: boolean,
   onNavigate?: () => void,
 ): void {
-  if (!shouldNotify()) return;
+  if (isCurrentThread || !canNotify()) return;
   const notification = buildActivityNotification(activity, threadTitle);
   if (!notification) return;
   fireNotification(
@@ -71,9 +71,10 @@ export function dispatchSessionSetNotification(
   threadTitle: string,
   status: OrchestrationSessionStatus,
   previousStatus: OrchestrationSessionStatus | null,
+  isCurrentThread: boolean,
   onNavigate?: () => void,
 ): void {
-  if (!shouldNotify()) return;
+  if (isCurrentThread || !canNotify()) return;
   if (previousStatus !== "running") return;
 
   let title: string;

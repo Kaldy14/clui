@@ -180,6 +180,17 @@ function ChatThreadRouteView() {
     });
   }, [navigate, threadId]);
 
+  // Mark thread as visited and clear "Completed" badge when navigating to it
+  useEffect(() => {
+    if (!threadsHydrated || !routeThreadExists) return;
+    const store = useStore.getState();
+    store.markThreadVisited(threadId);
+    const thread = store.threads.find((t) => t.id === threadId);
+    if (thread?.hookStatus === "completed") {
+      store.setHookStatus(threadId, null);
+    }
+  }, [threadsHydrated, routeThreadExists, threadId]);
+
   useEffect(() => {
     if (!threadsHydrated) {
       return;
