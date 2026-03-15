@@ -249,6 +249,15 @@ function NewThreadView({
 
 // ── DormantTerminalView ───────────────────────────────────────────────
 
+/** Cooldown guard for auto-resume to prevent infinite loops.
+ *  When `--resume` fails (e.g. stale session ID), the CLI exits immediately →
+ *  status goes "dormant" → briefly "active" (started event) → "dormant" again →
+ *  component remounts. Without a cooldown, auto-resume would fire endlessly.
+ *  A simple Set doesn't work because ActiveTerminalView mounts during the brief
+ *  "active" window and would clear it. A timestamp-based cooldown is immune to that. */
+const autoResumeLastAttempt = new Map<string, number>();
+const AUTO_RESUME_COOLDOWN_MS = 10_000;
+
 function DormantTerminalView({
   threadId,
   thread,
@@ -328,9 +337,14 @@ function DormantTerminalView({
     }
   }, [threadId, cwd, thread.claudeSessionId]);
 
-  // Auto-resume dormant sessions when the thread is opened
+  // Auto-resume dormant sessions when the thread is opened.
+  // Guard against infinite loops: if a resume fails (e.g. stale session ID),
+  // the CLI exits immediately → status goes back to "dormant" → this component
+  // remounts → without the guard, auto-resume would fire again endlessly.
   useEffect(() => {
-    if (!resuming && cwd) {
+    const lastAttempt = autoResumeLastAttempt.get(threadId) ?? 0;
+    if (!resuming && cwd && Date.now() - lastAttempt > AUTO_RESUME_COOLDOWN_MS) {
+      autoResumeLastAttempt.set(threadId, Date.now());
       handleResume();
     }
   }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps

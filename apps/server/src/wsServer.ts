@@ -262,8 +262,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   } = serverConfig;
   const availableEditors = resolveAvailableEditors();
 
-  const gitManager = yield* GitManager;
   const textGeneration = yield* TextGeneration;
+  const gitManager = yield* GitManager;
+
   const terminalManager = yield* TerminalManager;
   const claudeSessionManager = yield* ClaudeSessionManager;
   const keybindingsManager = yield* Keybindings;
@@ -473,11 +474,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             if (!autoTitledThreads.has(threadId)) {
               const promptText = extractPromptText(body);
               if (promptText) {
-                // Mark optimistically to prevent duplicate attempts while generation is in-flight.
-                // On failure, remove from the set so the next prompt retries.
                 autoTitledThreads.add(threadId);
 
-                // Truncate prompt into a simple fallback title (first sentence or first 50 chars)
                 const fallbackTitle = promptText.length <= 50
                   ? promptText
                   : `${promptText.slice(0, 49)}\u2026`;
@@ -487,13 +485,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
                     .generateThreadTitle({ promptText })
                     .pipe(
                       Effect.map(({ title }) => title),
-                      // On AI failure, use the truncated prompt as fallback title
-                      Effect.catch(() =>
-                        Effect.gen(function* () {
-                          yield* Effect.logWarning("auto-title AI generation failed, using fallback");
-                          return fallbackTitle;
-                        }),
-                      ),
+                      Effect.catch((error) => {
+                        logger.warn("auto-title AI failed, using fallback", { threadId, error: String(error) });
+                        return Effect.succeed(fallbackTitle);
+                      }),
                       Effect.flatMap((title) =>
                         orchestrationEngine.dispatch({
                           type: "thread.meta.update",
@@ -504,7 +499,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
                         }),
                       ),
                       Effect.catch((error) => {
-                        // Dispatch itself failed — allow retry on next prompt
                         autoTitledThreads.delete(threadId);
                         return Effect.logError("auto-title dispatch failed", { cause: error });
                       }),

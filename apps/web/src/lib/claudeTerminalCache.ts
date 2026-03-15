@@ -73,6 +73,7 @@ export function createTerminal(): CachedTerminal {
   const { fontSize, fontFamily } = resolveTerminalFontSettings();
   const terminal = new Terminal({
     cursorBlink: true,
+    cursorInactiveStyle: "none",
     lineHeight: 1.2,
     fontSize,
     scrollback: 10_000,

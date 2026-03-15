@@ -24,7 +24,6 @@ import {
 } from "../Services/TextGeneration.ts";
 
 const SONNET_MODEL = "sonnet";
-const HAIKU_MODEL = "haiku";
 const TIMEOUT_MS = 120_000;
 
 function limitSection(value: string, maxChars: number): string {
@@ -73,14 +72,6 @@ function normalizeError(
   return new TextGenerationError({ operation, detail: fallback, cause: error });
 }
 
-function effectSchemaToJsonSchemaString(schema: Schema.Top): string {
-  const document = Schema.toJsonSchemaDocument(schema);
-  const jsonSchema =
-    document.definitions && Object.keys(document.definitions).length > 0
-      ? { ...document.schema, $defs: document.definitions }
-      : document.schema;
-  return JSON.stringify(jsonSchema);
-}
 
 const makeClaudeCliTextGeneration = Effect.gen(function* () {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -119,22 +110,27 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
     cwd?: string;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const jsonSchemaStr = effectSchemaToJsonSchemaString(outputSchema);
-
+      // Pipe prompt via stdin (like Codex does) to avoid OS arg length limits
+      // and use /tmp as cwd to prevent claude from loading project CLAUDE.md files
       const command = ChildProcess.make(
         "claude",
         [
           "-p",
           "--output-format", "json",
           "--model", model,
-          "--system-prompt", systemPrompt,
-          "--json-schema", jsonSchemaStr,
+          "--tools", "",
+          "--max-turns", "1",
+          "--effort", "low",
+          "--system-prompt", `${systemPrompt}\n\nRespond with ONLY a valid JSON object matching the requested schema. No markdown, no code fences, no extra text.`,
           "--no-session-persistence",
-          userPrompt,
+          "-",
         ],
         {
-          cwd: cwd ?? process.cwd(),
+          cwd: cwd ?? "/tmp",
           shell: process.platform === "win32",
+          stdin: {
+            stream: Stream.make(new TextEncoder().encode(userPrompt)),
+          },
         },
       );
 
@@ -170,8 +166,6 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
         });
       }
 
-      // --output-format json returns { result: "..." , ... }
-      // The result field contains the JSON matching our schema.
       const parsed = yield* Effect.try({
         try: () => JSON.parse(stdout) as Record<string, unknown>,
         catch: () =>
@@ -181,17 +175,21 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
           }),
       });
 
-      // Extract the result — it may be a string (needs parsing) or already an object
+      // Extract result string, strip markdown code fences, parse as JSON
       const resultValue = parsed.result;
       let resultObj: unknown;
 
-      if (typeof resultValue === "string") {
+      if (typeof resultValue === "string" && resultValue.trim().length > 0) {
+        const cleaned = resultValue.trim()
+          .replace(/^```(?:json)?\s*/, "")
+          .replace(/\s*```$/, "")
+          .trim();
         resultObj = yield* Effect.try({
-          try: () => JSON.parse(resultValue),
+          try: () => JSON.parse(cleaned),
           catch: () =>
             new TextGenerationError({
               operation,
-              detail: "Claude CLI result field is not valid JSON.",
+              detail: "Claude CLI result is not valid JSON.",
             }),
         });
       } else if (typeof resultValue === "object" && resultValue !== null) {
@@ -199,7 +197,7 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
       } else {
         return yield* new TextGenerationError({
           operation,
-          detail: "Claude CLI returned no result field in output.",
+          detail: "Claude CLI returned no result.",
         });
       }
 
@@ -376,32 +374,103 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
   // ── Thread titles ────────────────────────────────────────────────────
 
   const TITLE_MAX_LENGTH = 60;
+  const TITLE_TIMEOUT_MS = 30_000;
 
-  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) => {
-    const systemPrompt = [
-      "Generate a concise title (max 60 chars) for a coding session based on the user's first message.",
-      "Rules:",
-      "- Summarize the intent, not the literal words.",
-      "- Use title case.",
-      "- Do not wrap in quotes.",
-    ].join("\n");
+  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) =>
+    Effect.gen(function* () {
+      const command = ChildProcess.make(
+        "claude",
+        [
+          "-p",
+          "--output-format", "json",
+          "--model", SONNET_MODEL,
+          "--tools", "",
+          "--max-turns", "1",
+          "--effort", "low",
+          "--system-prompt", "Generate a concise title (max 60 chars) for a coding session. Summarize the intent in title case. Respond with ONLY the title text, nothing else.",
+          "--no-session-persistence",
+          "-",
+        ],
+        {
+          cwd: "/tmp",
+          shell: process.platform === "win32",
+          stdin: {
+            stream: Stream.make(new TextEncoder().encode(limitSection(input.promptText, 500))),
+          },
+        },
+      );
 
-    return runClaudeJson({
-      operation: "generateThreadTitle",
-      model: HAIKU_MODEL,
-      systemPrompt,
-      userPrompt: limitSection(input.promptText, 500),
-      outputSchema: Schema.Struct({ title: Schema.String }),
-    }).pipe(
-      Effect.map((generated) => {
-        let title = generated.title.trim();
-        if (title.length > TITLE_MAX_LENGTH) {
-          title = `${title.slice(0, TITLE_MAX_LENGTH - 1)}\u2026`;
+      const child = yield* commandSpawner
+        .spawn(command)
+        .pipe(Effect.mapError((cause) =>
+          normalizeError("generateThreadTitle", cause, "Failed to spawn Claude CLI"),
+        ));
+
+      const [stdout, _stderr, exitCode] = yield* Effect.all(
+        [
+          readStreamAsString("generateThreadTitle", child.stdout),
+          readStreamAsString("generateThreadTitle", child.stderr),
+          child.exitCode.pipe(
+            Effect.map((value) => Number(value)),
+            Effect.mapError((cause) =>
+              normalizeError("generateThreadTitle", cause, "Failed to read exit code"),
+            ),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      if (exitCode !== 0) {
+        return yield* new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: `Claude CLI failed with code ${exitCode}.`,
+        });
+      }
+
+      const parsed = yield* Effect.try({
+        try: () => JSON.parse(stdout) as Record<string, unknown>,
+        catch: () =>
+          new TextGenerationError({
+            operation: "generateThreadTitle",
+            detail: `Claude CLI returned invalid JSON. stdout length=${stdout.length}`,
+          }),
+      });
+      let title = typeof parsed.result === "string" ? parsed.result.trim() : null;
+
+      // Strip markdown code fences if present
+      if (title) {
+        title = title.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "").trim();
+        // If result is JSON like {"title":"..."}, extract the title
+        const jsonMatch = title.match(/^\s*\{\s*"title"\s*:\s*"([^"]*)"\s*\}/);
+        if (jsonMatch) {
+          title = jsonMatch[1] ?? null;
         }
-        return { title } satisfies ThreadTitleGenerationResult;
-      }),
+      }
+
+      if (!title) {
+        return yield* new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: "No title generated.",
+        });
+      }
+
+      // Clean up: remove surrounding quotes
+      title = title.replace(/^["']|["']$/g, "").trim();
+      if (title.length > TITLE_MAX_LENGTH) {
+        title = `${title.slice(0, TITLE_MAX_LENGTH - 1)}\u2026`;
+      }
+      return { title } satisfies ThreadTitleGenerationResult;
+    }).pipe(
+      Effect.scoped,
+      Effect.timeoutOption(TITLE_TIMEOUT_MS),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail: "Title generation timed out." })),
+          onSome: (value) => Effect.succeed(value),
+        }),
+      ),
     );
-  };
 
   return {
     generateCommitMessage,

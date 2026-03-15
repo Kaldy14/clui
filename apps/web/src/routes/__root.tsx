@@ -167,7 +167,6 @@ function EventRouter() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
   const lastConfigIssuesSignatureRef = useRef<string | null>(null);
-  const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const deferredThreadIdsRef = useRef(new Set<string>());
 
   pathnameRef.current = pathname;
@@ -259,12 +258,17 @@ function EventRouter() {
 
       // Always handle notifications regardless of which thread.
       if (event.type === "thread.activity-appended") {
-        const threads = useStore.getState().threads;
-        const thread = threads.find((t) => t.id === event.payload.threadId);
         const threadId = event.payload.threadId;
-        dispatchActivityNotification(event.payload.activity, thread?.title ?? "Thread", () => {
-          void navigate({ to: "/$threadId", params: { threadId } });
-        });
+        const threads = useStore.getState().threads;
+        const thread = threads.find((t) => t.id === threadId);
+        dispatchActivityNotification(
+          event.payload.activity,
+          thread?.title ?? "Thread",
+          threadId === currentThreadId,
+          () => {
+            void navigate({ to: "/$threadId", params: { threadId } });
+          },
+        );
       }
       if (event.type === "thread.session-set") {
         const { threadId, session } = event.payload;
@@ -277,6 +281,7 @@ function EventRouter() {
           thread?.title ?? "Thread",
           session.status,
           previousStatus,
+          threadId === currentThreadId,
           () => {
             void navigate({ to: "/$threadId", params: { threadId } });
           },
@@ -353,6 +358,20 @@ function EventRouter() {
           }
         }
       }
+      // Detect user-initiated interrupts (Escape during permission prompt).
+      // Claude Code doesn't fire a hook when a permission request is cancelled,
+      // so hookStatus stays stuck. Clear it when we see "Interrupted" in output.
+      if (event.type === "output") {
+        const threadId = ThreadId.makeUnsafe(event.threadId);
+        const thread = useStore.getState().threads.find((t) => t.id === event.threadId);
+        if (
+          (thread?.hookStatus === "pendingApproval" || thread?.hookStatus === "needsInput") &&
+          event.data.includes("Interrupted")
+        ) {
+          completedAt.set(event.threadId, Date.now());
+          useStore.getState().setHookStatus(threadId, null);
+        }
+      }
       // Clear hook status when terminal goes dormant
       if (event.type === "hibernated" || event.type === "exited") {
         completedAt.delete(event.threadId);
@@ -365,7 +384,7 @@ function EventRouter() {
       if (event.type === "hookNotification") {
         const currentThreadId = getCurrentThreadId();
         const isCurrentThread = event.threadId === currentThreadId;
-        if (!isCurrentThread || !document.hasFocus()) {
+        if (!isCurrentThread) {
           const threads = useStore.getState().threads;
           const thread = threads.find((t) => t.id === event.threadId);
           dispatchHookNotification(
@@ -390,19 +409,6 @@ function EventRouter() {
           return;
         }
         setProjectExpanded(payload.bootstrapProjectId, true);
-
-        if (pathnameRef.current !== "/") {
-          return;
-        }
-        if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
-          return;
-        }
-        await navigate({
-          to: "/$threadId",
-          params: { threadId: payload.bootstrapThreadId },
-          replace: true,
-        });
-        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
       })().catch(() => undefined);
     });
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
