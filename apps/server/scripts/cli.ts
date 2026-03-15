@@ -97,14 +97,14 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
     const targetPath = path.join(serverDir, override.targetRelativePath);
 
     if (!(yield* fs.exists(sourcePath))) {
-      return yield* new CliError({
-        message: `Missing development icon source: ${sourcePath}`,
-      });
+      yield* Effect.logWarning(`[cli] Missing development icon source: ${sourcePath} — skipping`);
+      continue;
     }
     if (!(yield* fs.exists(targetPath))) {
-      return yield* new CliError({
-        message: `Missing development icon target: ${targetPath}. Build web first.`,
-      });
+      yield* Effect.logWarning(
+        `[cli] Missing development icon target: ${targetPath} — skipping`,
+      );
+      continue;
     }
 
     yield* fs.copyFile(sourcePath, targetPath);

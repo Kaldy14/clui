@@ -542,6 +542,7 @@ interface AppStore extends AppState {
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
   setProjectOrder: (order: string[]) => void;
+  removeThread: (threadId: ThreadId) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
   addOptimisticThread: (input: {
     id: ThreadId;
@@ -569,6 +570,11 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
   setProjectOrder: (order) => set((state) => setProjectOrder(state, order)),
   addOptimisticThread: (input) => set((state) => addOptimisticThread(state, input)),
+  removeThread: (threadId) =>
+    set((state) => {
+      const threads = state.threads.filter((t) => t.id !== threadId);
+      return threads.length === state.threads.length ? state : { ...state, threads };
+    }),
   setHookStatus: (threadId, hookStatus) =>
     set((state) => {
       const threads = updateThread(state.threads, threadId, (thread) => {

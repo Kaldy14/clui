@@ -33,6 +33,7 @@ export const ClaudeStartInput = Schema.Struct({
   resumeSessionId: Schema.optional(Schema.String),
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
+  dangerouslySkipPermissions: Schema.optional(Schema.Boolean),
 });
 export type ClaudeStartInput = Schema.Codec.Encoded<typeof ClaudeStartInput>;
 

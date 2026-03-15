@@ -311,6 +311,24 @@ function EventRouter() {
         }
       }
 
+      // Eagerly patch thread title for background threads so the sidebar
+      // shows the auto-generated title without waiting for a full sync.
+      if (!isCurrentThread && event.type === "thread.meta-updated") {
+        const { threadId, title, titleSource } = event.payload;
+        if (title !== undefined) {
+          useStore.setState((state) => ({
+            threads: state.threads.map((t) => {
+              if (t.id !== threadId) return t;
+              return {
+                ...t,
+                title,
+                ...(titleSource !== undefined ? { titleSource } : {}),
+              };
+            }),
+          }));
+        }
+      }
+
       // Only trigger expensive full snapshot sync for the currently viewed thread
       // or for project-level events that affect the sidebar/navigation.
       if (isCurrentThread || isProjectEvent) {
@@ -358,14 +376,16 @@ function EventRouter() {
           }
         }
       }
-      // Detect user-initiated interrupts (Escape during permission prompt).
-      // Claude Code doesn't fire a hook when a permission request is cancelled,
+      // Detect user-initiated interrupts (Escape to cancel).
+      // Claude Code doesn't fire the Stop hook when cancelled via Escape,
       // so hookStatus stays stuck. Clear it when we see "Interrupted" in output.
       if (event.type === "output") {
         const threadId = ThreadId.makeUnsafe(event.threadId);
         const thread = useStore.getState().threads.find((t) => t.id === event.threadId);
         if (
-          (thread?.hookStatus === "pendingApproval" || thread?.hookStatus === "needsInput") &&
+          (thread?.hookStatus === "working" ||
+            thread?.hookStatus === "pendingApproval" ||
+            thread?.hookStatus === "needsInput") &&
           event.data.includes("Interrupted")
         ) {
           completedAt.set(event.threadId, Date.now());
@@ -383,19 +403,17 @@ function EventRouter() {
       // Forward hook notifications as OS notifications
       if (event.type === "hookNotification") {
         const currentThreadId = getCurrentThreadId();
-        const isCurrentThread = event.threadId === currentThreadId;
-        if (!isCurrentThread) {
-          const threads = useStore.getState().threads;
-          const thread = threads.find((t) => t.id === event.threadId);
-          dispatchHookNotification(
-            event.subtitle,
-            event.body,
-            thread?.title ?? "Thread",
-            () => {
-              void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
-            },
-          );
-        }
+        const threads = useStore.getState().threads;
+        const thread = threads.find((t) => t.id === event.threadId);
+        dispatchHookNotification(
+          event.subtitle,
+          event.body,
+          thread?.title ?? "Thread",
+          event.threadId === currentThreadId,
+          () => {
+            void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
+          },
+        );
       }
     });
     const unsubWelcome = onServerWelcome((payload) => {

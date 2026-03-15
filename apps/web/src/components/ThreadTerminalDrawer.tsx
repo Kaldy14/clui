@@ -93,6 +93,7 @@ function TerminalViewport({
       scrollback: 5_000,
       fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
       theme: terminalThemeFromApp(),
+      macOptionIsMeta: true,
     });
     terminal.loadAddon(fitAddon);
     terminal.open(mount);
@@ -123,11 +124,22 @@ function TerminalViewport({
         return false;
       }
 
-      if (!isTerminalClearShortcut(event)) return true;
-      event.preventDefault();
-      event.stopPropagation();
-      void sendTerminalInput("\u000c", "Failed to clear terminal");
-      return false;
+      if (isTerminalClearShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void sendTerminalInput("\u000c", "Failed to clear terminal");
+        return false;
+      }
+
+      // Ctrl+Z — prevent browser "undo" so SIGTSTP reaches the PTY
+      if (event.type === "keydown" && event.key === "z" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        void sendTerminalInput("\x1a", "Failed to send suspend signal");
+        return false;
+      }
+
+      return true;
     });
 
     const terminalLinksDisposable = terminal.registerLinkProvider({

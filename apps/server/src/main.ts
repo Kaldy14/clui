@@ -41,6 +41,7 @@ interface CliInput {
   readonly authToken: Option.Option<string>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
+  readonly dangerouslySkipPermissions: Option.Option<boolean>;
 }
 
 /**
@@ -119,6 +120,10 @@ const CliEnvConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  dangerouslySkipPermissions: Config.boolean("CLUI_DANGEROUSLY_SKIP_PERMISSIONS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -165,6 +170,10 @@ const ServerConfigLive = (input: CliInput) =>
         input.logWebSocketEvents,
         env.logWebSocketEvents ?? Boolean(devUrl),
       );
+      const dangerouslySkipPermissions = resolveBooleanFlag(
+        input.dangerouslySkipPermissions,
+        env.dangerouslySkipPermissions ?? false,
+      );
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
       const keybindingsConfigPath = join(stateDir, "keybindings.json");
@@ -186,6 +195,7 @@ const ServerConfigLive = (input: CliInput) =>
         authToken,
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
+        dangerouslySkipPermissions,
       } satisfies ServerConfigShape;
 
       return config;
@@ -327,6 +337,12 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
+const dangerouslySkipPermissionsFlag = Flag.boolean("dangerously-skip-permissions").pipe(
+  Flag.withDescription(
+    "Start Claude Code CLI sessions with --dangerously-skip-permissions (auto-accept all tool calls).",
+  ),
+  Flag.optional,
+);
 
 export const t3Cli = Command.make("t3", {
   mode: modeFlag,
@@ -338,6 +354,7 @@ export const t3Cli = Command.make("t3", {
   authToken: authTokenFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
+  dangerouslySkipPermissions: dangerouslySkipPermissionsFlag,
 }).pipe(
   Command.withDescription("Run the Clui server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),

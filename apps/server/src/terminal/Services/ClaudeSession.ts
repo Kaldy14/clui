@@ -34,6 +34,7 @@ export interface ClaudeSessionManagerShape {
     resumeSessionId?: string;
     cols: number;
     rows: number;
+    dangerouslySkipPermissions?: boolean;
   }) => Effect.Effect<void, ClaudeSessionError>;
   readonly hibernateSession: (
     threadId: string,

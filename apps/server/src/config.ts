@@ -28,6 +28,7 @@ export interface ServerConfigShape {
   readonly authToken: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
+  readonly dangerouslySkipPermissions: boolean;
 }
 
 /**
@@ -54,6 +55,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           staticDir: undefined,
           devUrl: undefined,
           noBrowser: false,
+          dangerouslySkipPermissions: false,
         };
       }),
     );

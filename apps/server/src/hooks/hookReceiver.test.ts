@@ -187,42 +187,34 @@ describe("buildStopEvents", () => {
 });
 
 describe("buildNotificationEvents", () => {
-  it("returns hookStatus + hookNotification events", () => {
+  it("returns only hookNotification, no hookStatus", () => {
     const events = buildNotificationEvents(
       "thread-3",
       JSON.stringify({ type: "permission", message: "Approve?" }),
     );
-    expect(events).toHaveLength(2);
-    expect(events[0]!.type).toBe("hookStatus");
-    if (events[0]!.type === "hookStatus") {
-      expect(events[0]!.hookStatus).toBe("pendingApproval");
-    }
-    expect(events[1]!.type).toBe("hookNotification");
-    if (events[1]!.type === "hookNotification") {
-      expect(events[1]!.category).toBe("permission");
-      expect(events[1]!.body).toBe("Approve?");
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("hookNotification");
+    if (events[0]!.type === "hookNotification") {
+      expect(events[0]!.category).toBe("permission");
+      expect(events[0]!.body).toBe("Approve?");
     }
   });
 
-  it("maps error notifications to error hookStatus", () => {
+  it("does not emit hookStatus for error notifications", () => {
     const events = buildNotificationEvents(
       "thread-4",
       JSON.stringify({ message: "Exception occurred" }),
     );
-    expect(events[0]!.type).toBe("hookStatus");
-    if (events[0]!.type === "hookStatus") {
-      expect(events[0]!.hookStatus).toBe("error");
-    }
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("hookNotification");
   });
 
-  it("maps waiting notifications to needsInput hookStatus", () => {
+  it("does not emit hookStatus for waiting notifications", () => {
     const events = buildNotificationEvents(
       "thread-5",
       JSON.stringify({ type: "idle" }),
     );
-    expect(events[0]!.type).toBe("hookStatus");
-    if (events[0]!.type === "hookStatus") {
-      expect(events[0]!.hookStatus).toBe("needsInput");
-    }
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("hookNotification");
   });
 });

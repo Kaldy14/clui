@@ -225,34 +225,23 @@ export function buildStopEvents(threadId: string): ClaudeSessionEvent[] {
 
 export function buildNotificationEvents(threadId: string, rawBody: string): ClaudeSessionEvent[] {
   const summary = summarizeNotification(rawBody);
-  const events: ClaudeSessionEvent[] = [];
 
-  // Map notification category to hook status
-  const statusMap: Record<ClaudeHookNotificationCategory, "needsInput" | "pendingApproval" | "error" | "needsInput"> = {
-    permission: "pendingApproval",
-    error: "error",
-    waiting: "needsInput",
-    attention: "needsInput",
-  };
-
-  events.push({
-    type: "hookStatus",
-    threadId,
-    createdAt: now(),
-    hookStatus: statusMap[summary.category],
-  });
-
-  events.push({
-    type: "hookNotification",
-    threadId,
-    createdAt: now(),
-    title: summary.title,
-    subtitle: summary.subtitle,
-    body: summary.body,
-    category: summary.category,
-  });
-
-  return events;
+  // Don't emit hookStatus from notifications — lifecycle hooks (stop,
+  // permission-request, post-tool-use) are the authoritative source for
+  // status transitions.  Notification-derived status races with the Stop
+  // hook and can overwrite "completed" with "needsInput" when the
+  // notification curl arrives after the grace window.
+  return [
+    {
+      type: "hookNotification",
+      threadId,
+      createdAt: now(),
+      title: summary.title,
+      subtitle: summary.subtitle,
+      body: summary.body,
+      category: summary.category,
+    },
+  ];
 }
 
 // ── HTTP body reader ──────────────────────────────────────────────────

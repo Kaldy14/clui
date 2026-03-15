@@ -82,9 +82,9 @@ export function createTerminal(): CachedTerminal {
     macOptionIsMeta: true,
     fastScrollSensitivity: 5,
     smoothScrollDuration: 0,
-    drawBoldTextInBrightColors: false,
+    drawBoldTextInBrightColors: true,
     rescaleOverlappingGlyphs: true,
-    minimumContrastRatio: 4.5,
+    minimumContrastRatio: 1,
     allowProposedApi: true,
   });
   terminal.loadAddon(fitAddon);
@@ -185,19 +185,29 @@ export function attach(threadId: string, container: HTMLElement): CachedTerminal
   let entry = cache.get(threadId);
 
   if (entry && entry.container === container) {
-    // Already attached to this container
-    entry.fitAddon.fit();
+    // Already attached to this container — caller is responsible for fit()
+    // after the browser has laid out the container.
     return entry;
   }
 
-  // If the terminal was previously opened then detached (container is null but
-  // the Terminal instance has already been opened), xterm.js cannot re-open the
-  // same instance. Dispose and recreate. This happens in React StrictMode which
-  // double-invokes effects: mount→cleanup→mount on the same element.
+  // If the terminal was previously opened then detached, xterm.js cannot
+  // re-open the same instance via open(). Instead, move the existing DOM
+  // subtree to the new container — this preserves all client-side scrollback.
   if (entry && !entry.container && entry.terminal.element) {
-    entry.terminal.dispose();
+    // Move to end of Map (most recently used) by re-inserting
     cache.delete(threadId);
-    entry = undefined;
+    cache.set(threadId, entry);
+
+    // Reparent the xterm DOM into the new container
+    container.appendChild(entry.terminal.element);
+    tryLoadWebgl(entry.terminal);
+    entry.container = container;
+    entry.lastAccessedAt = Date.now();
+    // Don't fit() here — container isn't laid out yet. Caller handles fit
+    // after requestAnimationFrame to get correct dimensions.
+
+    evictDetachedIfOverCap();
+    return entry;
   }
 
   if (!entry) {
@@ -217,7 +227,8 @@ export function attach(threadId: string, container: HTMLElement): CachedTerminal
   tryLoadWebgl(entry.terminal);
   entry.container = container;
   entry.lastAccessedAt = Date.now();
-  entry.fitAddon.fit();
+  // Don't fit() here — container isn't laid out yet. Caller handles fit
+  // after requestAnimationFrame to get correct dimensions.
 
   evictDetachedIfOverCap();
   return entry;
@@ -234,13 +245,12 @@ function detachEntry(_threadId: string, entry: CachedTerminal): void {
   // Free GPU context — will be re-created on next attach
   disposeWebgl(entry.terminal);
 
-  // xterm.js doesn't have a "detach" API — we remove the child elements
-  // and null out the container reference. The Terminal instance stays alive.
-  const el = entry.container;
-  if (el) {
-    while (el.firstChild) {
-      el.removeChild(el.firstChild);
-    }
+  // Remove xterm's DOM from the container but keep the Terminal instance
+  // alive so its scrollback buffer is preserved. On next attach, the DOM
+  // subtree is reparented into the new container via appendChild.
+  const xtermEl = entry.terminal.element;
+  if (xtermEl?.parentElement) {
+    xtermEl.parentElement.removeChild(xtermEl);
   }
   entry.container = null;
 }

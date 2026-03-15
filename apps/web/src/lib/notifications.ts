@@ -13,6 +13,11 @@ function canNotify(): boolean {
   return true;
 }
 
+/** True when the app window is in the foreground and visible. */
+function isWindowFocused(): boolean {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
 function fireNotification(title: string, body: string, tag: string, onNavigate?: () => void): void {
   const n = new Notification(title, { body, tag });
   n.onclick = () => {
@@ -49,7 +54,7 @@ export function dispatchActivityNotification(
   isCurrentThread: boolean,
   onNavigate?: () => void,
 ): void {
-  if (isCurrentThread || !canNotify()) return;
+  if ((isCurrentThread && isWindowFocused()) || !canNotify()) return;
   const notification = buildActivityNotification(activity, threadTitle);
   if (!notification) return;
   fireNotification(
@@ -74,7 +79,7 @@ export function dispatchSessionSetNotification(
   isCurrentThread: boolean,
   onNavigate?: () => void,
 ): void {
-  if (isCurrentThread || !canNotify()) return;
+  if ((isCurrentThread && isWindowFocused()) || !canNotify()) return;
   if (previousStatus !== "running") return;
 
   let title: string;
@@ -105,10 +110,10 @@ export function dispatchHookNotification(
   subtitle: string,
   body: string,
   threadTitle: string,
+  isCurrentThread: boolean,
   onNavigate?: () => void,
 ): void {
-  if (!("Notification" in window)) return;
-  if (Notification.permission !== "granted") return;
+  if ((isCurrentThread && isWindowFocused()) || !canNotify()) return;
   fireNotification(
     `${subtitle} — ${threadTitle}`,
     body,

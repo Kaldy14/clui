@@ -608,6 +608,9 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         commandId: newCommandId(),
         threadId,
       });
+      // Optimistically remove from sidebar immediately — the domain event
+      // round-trip can race with navigation, leaving the entry visible.
+      useStore.getState().removeThread(threadId);
       clearProjectDraftThreadById(thread.projectId, thread.id);
       clearTerminalState(threadId);
       if (shouldNavigateToFallback) {

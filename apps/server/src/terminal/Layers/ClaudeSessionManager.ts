@@ -15,7 +15,7 @@ import {
 import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
 import { ServerConfig } from "../../config";
 
-const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
+const DEFAULT_HISTORY_LINE_LIMIT = 10_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
 
@@ -82,6 +82,7 @@ interface ClaudeSessionManagerOptions {
   historyLineLimit?: number;
   maxActiveSessions?: number;
   hookConfig?: HookConfig | undefined;
+  dangerouslySkipPermissions?: boolean;
 }
 
 export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManagerEvents> {
@@ -93,6 +94,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private readonly historyLineLimit: number;
   private readonly maxActiveSessions: number;
   private readonly hookConfig: HookConfig | null;
+  private readonly dangerouslySkipPermissions: boolean;
   private readonly logger = createLogger("claude-session");
 
   constructor(options: ClaudeSessionManagerOptions) {
@@ -102,6 +104,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     this.maxActiveSessions = options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
     this.hookConfig = options.hookConfig ?? null;
+    this.dangerouslySkipPermissions = options.dangerouslySkipPermissions ?? false;
   }
 
   async startSession(input: {
@@ -110,6 +113,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     resumeSessionId?: string;
     cols: number;
     rows: number;
+    dangerouslySkipPermissions?: boolean;
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
       const existing = this.sessions.get(input.threadId);
@@ -143,6 +147,9 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       this.sessions.set(input.threadId, entry);
 
       const args: string[] = [];
+      if (input.dangerouslySkipPermissions ?? this.dangerouslySkipPermissions) {
+        args.push("--dangerously-skip-permissions");
+      }
       if (input.resumeSessionId) {
         args.push("--resume", input.resumeSessionId);
       } else {
@@ -473,7 +480,11 @@ export const ClaudeSessionManagerLive = Layer.effect(
     };
 
     const runtime = yield* Effect.acquireRelease(
-      Effect.sync(() => new ClaudeSessionManagerRuntime({ ptyAdapter, hookConfig })),
+      Effect.sync(() => new ClaudeSessionManagerRuntime({
+        ptyAdapter,
+        hookConfig,
+        dangerouslySkipPermissions: serverConfig.dangerouslySkipPermissions,
+      })),
       (r) => Effect.sync(() => r.dispose()),
     );
 
