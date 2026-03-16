@@ -457,14 +457,19 @@ function EventRouter() {
         if (thread?.hookStatus === "working") {
           resetWorkingIdleTimer(event.threadId);
         }
-        // Detect context compaction: Claude Code emits "Compacting" when
-        // compressing conversation history.  No hooks fire during this phase
-        // so hookStatus may be null — recover it to "working" so the sidebar
-        // badge stays visible.
+        // Recover "Working" badge when output arrives on an active terminal
+        // with no hookStatus.  This handles:
+        //  - The idle timer (90s) clearing hookStatus during a gap in output
+        //    (e.g. long tool execution) — once cleared, subsequent output
+        //    wouldn't restore it since the output handler only resets the
+        //    timer when hookStatus is already "working".
+        //  - Context compaction, where no hooks fire.
+        //  - Any other case where hooks fail silently (curl timeout, etc.).
+        // The completion grace period prevents false recovery right after
+        // a Stop event.
         if (
           thread?.terminalStatus === "active" &&
-          !thread.hookStatus &&
-          event.data.includes("ompact")
+          !thread.hookStatus
         ) {
           const doneTs = completedAt.get(event.threadId);
           if (!doneTs || Date.now() - doneTs >= COMPLETED_GRACE_MS) {

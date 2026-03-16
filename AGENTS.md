@@ -4,6 +4,7 @@
 
 - Both `bun lint` and `bun typecheck` must pass before considering tasks completed.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
+- After completing work, always update `docs/CHANGELOG-DEV.md` with the problem, root cause, fix, and affected files.
 
 ## Project Snapshot
 
