@@ -46,6 +46,7 @@ interface BranchToolbarBranchSelectorProps {
   activeThreadBranch: string | null;
   activeWorktreePath: string | null;
   branchCwd: string | null;
+  branchPrefix?: string;
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
@@ -80,6 +81,7 @@ export function BranchToolbarBranchSelector({
   envLocked,
   onSetThreadBranch,
   onCheckoutPullRequestRequest,
+  branchPrefix,
 }: BranchToolbarBranchSelectorProps) {
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
@@ -114,9 +116,14 @@ export function BranchToolbarBranchSelector({
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
   const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
-  const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
+  // Auto-apply branch prefix if the typed query doesn't already contain a slash (e.g. feature/, bugfix/)
+  const hasBranchCategoryPrefix = trimmedBranchQuery.includes("/");
+  const prefixedBranchName = canCreateBranch && branchPrefix && !hasBranchCategoryPrefix
+    ? `${branchPrefix}${trimmedBranchQuery}`
+    : trimmedBranchQuery;
+  const hasExactBranchMatch = branchByName.has(trimmedBranchQuery) || branchByName.has(prefixedBranchName);
   const createBranchItemValue = canCreateBranch
-    ? `__create_new_branch__:${trimmedBranchQuery}`
+    ? `__create_new_branch__:${prefixedBranchName}`
     : null;
   const branchPickerItems = useMemo(() => {
     const items = [...branchNames];
@@ -359,9 +366,9 @@ export function BranchToolbarBranchSelector({
           index={index}
           value={itemValue}
           style={style}
-          onClick={() => createBranch(trimmedBranchQuery)}
+          onClick={() => createBranch(prefixedBranchName)}
         >
-          <span className="truncate">Create new branch "{trimmedBranchQuery}"</span>
+          <span className="truncate">Create new branch "{prefixedBranchName}"</span>
         </ComboboxItem>
       );
     }

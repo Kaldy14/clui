@@ -94,3 +94,43 @@ export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | nu
   if (!state || state.status !== "error") return false;
   return state.errorContext === "download" || state.errorContext === "install";
 }
+
+export function shouldShowDesktopUpdateBanner(state: DesktopUpdateState | null): boolean {
+  if (!state || !state.enabled) return false;
+  return (
+    state.status === "available" ||
+    state.status === "downloading" ||
+    state.status === "downloaded" ||
+    (state.status === "error" &&
+      (state.errorContext === "download" || state.errorContext === "install"))
+  );
+}
+
+export function getDesktopUpdateBannerTitle(state: DesktopUpdateState): string {
+  if (state.status === "downloaded") {
+    return `v${state.downloadedVersion ?? state.availableVersion} ready to install`;
+  }
+  if (state.status === "downloading") {
+    const pct =
+      typeof state.downloadPercent === "number" ? ` ${Math.floor(state.downloadPercent)}%` : "";
+    return `Downloading update${pct}`;
+  }
+  if (state.status === "error") {
+    return state.errorContext === "install" ? "Install failed" : "Download failed";
+  }
+  return `v${state.availableVersion ?? "update"} available`;
+}
+
+export function getDesktopUpdateBannerButtonLabel(state: DesktopUpdateState): string | null {
+  const action = resolveDesktopUpdateButtonAction(state);
+  if (action === "download") {
+    return state.supportsInAppUpdate ? "Download" : "Download from GitHub";
+  }
+  if (action === "install") return "Restart & Install";
+  return null;
+}
+
+export function shouldOpenReleasesPage(state: DesktopUpdateState | null): boolean {
+  if (!state) return false;
+  return !state.supportsInAppUpdate && state.releasesUrl !== null;
+}

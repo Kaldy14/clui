@@ -1,6 +1,6 @@
 {
   "name": "@clui/contracts",
-  "version": "0.0.9",
+  "version": "0.0.11",
   "private": true,
   "files": [
     "dist"
@@ -19,7 +19,7 @@
   "scripts": {
     "dev": "tsdown src/index.ts --format esm,cjs --dts --watch --clean",
     "build": "tsdown src/index.ts --format esm,cjs --dts --clean",
-    "prepare": "effect-language-service patch",
+    "prepare": "effect-language-service patch || true",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

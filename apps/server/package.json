@@ -1,6 +1,6 @@
 {
   "name": "@clui/server",
-  "version": "0.0.9",
+  "version": "0.0.11",
   "repository": {
     "type": "git",
     "url": "https://github.com/pingdotgg/clui",
@@ -17,7 +17,7 @@
     "dev": "bun run src/index.ts",
     "build": "node scripts/cli.ts build",
     "start": "node dist/index.mjs",
-    "prepare": "effect-language-service patch",
+    "prepare": "effect-language-service patch || true",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -31,11 +31,11 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@effect/language-service": "catalog:",
-    "@effect/vitest": "catalog:",
     "@clui/contracts": "workspace:*",
     "@clui/shared": "workspace:*",
     "@clui/web": "workspace:*",
+    "@effect/language-service": "catalog:",
+    "@effect/vitest": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "@types/ws": "^8.5.13",

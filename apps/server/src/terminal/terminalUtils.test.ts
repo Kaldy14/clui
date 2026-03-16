@@ -144,7 +144,7 @@ describe("createSpawnEnv", () => {
   it("passes through allowed keys", () => {
     const base = { HOME: "/home/user", PATH: "/usr/bin", USER: "alice" };
     const result = createSpawnEnv(base);
-    expect(result).toEqual({ HOME: "/home/user", PATH: "/usr/bin", USER: "alice" });
+    expect(result).toEqual({ HOME: "/home/user", PATH: "/usr/bin", USER: "alice", COLORTERM: "truecolor" });
   });
 
   it("skips undefined values", () => {
@@ -166,13 +166,13 @@ describe("createSpawnEnv", () => {
   it("works with no runtimeEnv argument", () => {
     const base = { HOME: "/home/user" };
     const result = createSpawnEnv(base);
-    expect(result).toEqual({ HOME: "/home/user" });
+    expect(result).toEqual({ HOME: "/home/user", COLORTERM: "truecolor" });
   });
 
   it("works with null runtimeEnv", () => {
     const base = { HOME: "/home/user" };
     const result = createSpawnEnv(base, null);
-    expect(result).toEqual({ HOME: "/home/user" });
+    expect(result).toEqual({ HOME: "/home/user", COLORTERM: "truecolor" });
   });
 });
 

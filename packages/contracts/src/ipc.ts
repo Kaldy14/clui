@@ -105,6 +105,10 @@ export interface DesktopUpdateState {
   message: string | null;
   errorContext: "check" | "download" | "install" | null;
   canRetry: boolean;
+  /** Whether the app can download and install updates in-place (false on unsigned macOS). */
+  supportsInAppUpdate: boolean;
+  /** GitHub releases URL for manual download fallback (when supportsInAppUpdate is false). */
+  releasesUrl: string | null;
 }
 
 export interface DesktopUpdateActionResult {

@@ -826,13 +826,13 @@ export const makeGitManager = Effect.gen(function* () {
     },
   );
 
-  const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string) =>
+  const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string, featureBranchName?: string) =>
     Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
         cwd,
         branch,
         ...(commitMessage ? { commitMessage } : {}),
-        includeBranch: true,
+        includeBranch: !featureBranchName,
       });
       if (!suggestion) {
         return yield* gitManagerError(
@@ -841,9 +841,13 @@ export const makeGitManager = Effect.gen(function* () {
         );
       }
 
-      const preferredBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
+      const preferredBranch = featureBranchName ?? suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
       const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
-      const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
+      const resolvedBranch = featureBranchName
+        ? (existingBranchNames.some((n) => n.toLowerCase() === featureBranchName.toLowerCase())
+            ? resolveAutoFeatureBranchName(existingBranchNames, featureBranchName)
+            : featureBranchName)
+        : resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
 
       yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
       yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: resolvedBranch }));
@@ -880,6 +884,7 @@ export const makeGitManager = Effect.gen(function* () {
           input.cwd,
           initialStatus.branch,
           input.commitMessage,
+          input.featureBranchName,
         );
         branchStep = result.branchStep;
         commitMessageForStep = result.resolvedCommitMessage;

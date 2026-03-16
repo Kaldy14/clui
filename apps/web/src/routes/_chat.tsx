@@ -1,5 +1,6 @@
 import { Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import MemoryPressureBanner from "../components/MemoryPressureBanner";
 import { useQuery } from "@tanstack/react-query";
 import { type ResolvedKeybindingsConfig, ThreadId } from "@clui/contracts";
 
@@ -212,6 +213,7 @@ function ChatRouteLayout() {
       </Sidebar>
       <DiffWorkerPoolProvider>
         <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
+          <MemoryPressureBanner />
           <div className="flex min-h-0 min-w-0 flex-1">
             <Outlet />
           </div>

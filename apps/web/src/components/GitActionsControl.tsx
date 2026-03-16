@@ -148,6 +148,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
+  const [featureBranchNameInput, setFeatureBranchNameInput] = useState("feature/NO_TASK");
 
   const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
 
@@ -240,6 +241,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       skipDefaultBranchPrompt = false,
       statusOverride,
       featureBranch = false,
+      featureBranchName,
       isDefaultBranchOverride,
       progressToastId,
     }: {
@@ -250,6 +252,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       skipDefaultBranchPrompt?: boolean;
       statusOverride?: GitStatusResult | null;
       featureBranch?: boolean;
+      featureBranchName?: string;
       isDefaultBranchOverride?: boolean;
       progressToastId?: GitActionToastId;
     }) => {
@@ -325,6 +328,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
+        ...(featureBranch && featureBranchName ? { featureBranchName } : {}),
       });
 
       try {
@@ -444,6 +448,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       commitMessage?: string;
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
+      featureBranchName?: string;
     }) => {
       void runGitActionWithToast({
         ...actionParams,
@@ -458,27 +463,33 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     if (!pendingDefaultBranchAction) return;
     const { action, commitMessage, forcePushOnlyProgress, onConfirmed } =
       pendingDefaultBranchAction;
+    const trimmedBranchName = featureBranchNameInput.trim();
     setPendingDefaultBranchAction(null);
+    setFeatureBranchNameInput("feature/NO_TASK");
     checkoutNewBranchAndRunAction({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
+      ...(trimmedBranchName ? { featureBranchName: trimmedBranchName } : {}),
     });
-  }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction]);
+  }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction, featureBranchNameInput]);
 
   const runDialogActionOnNewBranch = useCallback(() => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
+    const trimmedBranchName = featureBranchNameInput.trim();
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
+    setFeatureBranchNameInput("feature/NO_TASK");
 
     checkoutNewBranchAndRunAction({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
+      ...(trimmedBranchName ? { featureBranchName: trimmedBranchName } : {}),
     });
-  }, [isCommitDialogOpen, dialogCommitMessage, checkoutNewBranchAndRunAction]);
+  }, [isCommitDialogOpen, dialogCommitMessage, checkoutNewBranchAndRunAction, featureBranchNameInput]);
 
   const runQuickAction = useCallback(() => {
     if (quickAction.kind === "open_pr") {
@@ -811,6 +822,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         onOpenChange={(open) => {
           if (!open) {
             setPendingDefaultBranchAction(null);
+            setFeatureBranchNameInput("feature/NO_TASK");
           }
         }}
       >
@@ -821,6 +833,19 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
+          <DialogPanel className="space-y-2">
+            <div className="space-y-1">
+              <p className="text-xs font-medium">Feature branch name</p>
+              <input
+                type="text"
+                value={featureBranchNameInput}
+                onChange={(e) => setFeatureBranchNameInput(e.target.value)}
+                placeholder="feature/NO_TASK"
+                spellCheck={false}
+                className="w-full rounded-md border border-border/40 bg-background/80 px-2 py-1.5 font-mono text-xs text-foreground outline-none ring-1 ring-transparent transition-colors focus:border-primary/40 focus:ring-primary/20 dark:border-border/20"
+              />
+            </div>
+          </DialogPanel>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setPendingDefaultBranchAction(null)}>
               Abort

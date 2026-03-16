@@ -2,17 +2,23 @@ import type { DesktopRuntimeInfo, DesktopUpdateState } from "@clui/contracts";
 
 import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState";
 
+export interface InitialDesktopUpdateStateOptions {
+  currentVersion: string;
+  runtimeInfo: DesktopRuntimeInfo;
+  supportsInAppUpdate: boolean;
+  releasesUrl: string | null;
+}
+
 export function createInitialDesktopUpdateState(
-  currentVersion: string,
-  runtimeInfo: DesktopRuntimeInfo,
+  options: InitialDesktopUpdateStateOptions,
 ): DesktopUpdateState {
   return {
     enabled: false,
     status: "disabled",
-    currentVersion,
-    hostArch: runtimeInfo.hostArch,
-    appArch: runtimeInfo.appArch,
-    runningUnderArm64Translation: runtimeInfo.runningUnderArm64Translation,
+    currentVersion: options.currentVersion,
+    hostArch: options.runtimeInfo.hostArch,
+    appArch: options.runtimeInfo.appArch,
+    runningUnderArm64Translation: options.runtimeInfo.runningUnderArm64Translation,
     availableVersion: null,
     downloadedVersion: null,
     downloadPercent: null,
@@ -20,6 +26,8 @@ export function createInitialDesktopUpdateState(
     message: null,
     errorContext: null,
     canRetry: false,
+    supportsInAppUpdate: options.supportsInAppUpdate,
+    releasesUrl: options.releasesUrl,
   };
 }
 

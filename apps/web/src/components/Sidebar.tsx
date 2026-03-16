@@ -1,6 +1,7 @@
 import {
   ArrowLeftIcon,
   ChevronRightIcon,
+  DownloadIcon,
   FolderIcon,
   GitBranchIcon,
   GitPullRequestIcon,
@@ -57,10 +58,14 @@ import { toastManager } from "./ui/toast";
 import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
+  getDesktopUpdateBannerButtonLabel,
+  getDesktopUpdateBannerTitle,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
+  shouldOpenReleasesPage,
+  shouldShowDesktopUpdateBanner,
   shouldHighlightDesktopUpdateError,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
@@ -1038,6 +1043,14 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
   const desktopUpdateButtonAction = desktopUpdateState
     ? resolveDesktopUpdateButtonAction(desktopUpdateState)
     : "none";
+  const showDesktopUpdateBanner =
+    isElectron && shouldShowDesktopUpdateBanner(desktopUpdateState);
+  const desktopUpdateBannerTitle = desktopUpdateState
+    ? getDesktopUpdateBannerTitle(desktopUpdateState)
+    : null;
+  const desktopUpdateBannerButtonLabel = desktopUpdateState
+    ? getDesktopUpdateBannerButtonLabel(desktopUpdateState)
+    : null;
   const showArm64IntelBuildWarning =
     isElectron && shouldShowArm64IntelBuildWarning(desktopUpdateState);
   const arm64IntelBuildWarningDescription =
@@ -1070,6 +1083,11 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     const bridge = window.desktopBridge;
     if (!bridge || !desktopUpdateState) return;
     if (desktopUpdateButtonDisabled || desktopUpdateButtonAction === "none") return;
+
+    if (shouldOpenReleasesPage(desktopUpdateState) && desktopUpdateState.releasesUrl) {
+      void bridge.openExternal(desktopUpdateState.releasesUrl);
+      return;
+    }
 
     if (desktopUpdateButtonAction === "download") {
       void bridge
@@ -1205,6 +1223,44 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                     {desktopUpdateButtonAction === "download"
                       ? "Download ARM build"
                       : "Install ARM build"}
+                  </Button>
+                </AlertAction>
+              ) : null}
+            </Alert>
+          </SidebarGroup>
+        ) : null}
+        {showDesktopUpdateBanner && !showArm64IntelBuildWarning && desktopUpdateBannerTitle ? (
+          <SidebarGroup className="px-2 pt-2 pb-0">
+            <Alert
+              variant={desktopUpdateState?.status === "error" ? "error" : "info"}
+              className={`rounded-2xl ${desktopUpdateState?.status === "error" ? "border-destructive/40 bg-destructive/8" : "border-info/40 bg-info/8"}`}
+            >
+              {desktopUpdateState?.status === "downloaded" ? (
+                <RocketIcon />
+              ) : (
+                <DownloadIcon />
+              )}
+              <AlertTitle>{desktopUpdateBannerTitle}</AlertTitle>
+              {desktopUpdateState?.status === "downloading" &&
+              typeof desktopUpdateState.downloadPercent === "number" ? (
+                <AlertDescription>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
+                    <div
+                      className="h-full rounded-full bg-info transition-all duration-300"
+                      style={{ width: `${Math.floor(desktopUpdateState.downloadPercent)}%` }}
+                    />
+                  </div>
+                </AlertDescription>
+              ) : null}
+              {desktopUpdateBannerButtonLabel ? (
+                <AlertAction>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={desktopUpdateButtonDisabled}
+                    onClick={handleDesktopUpdateButtonClick}
+                  >
+                    {desktopUpdateBannerButtonLabel}
                   </Button>
                 </AlertAction>
               ) : null}

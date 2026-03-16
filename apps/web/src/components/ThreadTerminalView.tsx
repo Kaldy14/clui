@@ -143,6 +143,7 @@ function NewThreadView({
                 activeThreadBranch={branchToolbar.activeThreadBranch}
                 activeWorktreePath={branchToolbar.activeWorktreePath}
                 branchCwd={branchToolbar.branchCwd}
+                branchPrefix={branchPrefix}
                 effectiveEnvMode={effectiveEnvMode}
                 envLocked={!!thread.worktreePath}
                 onSetThreadBranch={branchToolbar.setThreadBranch}

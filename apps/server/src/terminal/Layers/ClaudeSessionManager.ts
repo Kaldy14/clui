@@ -15,7 +15,7 @@ import {
 import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
 import { ServerConfig } from "../../config";
 
-const DEFAULT_HISTORY_LINE_LIMIT = 10_000;
+const DEFAULT_HISTORY_LINE_LIMIT = 250_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
 

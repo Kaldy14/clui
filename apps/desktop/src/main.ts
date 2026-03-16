@@ -83,8 +83,38 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   processArch: process.arch,
   runningUnderArm64Translation: app.runningUnderARM64Translation === true,
 });
-const initialUpdateState = (): DesktopUpdateState =>
-  createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+function isAppCodeSigned(): boolean {
+  if (process.platform !== "darwin" || !app.isPackaged) return true;
+  try {
+    ChildProcess.execFileSync("codesign", [
+      "--verify",
+      "--deep",
+      "--strict",
+      Path.join(app.getAppPath(), "..", ".."),
+    ], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveReleasesUrl(): string | null {
+  const yml = readAppUpdateYml();
+  if (yml?.provider === "github" && yml.owner && yml.repo) {
+    return `https://github.com/${yml.owner}/${yml.repo}/releases/latest`;
+  }
+  return null;
+}
+
+const initialUpdateState = (): DesktopUpdateState => {
+  const supportsInAppUpdate = isAppCodeSigned();
+  return createInitialDesktopUpdateState({
+    currentVersion: app.getVersion(),
+    runtimeInfo: desktopRuntimeInfo,
+    supportsInAppUpdate,
+    releasesUrl: supportsInAppUpdate ? null : resolveReleasesUrl(),
+  });
+};
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -753,7 +783,7 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 function configureAutoUpdater(): void {
   const enabled = shouldEnableAutoUpdates();
   setUpdateState({
-    ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
+    ...initialUpdateState(),
     enabled,
     status: enabled ? "idle" : "disabled",
   });

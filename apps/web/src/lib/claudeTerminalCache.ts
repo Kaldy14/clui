@@ -79,7 +79,7 @@ export function createTerminal(): CachedTerminal {
     cursorInactiveStyle: "none",
     lineHeight: 1.2,
     fontSize,
-    scrollback: 10_000,
+    scrollback: 250_000,
     fontFamily,
     theme: terminalThemeFromApp(),
     macOptionIsMeta: true,
@@ -277,6 +277,54 @@ export function refreshTheme(): void {
 
 export function has(threadId: string): boolean {
   return cache.has(threadId);
+}
+
+// ── Cache stats & cleanup ──────────────────────────────────────────────
+
+export interface CacheStats {
+  totalCached: number;
+  totalEstimatedBytes: number;
+  clearableCount: number;
+  clearableEstimatedBytes: number;
+}
+
+function estimateTerminalBytes(terminal: Terminal): number {
+  const lines = terminal.buffer.active.length;
+  const cols = terminal.cols || 120;
+  // Each cell stores ~8 bytes (Uint32 code + attribute data) in xterm.js internal buffer
+  return lines * cols * 8;
+}
+
+export function getCacheStats(): CacheStats {
+  let totalEstimatedBytes = 0;
+  let clearableCount = 0;
+  let clearableEstimatedBytes = 0;
+
+  for (const [threadId, entry] of cache) {
+    const bytes = estimateTerminalBytes(entry.terminal);
+    totalEstimatedBytes += bytes;
+
+    if (!entry.container && !isThreadBusy?.(threadId)) {
+      clearableCount++;
+      clearableEstimatedBytes += bytes;
+    }
+  }
+
+  return { totalCached: cache.size, totalEstimatedBytes, clearableCount, clearableEstimatedBytes };
+}
+
+/** Dispose all detached, non-busy terminals. Returns the number of terminals cleared. */
+export function clearIdleTerminals(): number {
+  const toDispose: string[] = [];
+  for (const [threadId, entry] of cache) {
+    if (entry.container) continue;
+    if (isThreadBusy?.(threadId)) continue;
+    toDispose.push(threadId);
+  }
+  for (const threadId of toDispose) {
+    dispose(threadId);
+  }
+  return toDispose.length;
 }
 
 // ── Idle sweep ─────────────────────────────────────────────────────────

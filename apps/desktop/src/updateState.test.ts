@@ -22,6 +22,8 @@ const baseState: DesktopUpdateState = {
   message: null,
   errorContext: null,
   canRetry: false,
+  supportsInAppUpdate: true,
+  releasesUrl: null,
 };
 
 describe("shouldBroadcastDownloadProgress", () => {
