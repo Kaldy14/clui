@@ -315,20 +315,35 @@ function DormantTerminalView({
     // Otherwise, fetch scrollback and render in a new terminal
     const entry = claudeCache.attach(threadId, el);
     entry.terminal.options.disableStdin = true;
-    // Fit after layout
-    const rafId = requestAnimationFrame(() => entry.fitAddon.fit());
     const api = readNativeApi();
     if (!api) return;
 
     let disposed = false;
+    // Gate scrollback write on fit — same race as ActiveTerminalView:
+    // scrollback (microtask) can resolve before rAF fit, writing content
+    // at stale dimensions.
+    let fitDone = false;
+    let pendingData: { scrollback: string | null; offset: number | null } | null = null;
+
+    const writePendingIfReady = () => {
+      if (!fitDone || !pendingData || disposed) return;
+      const { scrollback, offset } = pendingData;
+      pendingData = null;
+      if (scrollback) entry.terminal.write(scrollback);
+      if (offset != null) entry.lastServerOffset = offset;
+    };
+
+    const rafId = requestAnimationFrame(() => {
+      if (disposed) return;
+      entry.fitAddon.fit();
+      fitDone = true;
+      writePendingIfReady();
+    });
+
     void api.claude.getScrollback({ threadId }).then((result) => {
       if (disposed) return;
-      if (result.scrollback) {
-        entry.terminal.write(result.scrollback);
-      }
-      if (result.offset != null) {
-        entry.lastServerOffset = result.offset;
-      }
+      pendingData = { scrollback: result.scrollback, offset: result.offset ?? null };
+      writePendingIfReady();
     });
 
     return () => {
@@ -432,9 +447,15 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
 
     let disposed = false;
 
-    // Subscribe to session events FIRST to avoid missing output
+    // ── Gate: buffer ALL writes until both fit() and scrollback are ready ──
+    // fitAddon.fit() runs in rAF (needs layout) and getScrollback() is async.
+    // Writing before fit produces content at stale dimensions — TUI escape
+    // sequences with hardcoded cursor positions can't be reflowed by xterm.js,
+    // causing permanent overlapping/garbled lines when switching threads.
     const eventBuffer: ClaudeSessionEvent[] = [];
     let terminalReady = false;
+    let fitComplete = false;
+    let pendingScrollback: { scrollback: string | null; offset: number | null } | null = null;
 
     const entry = claudeCache.attach(threadId, el);
     const { terminal, fitAddon } = entry;
@@ -461,6 +482,30 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       }
     };
 
+    /** Flush scrollback + buffered events once both fit and scrollback are ready. */
+    const flushIfReady = () => {
+      if (!fitComplete || !pendingScrollback || disposed) return;
+      const { scrollback, offset } = pendingScrollback;
+      pendingScrollback = null;
+
+      if (scrollback) {
+        if (sinceOffset == null) {
+          // Fresh terminal — full reset + write
+          terminal.write("\u001bc");
+        }
+        terminal.write(scrollback);
+      }
+      if (offset != null) {
+        entry.lastServerOffset = offset;
+      }
+      // Now safe to process live events — dimensions are correct
+      terminalReady = true;
+      for (const event of eventBuffer) {
+        writeEvent(event);
+      }
+      eventBuffer.length = 0;
+    };
+
     const unsubscribe = api.claude.onSessionEvent((event) => {
       if (event.threadId !== threadId) return;
       if (!terminalReady) {
@@ -479,31 +524,14 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       .getScrollback({ threadId, sinceOffset })
       .then((result) => {
         if (disposed) return;
-        if (result.scrollback) {
-          if (sinceOffset == null) {
-            // Fresh terminal — full reset + write
-            terminal.write("\u001bc");
-          }
-          terminal.write(result.scrollback);
-        }
-        if (result.offset != null) {
-          entry.lastServerOffset = result.offset;
-        }
-        // Flush events that arrived during getScrollback
-        terminalReady = true;
-        for (const event of eventBuffer) {
-          writeEvent(event);
-        }
-        eventBuffer.length = 0;
+        pendingScrollback = { scrollback: result.scrollback, offset: result.offset ?? null };
+        flushIfReady();
       })
       .catch(() => {
         if (disposed) return;
-        // Even if scrollback fetch fails, start processing live events
-        terminalReady = true;
-        for (const event of eventBuffer) {
-          writeEvent(event);
-        }
-        eventBuffer.length = 0;
+        // Even if scrollback fetch fails, allow live events after fit
+        pendingScrollback = { scrollback: "", offset: null };
+        flushIfReady();
       });
 
     // Intercept macOS navigation shortcuts before the browser captures them
@@ -599,6 +627,9 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
         .resize({ threadId, cols: terminal.cols, rows: terminal.rows })
         .catch(() => undefined);
       terminal.focus();
+      // Signal that dimensions are now correct — safe to write content
+      fitComplete = true;
+      flushIfReady();
     });
 
     // Watch for window resize
