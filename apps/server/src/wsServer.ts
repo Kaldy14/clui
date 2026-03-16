@@ -903,7 +903,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
 
     if (event.type === "hibernated" || event.type === "exited") {
-      const scrollback = yield* claudeSessionManager.getScrollback(event.threadId);
+      const scrollbackResult = yield* claudeSessionManager.getScrollback(event.threadId);
       const claudeSessionId = yield* claudeSessionManager.getClaudeSessionId(event.threadId);
       yield* orchestrationEngine.dispatch({
         type: "thread.terminal.statusChanged",
@@ -911,7 +911,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         threadId: ThreadId.makeUnsafe(event.threadId),
         terminalStatus: "dormant",
         claudeSessionId: claudeSessionId,
-        scrollbackSnapshot: scrollback,
+        scrollbackSnapshot: scrollbackResult.scrollback,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -1177,8 +1177,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.claudeGetScrollback: {
         const body = stripRequestTag(request.body);
-        const scrollback = yield* claudeSessionManager.getScrollback(body.threadId);
-        return { threadId: body.threadId, scrollback };
+        const result = yield* claudeSessionManager.getScrollback(body.threadId, body.sinceOffset);
+        return { threadId: body.threadId, scrollback: result.scrollback, offset: result.offset };
       }
 
       case WS_METHODS.claudeWrite: {

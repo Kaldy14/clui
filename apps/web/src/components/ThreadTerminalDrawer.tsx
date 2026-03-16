@@ -27,6 +27,8 @@ import {
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
+import { useTerminalSearch } from "../hooks/useTerminalSearch";
+import { TerminalSearchBar } from "./TerminalSearchBar";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -75,6 +77,12 @@ function TerminalViewport({
   const onSessionExitedRef = useRef(onSessionExited);
   const hasHandledExitRef = useRef(false);
 
+  const refocusTerminal = useCallback(() => {
+    terminalRef.current?.focus();
+  }, []);
+  const search = useTerminalSearch(refocusTerminal);
+  const { init: searchInit, handleKey: searchHandleKey, dispose: searchDispose } = search;
+
   useEffect(() => {
     onSessionExitedRef.current = onSessionExited;
   }, [onSessionExited]);
@@ -96,6 +104,7 @@ function TerminalViewport({
       macOptionIsMeta: true,
     });
     terminal.loadAddon(fitAddon);
+    searchInit(terminal);
     terminal.open(mount);
     fitAddon.fit();
 
@@ -116,6 +125,9 @@ function TerminalViewport({
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
+      const searchResult = searchHandleKey(event);
+      if (searchResult === false) return false;
+
       const navigationData = terminalNavigationShortcutData(event);
       if (navigationData !== null) {
         event.preventDefault();
@@ -336,6 +348,7 @@ function TerminalViewport({
       inputDisposable.dispose();
       terminalLinksDisposable.dispose();
       themeObserver.disconnect();
+      searchDispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminal.dispose();
@@ -343,7 +356,7 @@ function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, runtimeEnv, terminalId, threadId]);
+  }, [cwd, runtimeEnv, terminalId, threadId, searchInit, searchHandleKey, searchDispose]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -381,7 +394,18 @@ function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, resizeEpoch, terminalId, threadId]);
-  return <div ref={containerRef} className="h-full w-full overflow-hidden rounded-[4px]" />;
+
+  return (
+    <div className="relative h-full w-full overflow-hidden rounded-[4px]">
+      {search.searchOpen && search.searchAddon && (
+        <TerminalSearchBar
+          searchAddon={search.searchAddon}
+          onClose={search.handleSearchClose}
+        />
+      )}
+      <div ref={containerRef} className="h-full w-full" />
+    </div>
+  );
 }
 
 interface ThreadTerminalDrawerProps {

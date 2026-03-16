@@ -24,6 +24,8 @@ import {
 import { readNativeApi } from "~/nativeApi";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useTerminalSearch } from "../hooks/useTerminalSearch";
+import { TerminalSearchBar } from "./TerminalSearchBar";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -64,6 +66,12 @@ function ProjectTerminalViewport({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const hasHandledExitRef = useRef(false);
 
+  const refocusTerminal = useCallback(() => {
+    terminalRef.current?.focus();
+  }, []);
+  const search = useTerminalSearch(refocusTerminal);
+  const { init: searchInit, handleKey: searchHandleKey, dispose: searchDispose } = search;
+
   useEffect(() => {
     const mount = containerRef.current;
     if (!mount) return;
@@ -81,6 +89,7 @@ function ProjectTerminalViewport({
       macOptionIsMeta: true,
     });
     terminal.loadAddon(fitAddon);
+    searchInit(terminal);
     terminal.open(mount);
     fitAddon.fit();
 
@@ -101,6 +110,9 @@ function ProjectTerminalViewport({
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
+      const searchResult = searchHandleKey(event);
+      if (searchResult === false) return false;
+
       const navigationData = terminalNavigationShortcutData(event);
       if (navigationData !== null) {
         event.preventDefault();
@@ -309,12 +321,13 @@ function ProjectTerminalViewport({
       inputDisposable.dispose();
       terminalLinksDisposable.dispose();
       themeObserver.disconnect();
+      searchDispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminal.dispose();
     };
     // cwd and terminalId are stable for the lifetime of this component instance
-  }, [cwd, terminalId, threadId]);
+  }, [cwd, terminalId, threadId, searchInit, searchHandleKey, searchDispose]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -341,7 +354,17 @@ function ProjectTerminalViewport({
     };
   }, [drawerHeight, resizeEpoch, terminalId, threadId]);
 
-  return <div ref={containerRef} className="h-full w-full overflow-hidden rounded-[4px]" />;
+  return (
+    <div className="relative h-full w-full overflow-hidden rounded-[4px]">
+      {search.searchOpen && search.searchAddon && (
+        <TerminalSearchBar
+          searchAddon={search.searchAddon}
+          onClose={search.handleSearchClose}
+        />
+      )}
+      <div ref={containerRef} className="h-full w-full" />
+    </div>
+  );
 }
 
 export interface ProjectTerminalDrawerProps {

@@ -194,7 +194,7 @@ class MockTerminalManager implements TerminalManagerShape {
 const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   startSession: () => Effect.void,
   hibernateSession: () => Effect.succeed(""),
-  getScrollback: () => Effect.succeed(null),
+  getScrollback: () => Effect.succeed({ scrollback: null, offset: 0 }),
   writeToSession: () => Effect.void,
   resizeSession: () => Effect.void,
   getSessionStatus: () => Effect.succeed("new" as const),
@@ -1648,9 +1648,9 @@ describe("WebSocket Server", () => {
           calls.push({ method: "hibernateSession", args: [threadId] });
           return Effect.succeed("saved-scrollback");
         },
-        getScrollback: (threadId) => {
+        getScrollback: (threadId, _sinceOffset) => {
           calls.push({ method: "getScrollback", args: [threadId] });
-          return Effect.succeed("scrollback-data");
+          return Effect.succeed({ scrollback: "scrollback-data", offset: 42 });
         },
         writeToSession: (threadId, data) => {
           calls.push({ method: "writeToSession", args: [threadId, data] });
@@ -1738,7 +1738,7 @@ describe("WebSocket Server", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]!.method).toBe("getScrollback");
       expect(calls[0]!.args[0]).toBe("thread-1");
-      expect(response.result).toEqual({ threadId: "thread-1", scrollback: "scrollback-data" });
+      expect(response.result).toEqual({ threadId: "thread-1", scrollback: "scrollback-data", offset: 42 });
     });
 
     it("claude.write calls writeToSession with correct data", async () => {

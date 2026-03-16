@@ -630,7 +630,6 @@ export function projectEvent(
             terminalStatus: payload.terminalStatus,
             claudeSessionId: payload.claudeSessionId,
             scrollbackSnapshot: payload.scrollbackSnapshot,
-            updatedAt: payload.updatedAt,
           }),
         })),
       );

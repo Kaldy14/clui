@@ -158,6 +158,12 @@ function ChatThreadRouteView() {
   });
   const search = Route.useSearch();
   const routeThreadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
+  // Subscribe to completion-related state so the badge-clearing effect below
+  // re-fires when a thread completes while we're already viewing it.
+  const hookStatus = useStore((store) => store.threads.find((t) => t.id === threadId)?.hookStatus ?? null);
+  const completedAt = useStore(
+    (store) => store.threads.find((t) => t.id === threadId)?.latestTurn?.completedAt ?? null,
+  );
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
   const closeDiff = useCallback(() => {
@@ -181,15 +187,15 @@ function ChatThreadRouteView() {
   }, [navigate, threadId]);
 
   // Mark thread as visited and clear "Completed" badge when navigating to it
+  // — or when the thread completes while we're already viewing it.
   useEffect(() => {
     if (!threadsHydrated || !routeThreadExists) return;
     const store = useStore.getState();
     store.markThreadVisited(threadId);
-    const thread = store.threads.find((t) => t.id === threadId);
-    if (thread?.hookStatus === "completed") {
+    if (hookStatus === "completed") {
       store.setHookStatus(threadId, null);
     }
-  }, [threadsHydrated, routeThreadExists, threadId]);
+  }, [threadsHydrated, routeThreadExists, threadId, hookStatus, completedAt]);
 
   useEffect(() => {
     if (!threadsHydrated) {

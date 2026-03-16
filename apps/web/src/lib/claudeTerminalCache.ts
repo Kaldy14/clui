@@ -31,6 +31,9 @@ export interface CachedTerminal {
   container: HTMLElement | null;
   /** Timestamp (ms) of the last attach or getOrCreate call. Used for idle sweep. */
   lastAccessedAt: number;
+  /** Server scrollback byte offset at last sync. Used for delta-only scrollback
+   *  fetches so we don't reset the terminal and lose old scrollback on reattach. */
+  lastServerOffset: number;
 }
 
 /**
@@ -97,7 +100,7 @@ export function createTerminal(): CachedTerminal {
       window.open(url, "_blank");
     }),
   );
-  return { terminal, fitAddon, searchAddon, container: null, lastAccessedAt: Date.now() };
+  return { terminal, fitAddon, searchAddon, container: null, lastAccessedAt: Date.now(), lastServerOffset: 0 };
 }
 
 /** Update font settings for all cached terminals. */

@@ -44,6 +44,8 @@ export type ClaudeHibernateInput = Schema.Codec.Encoded<typeof ClaudeHibernateIn
 
 export const ClaudeGetScrollbackInput = Schema.Struct({
   threadId: TrimmedNonEmptyString,
+  /** When provided, the server returns only data appended after this byte offset. */
+  sinceOffset: Schema.optional(Schema.Number),
 });
 export type ClaudeGetScrollbackInput = Schema.Codec.Encoded<typeof ClaudeGetScrollbackInput>;
 

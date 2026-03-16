@@ -25,12 +25,17 @@ class ScrollbackRingBuffer {
   private lines: string[] = [];
   private partial = "";
   private readonly maxLines: number;
+  /** Monotonic byte counter — total bytes ever appended (never resets on trim). */
+  private _totalBytes = 0;
+  /** Bytes that were dropped when the ring buffer trimmed old lines. */
+  private _droppedBytes = 0;
 
   constructor(maxLines: number) {
     this.maxLines = maxLines;
   }
 
   append(data: string): void {
+    this._totalBytes += data.length;
     const combined = this.partial + data;
     const parts = combined.split("\n");
     // Last element is the partial (incomplete line)
@@ -41,14 +46,37 @@ class ScrollbackRingBuffer {
     }
     // Trim if over limit
     if (this.lines.length > this.maxLines) {
+      const dropped = this.lines.slice(0, this.lines.length - this.maxLines);
+      // +1 per line for the '\n' delimiter that was split away
+      for (const line of dropped) {
+        this._droppedBytes += line.length + 1;
+      }
       this.lines = this.lines.slice(this.lines.length - this.maxLines);
     }
+  }
+
+  /** Current byte offset — the total number of bytes appended so far. */
+  get offset(): number {
+    return this._totalBytes;
   }
 
   materialize(): string {
     if (this.lines.length === 0) return this.partial;
     const joined = this.lines.join("\n");
     return this.partial.length > 0 ? `${joined}\n${this.partial}` : `${joined}\n`;
+  }
+
+  /**
+   * Return only the data appended since `sinceOffset` bytes. If the requested
+   * offset is older than what the ring buffer still holds (lines were trimmed),
+   * returns `null` to signal the caller must do a full reset.
+   */
+  materializeSince(sinceOffset: number): string | null {
+    if (sinceOffset >= this._totalBytes) return ""; // nothing new
+    const currentData = this.materialize();
+    const availableStart = this._totalBytes - currentData.length;
+    if (sinceOffset < availableStart) return null; // requested data was already trimmed
+    return currentData.slice(sinceOffset - availableStart);
   }
 
   clear(): void {
@@ -265,9 +293,21 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     });
   }
 
-  getScrollback(threadId: string): string | null {
+  getScrollback(threadId: string, sinceOffset?: number): { scrollback: string | null; offset: number } {
     const entry = this.sessions.get(threadId);
-    return entry?.scrollbackBuffer.materialize() ?? null;
+    if (!entry) return { scrollback: null, offset: 0 };
+
+    const offset = entry.scrollbackBuffer.offset;
+
+    if (sinceOffset != null) {
+      const delta = entry.scrollbackBuffer.materializeSince(sinceOffset);
+      if (delta != null) {
+        return { scrollback: delta, offset };
+      }
+      // Delta unavailable (data was trimmed) — fall through to full materialization
+    }
+
+    return { scrollback: entry.scrollbackBuffer.materialize(), offset };
   }
 
   getClaudeSessionId(threadId: string): string | null {

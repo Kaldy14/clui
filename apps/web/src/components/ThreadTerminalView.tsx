@@ -325,6 +325,9 @@ function DormantTerminalView({
       if (result.scrollback) {
         entry.terminal.write(result.scrollback);
       }
+      if (result.offset != null) {
+        entry.lastServerOffset = result.offset;
+      }
     });
 
     return () => {
@@ -466,16 +469,24 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       writeEvent(event);
     });
 
-    // Always fetch scrollback from the server to catch output that arrived
-    // while the terminal was detached (user switched to another thread).
-    // Buffer live events during the fetch, then reset + write + flush.
+    // Fetch scrollback from the server to catch output that arrived while the
+    // terminal was detached (user switched to another thread). If the cached
+    // terminal already has scrollback (lastServerOffset > 0), request only the
+    // delta to avoid resetting the terminal and losing old scrollback history.
+    const sinceOffset = entry.lastServerOffset > 0 ? entry.lastServerOffset : undefined;
     void api.claude
-      .getScrollback({ threadId })
+      .getScrollback({ threadId, sinceOffset })
       .then((result) => {
         if (disposed) return;
         if (result.scrollback) {
-          terminal.write("\u001bc"); // reset terminal
+          if (sinceOffset == null) {
+            // Fresh terminal — full reset + write
+            terminal.write("\u001bc");
+          }
           terminal.write(result.scrollback);
+        }
+        if (result.offset != null) {
+          entry.lastServerOffset = result.offset;
         }
         // Flush events that arrived during getScrollback
         terminalReady = true;

@@ -41,7 +41,8 @@ export interface ClaudeSessionManagerShape {
   ) => Effect.Effect<string, ClaudeSessionError>;
   readonly getScrollback: (
     threadId: string,
-  ) => Effect.Effect<string | null>;
+    sinceOffset?: number,
+  ) => Effect.Effect<{ scrollback: string | null; offset: number }>;
   readonly writeToSession: (
     threadId: string,
     data: string,

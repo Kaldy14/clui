@@ -292,11 +292,12 @@ describe("ClaudeSessionManagerRuntime", () => {
   // ── getScrollback ──────────────────────────────────────────────
 
   describe("getScrollback", () => {
-    it("returns null for unknown thread", () => {
+    it("returns null scrollback for unknown thread", () => {
       const result = makeRuntime();
       runtime = result.runtime;
 
-      expect(runtime.getScrollback("unknown")).toBeNull();
+      const { scrollback } = runtime.getScrollback("unknown");
+      expect(scrollback).toBeNull();
     });
 
     it("returns accumulated output data", async () => {
@@ -308,7 +309,7 @@ describe("ClaudeSessionManagerRuntime", () => {
       ptyProcess.emitData("line1\n");
       ptyProcess.emitData("line2\n");
 
-      const scrollback = runtime.getScrollback("thread-1");
+      const { scrollback } = runtime.getScrollback("thread-1");
       expect(scrollback).toContain("line1");
       expect(scrollback).toContain("line2");
     });
@@ -629,8 +630,8 @@ describe("ClaudeSessionManagerRuntime", () => {
       const ptyProcess = result.ptyAdapter.processes[0]!;
       ptyProcess.emitData("line1\nline2\nline3\nline4\nline5\n");
 
-      const scrollback = runtime.getScrollback("thread-1")!;
-      const lines = scrollback.split("\n").filter((l) => l.length > 0);
+      const { scrollback } = runtime.getScrollback("thread-1");
+      const lines = scrollback!.split("\n").filter((l: string) => l.length > 0);
       expect(lines.length).toBeLessThanOrEqual(3);
       expect(lines).toContain("line5");
     });
