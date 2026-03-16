@@ -121,3 +121,20 @@ export function dispatchHookNotification(
     onNavigate,
   );
 }
+
+// ── Turn-completed notifications (hook lifecycle) ─────────────────────
+
+/**
+ * Notify when a Claude turn finishes (hookStatus transitions to "completed"
+ * from a working/active state). This covers terminal-based sessions where
+ * orchestration session-set events are not emitted.
+ */
+export function dispatchTurnCompletedNotification(
+  threadId: string,
+  threadTitle: string,
+  isCurrentThread: boolean,
+  onNavigate?: () => void,
+): void {
+  if ((isCurrentThread && isWindowFocused()) || !canNotify()) return;
+  fireNotification("Turn completed", threadTitle, `turn:${threadId}`, onNavigate);
+}

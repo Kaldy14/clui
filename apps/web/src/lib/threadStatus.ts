@@ -85,6 +85,11 @@ export function threadStatusPill(
     };
   }
 
+  // Hook-derived status checked before unseen completion so real-time state
+  // ("working", "needsInput") wins over a stale completion marker.
+  const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  if (pill) return pill;
+
   if (hasUnseenCompletion(thread)) {
     return {
       label: "Completed",
@@ -93,10 +98,6 @@ export function threadStatusPill(
       pulse: false,
     };
   }
-
-  // Claude terminal status pills (with hook-derived rich status)
-  const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
-  if (pill) return pill;
 
   return null;
 }

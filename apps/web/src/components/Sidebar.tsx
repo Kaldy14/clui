@@ -12,6 +12,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import * as claudeCache from "../lib/claudeTerminalCache";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   DndContext,
@@ -383,7 +384,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       const latestThread = threads
         .filter((thread) => thread.projectId === projectId)
         .toSorted((a, b) => {
-          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          const byDate = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
           if (byDate !== 0) return byDate;
           return b.id.localeCompare(a.id);
         })[0];
@@ -612,6 +613,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       // round-trip can race with navigation, leaving the entry visible.
       useStore.getState().removeThread(threadId);
       clearProjectDraftThreadById(thread.projectId, thread.id);
+      claudeCache.dispose(threadId);
       clearTerminalState(threadId);
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
@@ -1340,7 +1342,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                     .filter((thread) => thread.projectId === project.id)
                     .toSorted((a, b) => {
                       const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
                       if (byDate !== 0) return byDate;
                       return b.id.localeCompare(a.id);
                     });
@@ -1647,7 +1649,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                               : "text-muted-foreground/40"
                                           }`}
                                         >
-                                          {formatRelativeTime(thread.createdAt)}
+                                          {formatRelativeTime(thread.updatedAt)}
                                         </span>
                                       </div>
                                     </SidebarMenuSubButton>

@@ -25,6 +25,7 @@ import {
   dispatchActivityNotification,
   dispatchHookNotification,
   dispatchSessionSetNotification,
+  dispatchTurnCompletedNotification,
   requestNotificationPermission,
 } from "../lib/notifications";
 import { providerQueryKeys } from "../lib/providerReactQuery";
@@ -168,6 +169,7 @@ function EventRouter() {
   const pathnameRef = useRef(pathname);
   const lastConfigIssuesSignatureRef = useRef<string | null>(null);
   const deferredThreadIdsRef = useRef(new Set<string>());
+  const syncSnapshotRef = useRef<(() => Promise<void>) | null>(null);
 
   pathnameRef.current = pathname;
 
@@ -219,6 +221,7 @@ function EventRouter() {
       }
       syncing = false;
     };
+    syncSnapshotRef.current = syncSnapshot;
 
     const domainEventFlushThrottler = new Throttler(
       () => {
@@ -355,23 +358,91 @@ function EventRouter() {
     // that arrive after the Stop hook (race condition).
     const completedAt = new Map<string, number>();
     const COMPLETED_GRACE_MS = 2000;
+
+    // Safety net: if hookStatus stays "working" with no output/hooks for too long,
+    // the Stop hook likely failed — clear it so the UI doesn't stay stuck.
+    // 90s accommodates long-running tool operations (large file reads, bash commands).
+    const WORKING_IDLE_TIMEOUT_MS = 90_000;
+    // Throttle timer resets to avoid churn during high-frequency output streaming.
+    const IDLE_TIMER_RESET_THROTTLE_MS = 2_000;
+    const workingIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const workingIdleLastReset = new Map<string, number>();
+    const resetWorkingIdleTimer = (rawThreadId: string, force = false) => {
+      // Throttle: skip reset if last reset was recent (unless forced by hook events)
+      if (!force) {
+        const lastReset = workingIdleLastReset.get(rawThreadId) ?? 0;
+        if (Date.now() - lastReset < IDLE_TIMER_RESET_THROTTLE_MS) return;
+      }
+      workingIdleLastReset.set(rawThreadId, Date.now());
+      const existing = workingIdleTimers.get(rawThreadId);
+      if (existing) clearTimeout(existing);
+      const thread = useStore.getState().threads.find((t) => t.id === rawThreadId);
+      if (thread?.hookStatus !== "working") return;
+      workingIdleTimers.set(
+        rawThreadId,
+        setTimeout(() => {
+          workingIdleTimers.delete(rawThreadId);
+          workingIdleLastReset.delete(rawThreadId);
+          const current = useStore.getState().threads.find((t) => t.id === rawThreadId);
+          if (current?.hookStatus === "working") {
+            useStore.getState().setHookStatus(ThreadId.makeUnsafe(rawThreadId), null);
+          }
+        }, WORKING_IDLE_TIMEOUT_MS),
+      );
+    };
+    const clearWorkingIdleTimer = (rawThreadId: string) => {
+      const existing = workingIdleTimers.get(rawThreadId);
+      if (existing) {
+        clearTimeout(existing);
+        workingIdleTimers.delete(rawThreadId);
+      }
+      workingIdleLastReset.delete(rawThreadId);
+    };
+
     const unsubClaudeSessionEvent = api.claude.onSessionEvent((event) => {
       if (event.type === "hookStatus") {
         const threadId = ThreadId.makeUnsafe(event.threadId);
 
         if (event.hookStatus === "completed") {
           completedAt.set(event.threadId, Date.now());
+          clearWorkingIdleTimer(event.threadId);
           useStore.getState().setHookStatus(threadId, "completed");
+          // Fire OS notification for turn completion
+          const currentThreadId = getCurrentThreadId();
+          const threads = useStore.getState().threads;
+          const thread = threads.find((t) => t.id === event.threadId);
+          dispatchTurnCompletedNotification(
+            event.threadId,
+            thread?.title ?? "Thread",
+            event.threadId === currentThreadId,
+            () => {
+              void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
+            },
+          );
         } else if (event.hookStatus === "working") {
-          // "working" means user sent a new prompt — clear the grace window
-          completedAt.delete(event.threadId);
-          useStore.getState().setHookStatus(threadId, event.hookStatus);
+          // "working" means user sent a new prompt — but could also be a late
+          // PostToolUse hook arriving after the session exited/completed.
+          // Guard: ignore if the terminal is already dormant or within grace period.
+          const thread = useStore.getState().threads.find((t) => t.id === event.threadId);
+          if (thread?.terminalStatus === "dormant" || thread?.terminalStatus === "new") {
+            // Stale hook for a dead session — ignore
+          } else {
+            const doneTs = completedAt.get(event.threadId);
+            if (doneTs && Date.now() - doneTs < COMPLETED_GRACE_MS) {
+              // Late hook after Stop/exit — ignore
+            } else {
+              completedAt.delete(event.threadId);
+              useStore.getState().setHookStatus(threadId, event.hookStatus);
+              resetWorkingIdleTimer(event.threadId, true);
+            }
+          }
         } else {
           // For needsInput/pendingApproval/error: ignore if within grace period after completed
           const doneTs = completedAt.get(event.threadId);
           if (doneTs && Date.now() - doneTs < COMPLETED_GRACE_MS) {
             // Late hook after Stop — ignore
           } else {
+            clearWorkingIdleTimer(event.threadId);
             useStore.getState().setHookStatus(threadId, event.hookStatus);
           }
         }
@@ -382,6 +453,10 @@ function EventRouter() {
       if (event.type === "output") {
         const threadId = ThreadId.makeUnsafe(event.threadId);
         const thread = useStore.getState().threads.find((t) => t.id === event.threadId);
+        // Reset idle timer — output means Claude is still working
+        if (thread?.hookStatus === "working") {
+          resetWorkingIdleTimer(event.threadId);
+        }
         if (
           (thread?.hookStatus === "working" ||
             thread?.hookStatus === "pendingApproval" ||
@@ -389,14 +464,26 @@ function EventRouter() {
           event.data.includes("Interrupted")
         ) {
           completedAt.set(event.threadId, Date.now());
+          clearWorkingIdleTimer(event.threadId);
           useStore.getState().setHookStatus(threadId, null);
         }
       }
-      // Clear hook status when terminal goes dormant
-      if (event.type === "hibernated" || event.type === "exited") {
-        completedAt.delete(event.threadId);
-        useStore.getState().setHookStatus(
+      // Eagerly patch terminalStatus so background threads reflect the real
+      // state without waiting for the (deferred) full snapshot sync.
+      if (event.type === "started") {
+        useStore.getState().setTerminalStatus(
           ThreadId.makeUnsafe(event.threadId),
+          "active",
+        );
+      }
+      // Atomically clear hook status and set dormant when terminal goes dormant.
+      // Set grace window (don't delete) so late hooks arriving after exit are filtered.
+      if (event.type === "hibernated" || event.type === "exited") {
+        completedAt.set(event.threadId, Date.now());
+        clearWorkingIdleTimer(event.threadId);
+        useStore.getState().setTerminalLifecycle(
+          ThreadId.makeUnsafe(event.threadId),
+          "dormant",
           null,
         );
       }
@@ -418,6 +505,15 @@ function EventRouter() {
     });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
+        // Reset connection-scoped state on reconnect so stale entries from
+        // a previous server session don't cause dropped or misfiltered events.
+        latestSequence = 0;
+        completedAt.clear();
+        for (const timer of workingIdleTimers.values()) clearTimeout(timer);
+        workingIdleTimers.clear();
+        workingIdleLastReset.clear();
+        deferredThreadIdsRef.current.clear();
+
         await syncSnapshot();
         if (disposed) {
           return;
@@ -474,8 +570,12 @@ function EventRouter() {
     return () => {
       disposed = true;
       needsProviderInvalidation = false;
+      syncSnapshotRef.current = null;
       domainEventFlushThrottler.cancel();
       completedAt.clear();
+      for (const timer of workingIdleTimers.values()) clearTimeout(timer);
+      workingIdleTimers.clear();
+      workingIdleLastReset.clear();
       unsubDomainEvent();
       unsubTerminalEvent();
       unsubClaudeSessionEvent();
@@ -491,19 +591,18 @@ function EventRouter() {
   ]);
 
   useEffect(() => {
-    // When the user switches threads, flush any deferred sync.
+    // When the user switches threads, flush any deferred sync through the
+    // proper syncSnapshot mutex so it respects sequence tracking and the
+    // syncing/pending guard.
     const match = pathname.match(/^\/([^/]+)/);
     const threadId = match ? match[1] : null;
     if (threadId && deferredThreadIdsRef.current.has(threadId)) {
       deferredThreadIdsRef.current.delete(threadId);
-      const api = readNativeApi();
-      if (api) {
-        void api.orchestration.getSnapshot().then((snapshot) => {
-          syncServerReadModel(snapshot);
-        });
+      if (syncSnapshotRef.current) {
+        void syncSnapshotRef.current();
       }
     }
-  }, [pathname, syncServerReadModel]);
+  }, [pathname]);
 
   return null;
 }

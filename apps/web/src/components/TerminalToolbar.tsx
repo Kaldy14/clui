@@ -1,4 +1,4 @@
-import { EDITORS, type EditorId, type ThreadId } from "@clui/contracts";
+import { EDITORS, type EditorId, type KeybindingCommand, type ProjectId, type ProjectScript, type ThreadId } from "@clui/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -8,7 +8,6 @@ import {
   GitBranchIcon,
   PlayIcon,
   RotateCcwIcon,
-  SquareIcon,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -19,12 +18,19 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { claudeTerminalStatusPill } from "../lib/threadStatus";
 import { isMacPlatform, isWindowsPlatform, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import {
+  commandForProjectScript,
+  nextProjectScriptId,
+  projectScriptRuntimeEnv,
+} from "../projectScripts";
 import { useStore } from "../store";
 import { LAST_EDITOR_KEY } from "../terminal-links";
-import type { Thread } from "../types";
+import { useTerminalStateStore } from "../terminalStateStore";
+import { projectTerminalThreadId, type Thread } from "../types";
 import GitActionsControl from "./GitActionsControl";
 import type { Icon } from "./Icons";
 import { CursorIcon, VisualStudioCode, Zed } from "./Icons";
+import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import { Button } from "./ui/button";
 import { Group, GroupSeparator } from "./ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
@@ -209,30 +215,28 @@ const OpenInEditorPicker = memo(function OpenInEditorPicker({
           render={
             <Button
               size="xs"
-              variant="ghost"
+              variant="outline"
               disabled={!effectiveEditor || !openInCwd}
               onClick={() => openInEditor(effectiveEditor)}
-              className="h-6 gap-1 rounded-md px-1.5 text-muted-foreground/70 hover:text-foreground"
             />
           }
         >
           {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-          <span className="sr-only">Open</span>
+          <span className="ml-0.5">Open</span>
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           Open in {primaryOption?.label ?? "editor"}
           {openFavoriteEditorShortcutLabel && ` (${openFavoriteEditorShortcutLabel})`}
         </TooltipPopup>
       </Tooltip>
-      <GroupSeparator className="hidden @sm:block" />
+      <GroupSeparator />
       <Menu>
         <MenuTrigger
           render={
             <Button
               aria-label="Editor options"
-              size="xs"
-              variant="ghost"
-              className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
+              size="icon-xs"
+              variant="outline"
             />
           }
         >
@@ -254,6 +258,51 @@ const OpenInEditorPicker = memo(function OpenInEditorPicker({
   );
 });
 
+// ── Run Script in Terminal ────────────────────────────────────────────
+
+const SCRIPT_TERMINAL_ID = "script";
+
+export function runProjectScriptInTerminal(
+  script: ProjectScript,
+  threadId: ThreadId,
+  project: { id: ProjectId; cwd: string },
+  worktreePath?: string | null,
+) {
+  const api = readNativeApi();
+  if (!api) return;
+
+  const cwd = worktreePath ?? project.cwd;
+  const env = projectScriptRuntimeEnv({ project, worktreePath: worktreePath ?? null });
+
+  if (script.terminalTarget === "project") {
+    // Open / write to the project terminal
+    const syntheticId = projectTerminalThreadId(project.id);
+    const terminalStore = useTerminalStateStore.getState();
+    terminalStore.setProjectTerminalOpen(syntheticId, true);
+    void api.terminal
+      .open({ threadId: syntheticId, terminalId: "default", cwd, env })
+      .then(() => api.terminal.write({ threadId: syntheticId, terminalId: "default", data: `${script.command}\r` }))
+      .catch(() => {
+        // Terminal may already be open — try writing directly
+        void api.terminal.write({ threadId: syntheticId, terminalId: "default", data: `${script.command}\r` });
+      });
+  } else {
+    // Open / write to a thread terminal
+    const terminalStore = useTerminalStateStore.getState();
+    const terminalState = terminalStore.terminalStateByThreadId[threadId];
+    if (!terminalState?.terminalOpen) {
+      terminalStore.setTerminalOpen(threadId, true);
+    }
+    const terminalId = terminalState?.activeTerminalId ?? SCRIPT_TERMINAL_ID;
+    void api.terminal
+      .open({ threadId, terminalId, cwd, env })
+      .then(() => api.terminal.write({ threadId, terminalId, data: `${script.command}\r` }))
+      .catch(() => {
+        void api.terminal.write({ threadId, terminalId, data: `${script.command}\r` });
+      });
+  }
+}
+
 // ── Toolbar ───────────────────────────────────────────────────────────
 
 export default function TerminalToolbar({
@@ -271,6 +320,104 @@ export default function TerminalToolbar({
   const navigate = useNavigate();
   const isGitRepo = gitCwd !== null;
 
+  // ── Project Scripts ──
+  const { data: serverConfig } = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfig?.keybindings ?? [];
+  const scripts = project?.scripts ?? [];
+  const [lastInvokedScriptId, setLastInvokedScriptId] = useState<string | null>(null);
+
+  const handleRunScript = useCallback(
+    (script: ProjectScript) => {
+      if (!project) return;
+      setLastInvokedScriptId(script.id);
+      runProjectScriptInTerminal(script, threadId, project, thread?.worktreePath);
+    },
+    [project, threadId, thread?.worktreePath],
+  );
+
+  const persistProjectScripts = useCallback(
+    async (nextScripts: ProjectScript[], keybindingUpdate?: { key: string; command: KeybindingCommand }) => {
+      const api = readNativeApi();
+      if (!api || !project) return;
+      await api.orchestration.dispatchCommand({
+        type: "project.meta.update",
+        commandId: newCommandId(),
+        projectId: project.id,
+        scripts: nextScripts,
+      });
+      if (keybindingUpdate) {
+        await api.server.upsertKeybinding({
+          key: keybindingUpdate.key,
+          command: keybindingUpdate.command,
+        });
+      }
+    },
+    [project],
+  );
+
+  const handleAddScript = useCallback(
+    async (input: NewProjectScriptInput) => {
+      const scriptId = nextProjectScriptId(
+        input.name,
+        scripts.map((s) => s.id),
+      );
+      const newScript: ProjectScript = {
+        id: scriptId,
+        name: input.name,
+        command: input.command,
+        icon: input.icon,
+        runOnWorktreeCreate: input.runOnWorktreeCreate,
+        terminalTarget: input.terminalTarget,
+      };
+      // If this script has runOnWorktreeCreate, unset it from others
+      const nextScripts = input.runOnWorktreeCreate
+        ? [...scripts.map((s) => ({ ...s, runOnWorktreeCreate: false })), newScript]
+        : [...scripts, newScript];
+      const cmd = commandForProjectScript(scriptId);
+      await persistProjectScripts(
+        nextScripts,
+        input.keybinding ? { key: input.keybinding, command: cmd } : undefined,
+      );
+    },
+    [scripts, persistProjectScripts],
+  );
+
+  const handleUpdateScript = useCallback(
+    async (scriptId: string, input: NewProjectScriptInput) => {
+      const nextScripts = scripts.map((s) => {
+        if (s.id === scriptId) {
+          return {
+            ...s,
+            name: input.name,
+            command: input.command,
+            icon: input.icon,
+            runOnWorktreeCreate: input.runOnWorktreeCreate,
+            terminalTarget: input.terminalTarget,
+          };
+        }
+        // Unset runOnWorktreeCreate on others if this one claims it
+        if (input.runOnWorktreeCreate && s.runOnWorktreeCreate) {
+          return { ...s, runOnWorktreeCreate: false };
+        }
+        return s;
+      });
+      const cmd = commandForProjectScript(scriptId);
+      await persistProjectScripts(
+        nextScripts,
+        input.keybinding != null ? { key: input.keybinding, command: cmd } : undefined,
+      );
+    },
+    [scripts, persistProjectScripts],
+  );
+
+  const handleDeleteScript = useCallback(
+    async (scriptId: string) => {
+      const nextScripts = scripts.filter((s) => s.id !== scriptId);
+      await persistProjectScripts(nextScripts);
+    },
+    [scripts, persistProjectScripts],
+  );
+
   const onToggleDiff = useCallback(() => {
     void navigate({
       to: "/$threadId",
@@ -283,28 +430,22 @@ export default function TerminalToolbar({
     });
   }, [navigate, threadId, diffOpen]);
 
-  const handleStop = useCallback(async () => {
-    const api = readNativeApi();
-    if (!api) return;
-    try {
-      await api.claude.hibernate({ threadId });
-    } catch {
-      // Stop failure — terminal may have already exited
-    }
-  }, [threadId]);
-
   const handleResume = useCallback(async () => {
     const api = readNativeApi();
     if (!api || !thread) return;
     const cwd = thread.worktreePath ?? project?.cwd ?? "";
     if (!cwd) return;
-    claudeCache.dispose(threadId);
+    // Don't dispose the cached terminal — ActiveTerminalView will reuse it,
+    // preserving full client-side scrollback (matches DormantTerminalView behavior).
+    const cached = claudeCache.get(threadId);
+    const cols = cached?.terminal.cols ?? 120;
+    const rows = cached?.terminal.rows ?? 40;
     try {
       await api.claude.start({
         threadId,
         cwd,
-        cols: 120,
-        rows: 40,
+        cols,
+        rows,
         resumeSessionId: thread.claudeSessionId ?? undefined,
       });
     } catch {
@@ -314,7 +455,6 @@ export default function TerminalToolbar({
 
   if (!thread) return null;
 
-  const isActive = thread.terminalStatus === "active";
   const isDormant = thread.terminalStatus === "dormant";
   const branchName = thread.branch ?? null;
 
@@ -337,11 +477,21 @@ export default function TerminalToolbar({
         {/* Status badge */}
         <TerminalStatusBadge thread={thread} />
 
+        {/* Project scripts / actions */}
+        {project && (
+          <ProjectScriptsControl
+            scripts={scripts}
+            keybindings={keybindings}
+            preferredScriptId={lastInvokedScriptId}
+            onRunScript={handleRunScript}
+            onAddScript={handleAddScript}
+            onUpdateScript={handleUpdateScript}
+            onDeleteScript={handleDeleteScript}
+          />
+        )}
+
         {/* Open in editor */}
         <OpenInEditorPicker openInCwd={gitCwd} />
-
-        {/* Separator */}
-        {gitCwd && <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />}
 
         {/* Git actions */}
         <GitActionsControl gitCwd={gitCwd} activeThreadId={threadId} />
@@ -371,73 +521,55 @@ export default function TerminalToolbar({
         )}
 
         {/* Separator before terminal actions */}
-        {(isActive || isDormant) && (
+        {isDormant && (
           <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
         )}
 
         {/* Terminal actions */}
         <div className="flex items-center gap-0.5">
-          {isActive && (
+        {isDormant && (
+          <>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     size="xs"
                     variant="ghost"
-                    onClick={handleStop}
-                    className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-destructive"
+                    onClick={handleResume}
+                    className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-emerald-600 dark:hover:text-emerald-400"
                   />
                 }
               >
-                <SquareIcon className="size-3" aria-hidden="true" />
-                <span className="sr-only">Stop</span>
+                <PlayIcon className="size-3" aria-hidden="true" />
+                <span className="sr-only">Resume</span>
               </TooltipTrigger>
-              <TooltipPopup side="bottom">Stop session</TooltipPopup>
+              <TooltipPopup side="bottom">Resume</TooltipPopup>
             </Tooltip>
-          )}
-          {isDormant && (
-            <>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={handleResume}
-                      className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-emerald-600 dark:hover:text-emerald-400"
-                    />
-                  }
-                >
-                  <PlayIcon className="size-3" aria-hidden="true" />
-                  <span className="sr-only">Resume</span>
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">Resume</TooltipPopup>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => {
-                        const api = readNativeApi();
-                        if (!api || !thread) return;
-                        const cwd = thread.worktreePath ?? project?.cwd ?? "";
-                        if (!cwd) return;
-                        claudeCache.dispose(threadId);
-                        void api.claude.start({ threadId, cwd, cols: 120, rows: 40 });
-                      }}
-                      className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
-                    />
-                  }
-                >
-                  <RotateCcwIcon className="size-3" aria-hidden="true" />
-                  <span className="sr-only">Restart fresh</span>
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">New session</TooltipPopup>
-              </Tooltip>
-            </>
-          )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => {
+                      const api = readNativeApi();
+                      if (!api || !thread) return;
+                      const cwd = thread.worktreePath ?? project?.cwd ?? "";
+                      if (!cwd) return;
+                      claudeCache.dispose(threadId);
+                      void api.claude.start({ threadId, cwd, cols: 120, rows: 40 });
+                    }}
+                    className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
+                  />
+                }
+              >
+                <RotateCcwIcon className="size-3" aria-hidden="true" />
+                <span className="sr-only">Restart fresh</span>
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">New session</TooltipPopup>
+            </Tooltip>
+          </>
+        )}
         </div>
       </div>
     </TooltipProvider>

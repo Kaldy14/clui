@@ -6,6 +6,7 @@ import {
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
   type ClaudeHookStatus,
+  type TerminalStatus,
 } from "@clui/contracts";
 import {
   getModelOptions,
@@ -357,7 +358,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           files: checkpoint.files.map((file) => ({ ...file })),
         })),
         activities: thread.activities.map((activity) => ({ ...activity })),
-        terminalStatus: thread.terminalStatus ?? "new",
+        terminalStatus: existing?.terminalStatus ?? thread.terminalStatus ?? "new",
         claudeSessionId: thread.claudeSessionId ?? null,
         scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
         titleSource: thread.titleSource ?? "auto",
@@ -544,6 +545,9 @@ interface AppStore extends AppState {
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
+  setTerminalStatus: (threadId: ThreadId, terminalStatus: TerminalStatus) => void;
+  /** Atomically update both terminalStatus and hookStatus in a single render. */
+  setTerminalLifecycle: (threadId: ThreadId, terminalStatus: TerminalStatus, hookStatus: ClaudeHookStatus | null) => void;
   addOptimisticThread: (input: {
     id: ThreadId;
     projectId: Project["id"];
@@ -580,6 +584,22 @@ export const useStore = create<AppStore>((set) => ({
       const threads = updateThread(state.threads, threadId, (thread) => {
         if (thread.hookStatus === hookStatus) return thread;
         return { ...thread, hookStatus };
+      });
+      return threads === state.threads ? state : { ...state, threads };
+    }),
+  setTerminalStatus: (threadId, terminalStatus) =>
+    set((state) => {
+      const threads = updateThread(state.threads, threadId, (thread) => {
+        if (thread.terminalStatus === terminalStatus) return thread;
+        return { ...thread, terminalStatus };
+      });
+      return threads === state.threads ? state : { ...state, threads };
+    }),
+  setTerminalLifecycle: (threadId, terminalStatus, hookStatus) =>
+    set((state) => {
+      const threads = updateThread(state.threads, threadId, (thread) => {
+        if (thread.terminalStatus === terminalStatus && thread.hookStatus === hookStatus) return thread;
+        return { ...thread, terminalStatus, hookStatus };
       });
       return threads === state.threads ? state : { ...state, threads };
     }),

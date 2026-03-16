@@ -1,7 +1,7 @@
-import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ResolvedKeybindingsConfig, ThreadId } from "@clui/contracts";
+import { type ResolvedKeybindingsConfig, ThreadId } from "@clui/contracts";
 
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";
@@ -17,7 +17,10 @@ import {
   isThreadNextShortcut,
   isThreadPrevShortcut,
   isThreadSearchShortcut,
+  resolveShortcutCommand,
 } from "../keybindings";
+import { projectScriptIdFromCommand } from "../projectScripts";
+import { runProjectScriptInTerminal } from "../components/TerminalToolbar";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 
 const ProjectTerminalDrawer = lazy(() => import("../components/ProjectTerminalDrawer"));
@@ -65,6 +68,10 @@ const BUSY_HOOK_STATUSES = new Set(["working", "needsInput", "pendingApproval"])
 function ChatRouteLayout() {
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
+  const routeThreadId = useParams({
+    strict: false,
+    select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
+  });
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
@@ -114,12 +121,9 @@ function ChatRouteLayout() {
       // Cmd+J: Toggle thread terminal drawer
       if (isTerminalToggleShortcut(event, keybindings)) {
         event.preventDefault();
-        const params = window.location.pathname.match(/\/([^/]+)$/);
-        const currentThreadId = params?.[1];
-        if (currentThreadId) {
-          const threadId = currentThreadId as ThreadId;
-          const isOpen = terminalStateByThreadId[threadId]?.terminalOpen ?? false;
-          setTerminalOpen(threadId, !isOpen);
+        if (routeThreadId) {
+          const isOpen = terminalStateByThreadId[routeThreadId]?.terminalOpen ?? false;
+          setTerminalOpen(routeThreadId, !isOpen);
         }
         return;
       }
@@ -127,10 +131,8 @@ function ChatRouteLayout() {
       // Cmd+Shift+J: Toggle project terminal drawer
       if (isProjectTerminalToggleShortcut(event, keybindings)) {
         event.preventDefault();
-        const params = window.location.pathname.match(/\/([^/]+)$/);
-        const currentThreadId = params?.[1];
-        const currentThread = currentThreadId
-          ? threads.find((t) => t.id === currentThreadId)
+        const currentThread = routeThreadId
+          ? threads.find((t) => t.id === routeThreadId)
           : undefined;
         if (currentThread) {
           const syntheticId = projectTerminalThreadId(currentThread.projectId);
@@ -146,9 +148,7 @@ function ChatRouteLayout() {
         const isNext = isThreadNextShortcut(event, keybindings);
         const allThreads = threads.filter((t) => t.terminalStatus !== undefined);
         if (allThreads.length === 0) return;
-        const params = window.location.pathname.match(/\/([^/]+)$/);
-        const currentThreadId = params?.[1];
-        const currentIndex = allThreads.findIndex((t) => t.id === currentThreadId);
+        const currentIndex = allThreads.findIndex((t) => t.id === routeThreadId);
         const nextIndex = isNext
           ? (currentIndex + 1) % allThreads.length
           : (currentIndex - 1 + allThreads.length) % allThreads.length;
@@ -170,11 +170,34 @@ function ChatRouteLayout() {
             void navigate({ to: "/$threadId", params: { threadId: targetThread.id } });
           }
         }
+        return;
+      }
+
+      // Script keybindings: script.<id>.run
+      const resolvedCommand = resolveShortcutCommand(event, keybindings);
+      if (resolvedCommand) {
+        const scriptId = projectScriptIdFromCommand(resolvedCommand);
+        if (scriptId) {
+          event.preventDefault();
+          const currentThread = routeThreadId
+            ? threads.find((t) => t.id === routeThreadId)
+            : undefined;
+          if (currentThread) {
+            const { projects } = useStore.getState();
+            const project = projects.find((p) => p.id === currentThread.projectId);
+            if (project) {
+              const script = project.scripts.find((s) => s.id === scriptId);
+              if (script) {
+                runProjectScriptInTerminal(script, currentThread.id, project, currentThread.worktreePath);
+              }
+            }
+          }
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, threads, navigate, terminalStateByThreadId, setTerminalOpen, setProjectTerminalOpen]);
+  }, [keybindings, threads, navigate, routeThreadId, terminalStateByThreadId, setTerminalOpen, setProjectTerminalOpen]);
 
   const handleSearchClick = useCallback(() => setSearchOpen(true), []);
 
@@ -188,8 +211,8 @@ function ChatRouteLayout() {
         <ThreadSidebar onSearchClick={handleSearchClick} />
       </Sidebar>
       <DiffWorkerPoolProvider>
-        <div className="flex h-dvh min-h-0 w-full flex-col">
-          <div className="flex min-h-0 flex-1">
+        <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1">
             <Outlet />
           </div>
           <ProjectTerminalDrawers />

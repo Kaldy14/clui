@@ -99,6 +99,13 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
+  // Claude terminal status (hook-derived rich status or basic active/dormant).
+  // Checked before hasUnseenCompletion so real-time hook status ("working",
+  // "needsInput", etc.) takes priority over a stale completion marker from
+  // a previous turn that hasn't been cleared yet.
+  const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  if (terminalPill) return terminalPill;
+
   if (hasUnseenCompletion(thread)) {
     return {
       label: "Completed",
@@ -107,10 +114,6 @@ export function resolveThreadStatusPill(input: {
       pulse: false,
     };
   }
-
-  // Claude terminal status (hook-derived rich status or basic active/dormant)
-  const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
-  if (terminalPill) return terminalPill;
 
   return null;
 }

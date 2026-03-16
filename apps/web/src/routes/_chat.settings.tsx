@@ -6,10 +6,10 @@ import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
-  DEFAULT_TERMINAL_FONT_SIZE,
   MAX_CUSTOM_MODEL_LENGTH,
   MAX_TERMINAL_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
+  type TerminalColorTheme,
   useAppSettings,
 } from "../appSettings";
 import * as claudeCache from "../lib/claudeTerminalCache";
@@ -40,6 +40,23 @@ const THEME_OPTIONS = [
     description: "Always use the dark theme.",
   },
 ] as const;
+
+const TERMINAL_COLOR_THEME_OPTIONS: Array<{
+  value: TerminalColorTheme;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "muted-earth",
+    label: "Muted Earth",
+    description: "Desaturated earthy tones on a near-black background.",
+  },
+  {
+    value: "classic-pastel",
+    label: "Classic Pastel",
+    description: "Bright pastel palette on the app background.",
+  },
+];
 
 const MODEL_PROVIDER_SETTINGS: Array<{
   provider: ProviderKind;
@@ -514,6 +531,42 @@ function SettingsRouteView() {
               </div>
 
               <div className="space-y-4">
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-foreground">Color theme</span>
+                  <div className="space-y-2" role="radiogroup" aria-label="Terminal color theme">
+                    {TERMINAL_COLOR_THEME_OPTIONS.map((option) => {
+                      const selected = (settings.terminalColorTheme as TerminalColorTheme) === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                            selected
+                              ? "border-primary/60 bg-primary/8 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-accent"
+                          }`}
+                          onClick={() => {
+                            updateSettings({ terminalColorTheme: option.value });
+                            claudeCache.refreshTheme();
+                          }}
+                        >
+                          <span className="flex flex-col">
+                            <span className="text-sm font-medium">{option.label}</span>
+                            <span className="text-xs">{option.description}</span>
+                          </span>
+                          {selected ? (
+                            <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                              Selected
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <label htmlFor="terminal-font-size" className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">Font size</span>
                   <div className="flex items-center gap-3">
@@ -556,7 +609,8 @@ function SettingsRouteView() {
                 </label>
 
                 {(settings.terminalFontSize !== defaults.terminalFontSize ||
-                  settings.terminalFontFamily !== defaults.terminalFontFamily) ? (
+                  settings.terminalFontFamily !== defaults.terminalFontFamily ||
+                  settings.terminalColorTheme !== defaults.terminalColorTheme) ? (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
@@ -565,8 +619,10 @@ function SettingsRouteView() {
                         updateSettings({
                           terminalFontSize: defaults.terminalFontSize,
                           terminalFontFamily: defaults.terminalFontFamily,
+                          terminalColorTheme: defaults.terminalColorTheme,
                         });
                         claudeCache.updateFontSettings();
+                        claudeCache.refreshTheme();
                       }}
                     >
                       Reset terminal defaults

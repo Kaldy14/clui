@@ -269,6 +269,17 @@ function NewThreadView({
 const autoResumeLastAttempt = new Map<string, number>();
 const AUTO_RESUME_COOLDOWN_MS = 10_000;
 
+/** Prune stale entries from autoResumeLastAttempt to prevent unbounded growth.
+ *  Note: Map deletion during for...of iteration is safe per ES2015 spec. */
+function pruneAutoResumeMap() {
+  const now = Date.now();
+  for (const [id, ts] of autoResumeLastAttempt) {
+    if (now - ts > AUTO_RESUME_COOLDOWN_MS * 2) {
+      autoResumeLastAttempt.delete(id);
+    }
+  }
+}
+
 function DormantTerminalView({
   threadId,
   thread,
@@ -301,7 +312,6 @@ function DormantTerminalView({
     }
 
     // Otherwise, fetch scrollback and render in a new terminal
-    let ownsCacheEntry = true;
     const entry = claudeCache.attach(threadId, el);
     entry.terminal.options.disableStdin = true;
     // Fit after layout
@@ -323,9 +333,7 @@ function DormantTerminalView({
       claudeCache.detach(threadId);
       // Dispose dormant terminals on unmount — they're cheap to recreate
       // and we don't want stale scrollback accumulating in memory.
-      if (ownsCacheEntry) {
-        claudeCache.dispose(threadId);
-      }
+      claudeCache.dispose(threadId);
     };
   }, [threadId]);
 
@@ -362,6 +370,7 @@ function DormantTerminalView({
   useEffect(() => {
     const lastAttempt = autoResumeLastAttempt.get(threadId) ?? 0;
     if (!resuming && cwd && Date.now() - lastAttempt > AUTO_RESUME_COOLDOWN_MS) {
+      pruneAutoResumeMap();
       autoResumeLastAttempt.set(threadId, Date.now());
       handleResume();
     }
@@ -423,13 +432,8 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     const eventBuffer: ClaudeSessionEvent[] = [];
     let terminalReady = false;
 
-    // Check if we're reusing a cached terminal that already has scrollback
-    const hadCachedContent = claudeCache.has(threadId);
     const entry = claudeCache.attach(threadId, el);
     const { terminal, fitAddon } = entry;
-    // If the terminal was reparented (not freshly created), it already holds
-    // its full scrollback in the xterm buffer — no need to fetch from server.
-    const reusingScrollback = hadCachedContent && terminal.buffer.normal.length > terminal.rows;
     searchAddonRef.current = entry.searchAddon;
     terminal.options.disableStdin = false;
 
@@ -462,36 +466,33 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       writeEvent(event);
     });
 
-    if (reusingScrollback) {
-      // Terminal already has full scrollback — just start processing live events
-      terminalReady = true;
-    } else {
-      // Get any scrollback we may have missed, then flush buffered events
-      void api.claude
-        .getScrollback({ threadId })
-        .then((result) => {
-          if (disposed) return;
-          if (result.scrollback) {
-            terminal.write("\u001bc"); // reset terminal first
-            terminal.write(result.scrollback);
-          }
-          // Flush events that arrived during getScrollback
-          terminalReady = true;
-          for (const event of eventBuffer) {
-            writeEvent(event);
-          }
-          eventBuffer.length = 0;
-        })
-        .catch(() => {
-          if (disposed) return;
-          // Even if scrollback fetch fails, start processing live events
-          terminalReady = true;
-          for (const event of eventBuffer) {
-            writeEvent(event);
-          }
-          eventBuffer.length = 0;
-        });
-    }
+    // Always fetch scrollback from the server to catch output that arrived
+    // while the terminal was detached (user switched to another thread).
+    // Buffer live events during the fetch, then reset + write + flush.
+    void api.claude
+      .getScrollback({ threadId })
+      .then((result) => {
+        if (disposed) return;
+        if (result.scrollback) {
+          terminal.write("\u001bc"); // reset terminal
+          terminal.write(result.scrollback);
+        }
+        // Flush events that arrived during getScrollback
+        terminalReady = true;
+        for (const event of eventBuffer) {
+          writeEvent(event);
+        }
+        eventBuffer.length = 0;
+      })
+      .catch(() => {
+        if (disposed) return;
+        // Even if scrollback fetch fails, start processing live events
+        terminalReady = true;
+        for (const event of eventBuffer) {
+          writeEvent(event);
+        }
+        eventBuffer.length = 0;
+      });
 
     // Intercept macOS navigation shortcuts before the browser captures them
     terminal.attachCustomKeyEventHandler((event) => {

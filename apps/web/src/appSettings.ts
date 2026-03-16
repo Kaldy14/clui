@@ -18,6 +18,10 @@ export const MAX_TERMINAL_FONT_SIZE = 32;
 export const DEFAULT_TERMINAL_FONT_FAMILY =
   '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace';
 
+export const TERMINAL_COLOR_THEMES = ["muted-earth", "classic-pastel"] as const;
+export type TerminalColorTheme = (typeof TERMINAL_COLOR_THEMES)[number];
+export const DEFAULT_TERMINAL_COLOR_THEME: TerminalColorTheme = "muted-earth";
+
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
@@ -43,6 +47,9 @@ const AppSettingsSchema = Schema.Struct({
   ),
   terminalFontFamily: Schema.String.check(Schema.isMaxLength(512)).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_FAMILY)),
+  ),
+  terminalColorTheme: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_COLOR_THEME as string)),
   ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
@@ -93,6 +100,11 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeCode"),
     customCursorModels: normalizeCustomModelSlugs(settings.customCursorModels, "cursor"),
+    terminalColorTheme: (TERMINAL_COLOR_THEMES as readonly string[]).includes(
+      settings.terminalColorTheme,
+    )
+      ? settings.terminalColorTheme
+      : DEFAULT_TERMINAL_COLOR_THEME,
   };
 }
 
