@@ -158,8 +158,8 @@ const OpenInEditorPicker = memo(function OpenInEditorPicker({
   openInCwd: string | null;
 }) {
   const { data: serverConfig } = useQuery(serverConfigQueryOptions());
-  const availableEditors = serverConfig?.availableEditors ?? [];
-  const keybindings = serverConfig?.keybindings ?? [];
+  const availableEditors = useMemo(() => serverConfig?.availableEditors ?? [], [serverConfig?.availableEditors]);
+  const keybindings = useMemo(() => serverConfig?.keybindings ?? [], [serverConfig?.keybindings]);
 
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
@@ -322,8 +322,8 @@ export default function TerminalToolbar({
 
   // ── Project Scripts ──
   const { data: serverConfig } = useQuery(serverConfigQueryOptions());
-  const keybindings = serverConfig?.keybindings ?? [];
-  const scripts = project?.scripts ?? [];
+  const keybindings = useMemo(() => serverConfig?.keybindings ?? [], [serverConfig?.keybindings]);
+  const scripts = useMemo(() => project?.scripts ?? [], [project?.scripts]);
   const [lastInvokedScriptId, setLastInvokedScriptId] = useState<string | null>(null);
 
   const handleRunScript = useCallback(

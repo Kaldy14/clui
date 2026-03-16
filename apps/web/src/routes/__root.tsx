@@ -457,6 +457,22 @@ function EventRouter() {
         if (thread?.hookStatus === "working") {
           resetWorkingIdleTimer(event.threadId);
         }
+        // Detect context compaction: Claude Code emits "Compacting" when
+        // compressing conversation history.  No hooks fire during this phase
+        // so hookStatus may be null — recover it to "working" so the sidebar
+        // badge stays visible.
+        if (
+          thread?.terminalStatus === "active" &&
+          !thread.hookStatus &&
+          event.data.includes("ompact")
+        ) {
+          const doneTs = completedAt.get(event.threadId);
+          if (!doneTs || Date.now() - doneTs >= COMPLETED_GRACE_MS) {
+            completedAt.delete(event.threadId);
+            useStore.getState().setHookStatus(threadId, "working");
+            resetWorkingIdleTimer(event.threadId, true);
+          }
+        }
         if (
           (thread?.hookStatus === "working" ||
             thread?.hookStatus === "pendingApproval" ||

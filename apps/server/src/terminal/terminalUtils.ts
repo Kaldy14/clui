@@ -48,6 +48,11 @@ export function createSpawnEnv(
     if (shouldExcludeEnvKey(key)) continue;
     spawnEnv[key] = value;
   }
+  // xterm.js supports 24-bit true-color — ensure child processes know this
+  // regardless of whether the parent (e.g. Electron) has COLORTERM set.
+  if (!spawnEnv.COLORTERM) {
+    spawnEnv.COLORTERM = "truecolor";
+  }
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
       spawnEnv[key] = value;

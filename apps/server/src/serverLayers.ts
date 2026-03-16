@@ -19,7 +19,6 @@ import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitHubCliLive } from "./git/Layers/GitHubCli";
 import { ClaudeCliTextGenerationLive } from "./git/Layers/ClaudeCliTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
-import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { NodePtyHostAdapterLive } from "./terminal/Layers/NodePtyHost";
 

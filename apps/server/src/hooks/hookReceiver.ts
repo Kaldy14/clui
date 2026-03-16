@@ -143,14 +143,12 @@ export function summarizeNotification(rawBody: string): { title: string; subtitl
   ].filter(Boolean);
 
   // Extract message
-  const messageCandidates = [
+  const message = [
     firstString(rawObject, ["message", "body", "text", "prompt", "error", "description"]),
     typeof nested === "object" && nested !== null
       ? firstString(nested as Record<string, unknown>, ["message", "body", "text", "prompt", "error", "description"])
       : null,
-  ].filter(Boolean);
-
-  const message = messageCandidates[0] ?? "Claude needs your input";
+  ].find(Boolean) ?? "Claude needs your input";
   const normalizedMessage = normalizeWhitespace(message);
   const signal = signalParts.join(" ");
   const classified = classifyNotification(signal, normalizedMessage);

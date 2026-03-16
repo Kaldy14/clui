@@ -86,17 +86,11 @@ function readOmcCache(): OAuthRateLimits | null {
     if (typeof data.fiveHourPercent !== "number" && typeof data.weeklyPercent !== "number")
       return null;
 
-    const parseDate = (dateStr: unknown): number | null => {
-      if (typeof dateStr !== "string") return null;
-      const ms = Date.parse(dateStr);
-      return isNaN(ms) ? null : ms;
-    };
-
     return {
       fiveHourPercent: typeof data.fiveHourPercent === "number" ? data.fiveHourPercent : 0,
-      fiveHourResetsAt: parseDate(data.fiveHourResetsAt),
+      fiveHourResetsAt: parseDateUnknown(data.fiveHourResetsAt),
       weeklyPercent: typeof data.weeklyPercent === "number" ? data.weeklyPercent : null,
-      weeklyResetsAt: parseDate(data.weeklyResetsAt),
+      weeklyResetsAt: parseDateUnknown(data.weeklyResetsAt),
     };
   } catch {
     return null;
@@ -210,22 +204,28 @@ function clamp(v: number | undefined): number {
   return Math.max(0, Math.min(100, v));
 }
 
+function parseDateString(dateStr: string | undefined): number | null {
+  if (!dateStr) return null;
+  const ms = Date.parse(dateStr);
+  return isNaN(ms) ? null : ms;
+}
+
+function parseDateUnknown(dateStr: unknown): number | null {
+  if (typeof dateStr !== "string") return null;
+  const ms = Date.parse(dateStr);
+  return isNaN(ms) ? null : ms;
+}
+
 function parseResponse(response: UsageApiResponse): OAuthRateLimits | null {
   const fiveHour = response.five_hour?.utilization;
   const sevenDay = response.seven_day?.utilization;
   if (fiveHour == null && sevenDay == null) return null;
 
-  const parseDate = (dateStr: string | undefined): number | null => {
-    if (!dateStr) return null;
-    const ms = Date.parse(dateStr);
-    return isNaN(ms) ? null : ms;
-  };
-
   return {
     fiveHourPercent: clamp(fiveHour),
-    fiveHourResetsAt: parseDate(response.five_hour?.resets_at),
+    fiveHourResetsAt: parseDateString(response.five_hour?.resets_at),
     weeklyPercent: sevenDay != null ? clamp(sevenDay) : null,
-    weeklyResetsAt: parseDate(response.seven_day?.resets_at),
+    weeklyResetsAt: parseDateString(response.seven_day?.resets_at),
   };
 }
 

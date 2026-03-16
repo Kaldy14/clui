@@ -524,7 +524,7 @@ export function setProjectOrder(state: AppState, order: string[]): AppState {
 export function orderProjects(projects: readonly Project[], order: readonly string[]): Project[] {
   if (order.length === 0 || projects.length <= 1) return [...projects];
   const positionMap = new Map(order.map((id, index) => [id, index]));
-  return [...projects].sort((a, b) => {
+  return projects.toSorted((a, b) => {
     const aPos = positionMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
     const bPos = positionMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
     return aPos - bPos;

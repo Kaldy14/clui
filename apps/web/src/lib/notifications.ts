@@ -20,11 +20,11 @@ function isWindowFocused(): boolean {
 
 function fireNotification(title: string, body: string, tag: string, onNavigate?: () => void): void {
   const n = new Notification(title, { body, tag });
-  n.onclick = () => {
+  n.addEventListener("click", () => {
     window.focus();
     onNavigate?.();
     n.close();
-  };
+  });
   setTimeout(() => n.close(), 8_000);
 }
 

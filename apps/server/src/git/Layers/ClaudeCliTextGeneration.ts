@@ -14,7 +14,6 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@clui/shared/
 
 import { TextGenerationError } from "../Errors.ts";
 import {
-  type BranchNameGenerationInput,
   type BranchNameGenerationResult,
   type CommitMessageGenerationResult,
   type PrContentGenerationResult,

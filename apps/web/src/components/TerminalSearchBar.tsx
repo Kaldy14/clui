@@ -64,7 +64,7 @@ export function TerminalSearchBar({ searchAddon, onClose }: TerminalSearchBarPro
   );
 
   return (
-    <div className="absolute right-4 top-2 z-10 flex items-center gap-1 rounded-md border border-border/60 bg-card/95 px-2 py-1 shadow-md backdrop-blur-sm dark:border-border/30 dark:bg-card/90">
+    <div className="absolute right-4 top-10 z-10 flex items-center gap-1 rounded-md border border-border/60 bg-card/95 px-2 py-1 shadow-md backdrop-blur-sm dark:border-border/30 dark:bg-card/90">
       <input
         ref={inputRef}
         type="text"
