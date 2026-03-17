@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChevronRightIcon,
   DownloadIcon,
+  XIcon,
   FolderIcon,
   GitBranchIcon,
   GitPullRequestIcon,
@@ -239,6 +240,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -1229,44 +1231,6 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
             </Alert>
           </SidebarGroup>
         ) : null}
-        {showDesktopUpdateBanner && !showArm64IntelBuildWarning && desktopUpdateBannerTitle ? (
-          <SidebarGroup className="px-2 pt-2 pb-0">
-            <Alert
-              variant={desktopUpdateState?.status === "error" ? "error" : "info"}
-              className={`rounded-2xl ${desktopUpdateState?.status === "error" ? "border-destructive/40 bg-destructive/8" : "border-info/40 bg-info/8"}`}
-            >
-              {desktopUpdateState?.status === "downloaded" ? (
-                <RocketIcon />
-              ) : (
-                <DownloadIcon />
-              )}
-              <AlertTitle>{desktopUpdateBannerTitle}</AlertTitle>
-              {desktopUpdateState?.status === "downloading" &&
-              typeof desktopUpdateState.downloadPercent === "number" ? (
-                <AlertDescription>
-                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
-                    <div
-                      className="h-full rounded-full bg-info transition-all duration-300"
-                      style={{ width: `${Math.floor(desktopUpdateState.downloadPercent)}%` }}
-                    />
-                  </div>
-                </AlertDescription>
-              ) : null}
-              {desktopUpdateBannerButtonLabel ? (
-                <AlertAction>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={desktopUpdateButtonDisabled}
-                    onClick={handleDesktopUpdateButtonClick}
-                  >
-                    {desktopUpdateBannerButtonLabel}
-                  </Button>
-                </AlertAction>
-              ) : null}
-            </Alert>
-          </SidebarGroup>
-        ) : null}
         <SidebarGroup className="px-2 py-2">
           <div className="mb-1 flex items-center justify-between px-2">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
@@ -1771,6 +1735,49 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
           )}
         </SidebarGroup>
       </SidebarContent>
+
+      {showDesktopUpdateBanner && !showArm64IntelBuildWarning && !updateBannerDismissed && desktopUpdateBannerTitle ? (
+        <div className="px-2 pb-1">
+          <div
+            className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs ${desktopUpdateState?.status === "error" ? "bg-destructive/8 text-destructive" : "bg-muted/40 text-muted-foreground"}`}
+          >
+            {desktopUpdateState?.status === "downloaded" ? (
+              <RocketIcon className="size-3 shrink-0" />
+            ) : (
+              <DownloadIcon className="size-3 shrink-0" />
+            )}
+            <span className="min-w-0 truncate">{desktopUpdateBannerTitle}</span>
+            {desktopUpdateState?.status === "downloading" &&
+            typeof desktopUpdateState.downloadPercent === "number" ? (
+              <div className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-muted/40">
+                <div
+                  className="h-full rounded-full bg-info transition-all duration-300"
+                  style={{ width: `${Math.floor(desktopUpdateState.downloadPercent)}%` }}
+                />
+              </div>
+            ) : null}
+            {desktopUpdateBannerButtonLabel ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="ml-auto h-5 shrink-0 px-1.5 text-[10px]"
+                disabled={desktopUpdateButtonDisabled}
+                onClick={handleDesktopUpdateButtonClick}
+              >
+                {desktopUpdateBannerButtonLabel}
+              </Button>
+            ) : null}
+            <button
+              type="button"
+              aria-label="Dismiss update banner"
+              className="inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 transition-colors hover:text-foreground"
+              onClick={() => setUpdateBannerDismissed(true)}
+            >
+              <XIcon className="size-3" />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">

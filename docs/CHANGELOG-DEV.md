@@ -4,6 +4,16 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-17 — Move update banner to sidebar bottom, make subtle, add dismiss
+
+**Problem:** The desktop update banner appeared at the top of the sidebar as a large, prominent Alert component that took up too much visual space.
+
+**Fix:** Moved the banner from inside `SidebarContent` (top) to just above `SidebarFooter` (bottom). Replaced the full `Alert` component with a compact inline row using smaller icons, truncated text, ghost button, and muted colors. Added a dismiss button (X icon) with local state to hide the banner.
+
+**Files:** `apps/web/src/components/Sidebar.tsx`
+
+---
+
 ## 2026-03-16 — Working badge recovery fix
 
 **Problem:** The "Working" sidebar badge would disappear while Claude was still actively working. A thread could be visibly producing output with no badge shown.
