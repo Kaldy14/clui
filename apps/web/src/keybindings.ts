@@ -271,6 +271,14 @@ export function isThreadPrevShortcut(
   return matchesCommandShortcut(event, keybindings, "thread.prev", options);
 }
 
+export function isSpeechToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "speech.toggle", options);
+}
+
 export function isTerminalClearShortcut(
   event: ShortcutEventLike,
   platform = navigator.platform,

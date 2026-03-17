@@ -74,6 +74,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+k", command: "thread.search", when: "!terminalFocus" },
   { key: "mod+shift+]", command: "thread.next" },
   { key: "mod+shift+[", command: "thread.prev" },
+  { key: "mod+shift+v", command: "speech.toggle" },
 ];
 
 function normalizeKeyToken(token: string): string {

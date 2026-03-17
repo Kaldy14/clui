@@ -103,9 +103,32 @@ function NewThreadView({
   }, [threadId, cwd, isWorktreePending, thread.branch, project?.cwd, branchToolbar, trimmedWorktreeBranch, dangerouslySkipPermissions]);
 
   const showBranchInput = isWorktreePending && !!thread.branch;
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-focus container so Enter works immediately
+  useEffect(() => {
+    containerRef.current?.focus();
+  }, []);
+
+  // Enter key triggers start (unless an input is focused)
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (
+        e.key === "Enter" &&
+        !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement) &&
+        !starting && (cwd || isWorktreePending) && isWorktreeBranchValid
+      ) {
+        e.preventDefault();
+        handleStart();
+      }
+    },
+    [handleStart, starting, cwd, isWorktreePending, isWorktreeBranchValid],
+  );
 
   return (
-    <div className="flex h-full flex-col items-center justify-center p-8">
+    <div ref={containerRef} tabIndex={-1} onKeyDown={handleKeyDown} className="flex h-full flex-col items-center justify-center p-8 outline-none">
       <div className="flex w-72 flex-col items-center gap-5 animate-fade-in">
         {/* App logo with subtle glow */}
         <div className="relative animate-zoom-fade-in">
@@ -638,6 +661,59 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     };
     window.addEventListener("resize", onWindowResize);
 
+    // ── Alternate-buffer scroll: convert wheel → arrow keys ──────────
+    // Claude Code runs in alternate screen buffer (TUI mode). xterm.js has
+    // no scrollback in alt-buffer and its internal wheel→arrow fallback
+    // (CoreBrowserTerminal.ts:806-842) silently eats events when render
+    // dimensions are unavailable — consumeWheelEvent returns 0 → event
+    // canceled with no input sent. We intercept wheel in capture phase
+    // and reliably forward arrow keys to the PTY so the user can scroll
+    // within Claude Code's conversation view.
+    //
+    // When xterm.js mouse tracking IS active (Claude Code or another TUI
+    // requested mouse events via DECSET 1003 etc.), we let xterm.js handle
+    // the event — its mouse protocol handler sends proper mouse escape
+    // sequences which is preferable to arrow keys.
+    let wheelPartialScroll = 0;
+    const onAltBufferWheel = (ev: WheelEvent) => {
+      if (disposed) return;
+      if (terminal.buffer.active.type !== "alternate") return;
+      // Shift+scroll = horizontal intent — don't convert to vertical arrows
+      if (ev.shiftKey) return;
+      const deltaY = ev.deltaY;
+      if (deltaY === 0) return;
+      // If xterm.js has mouse tracking active, let it handle wheel natively
+      // (it sends proper mouse escape sequences to the application)
+      if (terminal.element?.classList.contains("enable-mouse-events")) return;
+
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      // Accumulate partial scrolls for trackpad precision (mirrors xterm.js
+      // consumeWheelEvent logic). Mouse wheel events have larger deltaY (~100)
+      // while trackpad gestures send many small values (1-20).
+      let amount = Math.abs(deltaY);
+      if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+        // Firefox on some systems: deltaY is already in line units
+        amount *= 40;
+      } else if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+        amount *= terminal.rows * 40;
+      }
+      wheelPartialScroll += amount / 50;
+      const lines = Math.floor(wheelPartialScroll);
+      wheelPartialScroll -= lines;
+      if (lines === 0) return;
+
+      // Use SS3 prefix (ESC O) when application cursor keys is active,
+      // otherwise CSI prefix (ESC [) — matches xterm.js's own fallback
+      const prefix = terminal.modes.applicationCursorKeysMode ? "\x1bO" : "\x1b[";
+      const key = deltaY < 0 ? "A" : "B"; // A = up, B = down
+      const data = (prefix + key).repeat(Math.min(lines, 15));
+
+      void api.claude.write({ threadId, data }).catch(() => undefined);
+    };
+    el.addEventListener("wheel", onAltBufferWheel, { capture: true, passive: false });
+
     // Watch for container resize (sidebar collapse/expand, split changes)
     // Throttled via rAF to avoid excessive reflows during sidebar drag
     let resizeRafId: number | null = null;
@@ -664,6 +740,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+      el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       window.removeEventListener("resize", onWindowResize);
       resizeObserver.disconnect();
       themeObserver.disconnect();

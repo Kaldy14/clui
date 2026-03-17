@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { type ProviderKind } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
@@ -10,8 +10,11 @@ import {
   MAX_TERMINAL_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
   type TerminalColorTheme,
+  WHISPER_MODEL_TIERS,
+  type WhisperModelTier,
   useAppSettings,
 } from "../appSettings";
+import whisperManager from "../lib/whisperManager";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -139,9 +142,38 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [whisperDownloadProgress, setWhisperDownloadProgress] = useState<number | null>(null);
+  const [whisperModelReady, setWhisperModelReady] = useState(false);
 
-  const codexBinaryPath = settings.codexBinaryPath;
-  const codexHomePath = settings.codexHomePath;
+  useEffect(() => {
+    setWhisperModelReady(whisperManager.isModelReady(settings.whisperModel as WhisperModelTier));
+  }, [settings.whisperModel]);
+
+  // Scroll to section when navigated with hash (e.g. /settings#speech-to-text)
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "");
+    if (hash) {
+      requestAnimationFrame(() => {
+        document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
+  }, []);
+
+  const handleDownloadModel = useCallback(() => {
+    setWhisperDownloadProgress(0);
+    void whisperManager
+      .downloadModel(settings.whisperModel as WhisperModelTier, (progress: number) => {
+        setWhisperDownloadProgress(progress);
+      })
+      .then(() => {
+        setWhisperModelReady(true);
+        setWhisperDownloadProgress(null);
+      })
+      .catch(() => {
+        setWhisperDownloadProgress(null);
+      });
+  }, [settings.whisperModel]);
+
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -247,6 +279,29 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Claude Code CLI</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Clui requires the Claude Code CLI to run terminal sessions.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                <p>
+                  Don't have Claude Code installed?{" "}
+                  <a
+                    href="https://claude.com/product/claude-code"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-primary underline underline-offset-2 hover:text-primary/80"
+                  >
+                    Get it here
+                  </a>.
+                </p>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Appearance</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Choose how Clui handles light and dark mode.
@@ -286,64 +341,6 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <label htmlFor="codex-binary-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Codex binary path</span>
-                  <Input
-                    id="codex-binary-path"
-                    value={codexBinaryPath}
-                    onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
-                    placeholder="codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Leave blank to use <code>codex</code> from your PATH.
-                  </span>
-                </label>
-
-                <label htmlFor="codex-home-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
-                  <Input
-                    id="codex-home-path"
-                    value={codexHomePath}
-                    onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
-                    placeholder="/Users/you/.codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional custom Codex home/config directory.
-                  </span>
-                </label>
-
-                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <p>
-                    Binary source:{" "}
-                    <span className="font-medium text-foreground">{codexBinaryPath || "PATH"}</span>
-                  </p>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        codexBinaryPath: defaults.codexBinaryPath,
-                        codexHomePath: defaults.codexHomePath,
-                      })
-                    }
-                  >
-                    Reset codex overrides
-                  </Button>
-                </div>
-              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
@@ -481,49 +478,6 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Responses</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Control how assistant output is rendered during a turn.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
-                  <p className="text-xs text-muted-foreground">
-                    Show token-by-token output while a response is in progress.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.enableAssistantStreaming}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      enableAssistantStreaming: Boolean(checked),
-                    })
-                  }
-                  aria-label="Stream assistant messages"
-                />
-              </div>
-
-              {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        enableAssistantStreaming: defaults.enableAssistantStreaming,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Terminal</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Configure terminal appearance for Claude sessions.
@@ -629,6 +583,103 @@ function SettingsRouteView() {
                     </Button>
                   </div>
                 ) : null}
+              </div>
+            </section>
+
+            <section id="speech-to-text" className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Speech-to-Text</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Transcribe voice input using a local Whisper model. Shortcut:{" "}
+                  <span className="inline-flex items-center gap-0.5">
+                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘</kbd>
+                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">⇧</kbd>
+                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">V</kbd>
+                  </span>
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-foreground">Model tier</span>
+                  <div className="space-y-2" role="radiogroup" aria-label="Whisper model tier">
+                    {WHISPER_MODEL_TIERS.map((tier) => {
+                      const selected = (settings.whisperModel as WhisperModelTier) === tier.id;
+                      return (
+                        <button
+                          key={tier.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                            selected
+                              ? "border-primary/60 bg-primary/8 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-accent"
+                          }`}
+                          onClick={() => {
+                            updateSettings({ whisperModel: tier.id });
+                            setWhisperModelReady(whisperManager.isModelReady(tier.id));
+                            setWhisperDownloadProgress(null);
+                          }}
+                        >
+                          <span className="flex flex-col">
+                            <span className="text-sm font-medium">{tier.label}</span>
+                            <span className="text-xs">{tier.size}</span>
+                          </span>
+                          {selected ? (
+                            <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                              Selected
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={whisperModelReady || whisperDownloadProgress !== null}
+                    onClick={handleDownloadModel}
+                  >
+                    {whisperDownloadProgress !== null
+                      ? `Downloading… ${whisperDownloadProgress}%`
+                      : whisperModelReady
+                        ? "Ready ✓"
+                        : "Download Model"}
+                  </Button>
+                  {!whisperModelReady && whisperDownloadProgress === null && (
+                    <span className="text-xs text-muted-foreground">
+                      Model is not downloaded yet. Click to download.
+                    </span>
+                  )}
+                  {whisperModelReady && (
+                    <span className="text-xs text-muted-foreground">
+                      Model is ready for use.
+                    </span>
+                  )}
+                </div>
+
+                <label htmlFor="whisper-language" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Language</span>
+                  <select
+                    id="whisper-language"
+                    value={settings.whisperLanguage}
+                    onChange={(event) => updateSettings({ whisperLanguage: event.target.value })}
+                    className="block w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  >
+                    <option value="auto">Auto-detect</option>
+                    <option value="en">English</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="ja">Japanese</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ko">Korean</option>
+                  </select>
+                </label>
               </div>
             </section>
 

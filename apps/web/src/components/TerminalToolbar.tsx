@@ -28,6 +28,7 @@ import { LAST_EDITOR_KEY } from "../terminal-links";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { projectTerminalThreadId, type Thread } from "../types";
 import GitActionsControl from "./GitActionsControl";
+import { SpeechControl } from "./SpeechControl";
 import type { Icon } from "./Icons";
 import { CursorIcon, VisualStudioCode, Zed } from "./Icons";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
@@ -476,6 +477,9 @@ export default function TerminalToolbar({
 
         {/* Status badge */}
         <TerminalStatusBadge thread={thread} />
+
+        {/* Voice input */}
+        <SpeechControl threadId={threadId} />
 
         {/* Project scripts / actions */}
         {project && (

@@ -21,6 +21,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "claude.hibernate",
   "thread.next",
   "thread.prev",
+  "speech.toggle",
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([

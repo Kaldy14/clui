@@ -14,15 +14,18 @@ import { isMacPlatform } from "../lib/utils";
 import { setEvictionGuard } from "../lib/claudeTerminalCache";
 import {
   isProjectTerminalToggleShortcut,
+  isSpeechToggleShortcut,
   isTerminalToggleShortcut,
   isThreadNextShortcut,
   isThreadPrevShortcut,
   isThreadSearchShortcut,
   resolveShortcutCommand,
 } from "../keybindings";
+import { useSpeechStore } from "../speechStore";
 import { projectScriptIdFromCommand } from "../projectScripts";
 import { runProjectScriptInTerminal } from "../components/TerminalToolbar";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { toastManager } from "../components/ui/toast";
 
 const ProjectTerminalDrawer = lazy(() => import("../components/ProjectTerminalDrawer"));
 const ThreadSearchDialog = lazy(() => import("../components/ThreadSearchDialog"));
@@ -156,6 +159,28 @@ function ChatRouteLayout() {
         const nextThread = allThreads[nextIndex];
         if (nextThread) {
           void navigate({ to: "/$threadId", params: { threadId: nextThread.id } });
+        }
+        return;
+      }
+
+      if (isSpeechToggleShortcut(event, keybindings)) {
+        event.preventDefault();
+        if (routeThreadId) {
+          const store = useSpeechStore.getState();
+          if (store.status === "recording") {
+            store.setStatus("idle");
+          } else if (store.status === "idle") {
+            if (!store.modelDownloaded) {
+              toastManager.add({
+                type: "info",
+                title: "Voice input requires a speech model",
+                description: "Click the mic icon in the toolbar or go to Settings to download one.",
+              });
+              return;
+            }
+            store.setActiveThreadId(routeThreadId);
+            store.setStatus("recording");
+          }
         }
         return;
       }

@@ -22,17 +22,15 @@ export const TERMINAL_COLOR_THEMES = ["muted-earth", "classic-pastel"] as const;
 export type TerminalColorTheme = (typeof TERMINAL_COLOR_THEMES)[number];
 export const DEFAULT_TERMINAL_COLOR_THEME: TerminalColorTheme = "muted-earth";
 
+export const WHISPER_MODEL_TIERS = [
+  { id: "tiny", label: "Fast", size: "~75MB" },
+  { id: "base", label: "Balanced", size: "~140MB" },
+  { id: "small", label: "Accurate", size: "~240MB" },
+] as const;
+export type WhisperModelTier = (typeof WHISPER_MODEL_TIERS)[number]["id"];
+
 const AppSettingsSchema = Schema.Struct({
-  codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
-  codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
-  enableAssistantStreaming: Schema.Boolean.pipe(
-    Schema.withConstructorDefault(() => Option.some(true)),
-  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -50,6 +48,12 @@ const AppSettingsSchema = Schema.Struct({
   ),
   terminalColorTheme: Schema.String.check(Schema.isMaxLength(64)).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_COLOR_THEME as string)),
+  ),
+  whisperModel: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withConstructorDefault(() => Option.some("small")),
+  ),
+  whisperLanguage: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withConstructorDefault(() => Option.some("en")),
   ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
