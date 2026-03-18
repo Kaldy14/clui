@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DormantReason } from "../types";
 import {
   COMPLETED_GRACE_MS,
+  PENDING_APPROVAL_OUTPUT_DELAY_MS,
   STARTUP_GRACE_MS,
   WORKING_IDLE_TIMEOUT_MS,
   createSessionEventState,
@@ -385,6 +386,15 @@ describe("createSessionEventState", () => {
       expect(state._turnInProgress.size).toBe(0);
     });
 
+    it("clears pendingApprovalAt on clearAll", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "pendingApproval");
+      expect(state._pendingApprovalAt.size).toBe(1);
+
+      state.clearAll();
+      expect(state._pendingApprovalAt.size).toBe(0);
+    });
+
     it("blocks output recovery on resumed thread startup output", () => {
       // Simulate a resumed thread: started event but no hooks yet
       ctx.terminalStatusByThread.set("t1", "active");
@@ -394,6 +404,72 @@ describe("createSessionEventState", () => {
       vi.advanceTimersByTime(STARTUP_GRACE_MS + COMPLETED_GRACE_MS + 1);
       state.handleOutput("t1", "Claude Code banner loading...");
 
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
+    });
+  });
+
+  describe("handleTurnStart", () => {
+    it("bypasses completed grace period", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      // Complete the thread
+      state.handleHookStatus("t1", "completed");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // Within grace period — handleHookStatus("working") would be rejected
+      vi.advanceTimersByTime(3_000);
+      const result = state.handleHookStatus("t1", "working");
+      expect(result).toEqual({ applied: false });
+
+      // But handleTurnStart always works
+      state.handleTurnStart("t1");
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+    });
+
+    it("clears completedAt so subsequent hooks are not blocked", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "completed");
+
+      vi.advanceTimersByTime(2_000);
+      state.handleTurnStart("t1");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // A subsequent pendingApproval should now be accepted
+      const result = state.handleHookStatus("t1", "pendingApproval");
+      expect(result).toEqual({ applied: true, hookStatus: "pendingApproval" });
+    });
+
+    it("sets turnInProgress", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleTurnStart("t1");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+    });
+  });
+
+  describe("pendingApproval output transition", () => {
+    it("transitions pendingApproval to working when output arrives after delay", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "pendingApproval");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // Output within delay — should NOT transition
+      vi.advanceTimersByTime(500);
+      state.handleOutput("t1", "prompt rendering");
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
+
+      // Output after delay — should transition
+      vi.advanceTimersByTime(PENDING_APPROVAL_OUTPUT_DELAY_MS);
+      state.handleOutput("t1", "tool execution output");
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+    });
+
+    it("does not transition if interrupted before delay", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "pendingApproval");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // User interrupts
+      state.handleOutput("t1", "Interrupted");
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });
   });

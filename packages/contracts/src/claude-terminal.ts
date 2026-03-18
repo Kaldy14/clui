@@ -109,6 +109,12 @@ const ClaudeHookStatusEvent = Schema.Struct({
   hookStatus: ClaudeHookStatus,
 });
 
+/** Fired by UserPromptSubmit — signals an unambiguous new turn. */
+const ClaudeTurnStartEvent = Schema.Struct({
+  ...ClaudeSessionEventBase.fields,
+  type: Schema.Literal("turnStart"),
+});
+
 const ClaudeHookNotificationEvent = Schema.Struct({
   ...ClaudeSessionEventBase.fields,
   type: Schema.Literal("hookNotification"),
@@ -126,6 +132,7 @@ export const ClaudeSessionEvent = Schema.Union([
   ClaudeSessionIdEvent,
   ClaudeErrorEvent,
   ClaudeHookStatusEvent,
+  ClaudeTurnStartEvent,
   ClaudeHookNotificationEvent,
 ]);
 export type ClaudeSessionEvent = typeof ClaudeSessionEvent.Type;

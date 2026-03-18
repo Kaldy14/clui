@@ -120,14 +120,11 @@ describe("summarizeNotification", () => {
 });
 
 describe("buildUserPromptSubmitEvents", () => {
-  it("returns a hookStatus working event", () => {
+  it("returns a turnStart event", () => {
     const events = buildUserPromptSubmitEvents("thread-1");
     expect(events).toHaveLength(1);
-    expect(events[0]!.type).toBe("hookStatus");
+    expect(events[0]!.type).toBe("turnStart");
     expect(events[0]!.threadId).toBe("thread-1");
-    if (events[0]!.type === "hookStatus") {
-      expect(events[0]!.hookStatus).toBe("working");
-    }
   });
 });
 

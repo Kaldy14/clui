@@ -100,7 +100,7 @@ import {
   prStatusIndicator,
 } from "../lib/threadStatus";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
-import { resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
+import { compareThreadsForSidebar, resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -390,11 +390,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     (projectId: ProjectId) => {
       const latestThread = threads
         .filter((thread) => thread.projectId === projectId)
-        .toSorted((a, b) => {
-          const byDate = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-          if (byDate !== 0) return byDate;
-          return b.id.localeCompare(a.id);
-        })[0];
+        .toSorted(compareThreadsForSidebar)[0];
       if (!latestThread) return;
 
       void navigate({
@@ -1360,12 +1356,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                 {projects.map((project) => {
                   const projectThreads = threads
                     .filter((thread) => thread.projectId === project.id)
-                    .toSorted((a, b) => {
-                      const byDate =
-                        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-                      if (byDate !== 0) return byDate;
-                      return b.id.localeCompare(a.id);
-                    });
+                    .toSorted(compareThreadsForSidebar);
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
                   const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
                   const visibleThreads =

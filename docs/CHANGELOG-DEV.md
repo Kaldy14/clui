@@ -4,6 +4,28 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-18 — Add YOLO mode toggle to toolbar (mid-session permission bypass)
+
+**Problem:** YOLO mode (auto-accept all tool calls) could only be set at session start via the checkbox on the launch screen. There was no way to toggle it on a running session without manually restarting.
+
+**Fix:** Added a YOLO mode toggle button to `TerminalToolbar` with a confirmation popover explaining the behavior. When toggled, the session is restarted with `--resume` + `--dangerously-skip-permissions`, preserving conversation context while changing the permission mode. The YOLO state is persisted per-thread in `terminalStateStore` so it survives navigation and is respected by Resume/New Session buttons. The start screen checkbox now reads from/writes to the same store, keeping both UIs in sync.
+
+**Affected files:** `apps/web/src/terminalStateStore.ts`, `apps/web/src/components/TerminalToolbar.tsx`, `apps/web/src/components/ThreadTerminalView.tsx`
+
+---
+
+## 2026-03-18 — Fix sidebar thread sorting: active threads now pinned to top
+
+**Problem:** Thread ordering in the sidebar was unpredictable. Active/working threads would drop down when other threads received updates. The sort was purely `updatedAt`-based with no awareness of thread activity state.
+
+**Root cause:** The sort comparator only compared `updatedAt` timestamps. Terminal status changes (`thread.terminal-status-changed`) don't bump `updatedAt` in the projector, so an actively working thread's position was determined solely by when it last received a message — not by whether it's currently busy. Other threads receiving any event that bumps `updatedAt` (messages, session changes, turn diffs) would push the active thread down.
+
+**Fix:** Replaced the flat `updatedAt` sort with a tiered comparator (`compareThreadsForSidebar` in `Sidebar.logic.ts`). Tier 0 pins busy threads (active terminal or actionable hook status: working/needsInput/pendingApproval) to the top. Tier 1 contains everything else. Within each tier, threads sort by `updatedAt` descending with ID as tiebreaker. Applied to both the render-loop sort and the `focusMostRecentThreadForProject` helper.
+
+**Affected files:** `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.tsx`
+
+---
+
 ## 2026-03-18 — Fix Whisper speech-to-text: key-repeat auto-stop, hallucinations, slow transcription
 
 **Problem:** Holding Cmd+Shift+V auto-stops recording immediately, producing phantom text like "ultrathink you". Transcription with whisper-small is extremely slow (30-60s+ for short clips). Long audio recordings may hang or never complete.

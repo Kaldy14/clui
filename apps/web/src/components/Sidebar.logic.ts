@@ -42,6 +42,42 @@ export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
 }
 
+/**
+ * Whether a thread is actively busy (running terminal or awaiting user action).
+ * Busy threads are pinned to the top of the sidebar thread list.
+ */
+function isThreadBusy(
+  thread: Pick<Thread, "terminalStatus" | "hookStatus">,
+): boolean {
+  if (thread.terminalStatus === "active") return true;
+  const busyHookStates: ReadonlySet<string> = new Set([
+    "working",
+    "needsInput",
+    "pendingApproval",
+  ]);
+  return thread.hookStatus !== null && busyHookStates.has(thread.hookStatus);
+}
+
+type ThreadSortInput = Pick<Thread, "id" | "updatedAt" | "terminalStatus" | "hookStatus">;
+
+/**
+ * Sort comparator for sidebar threads.
+ *
+ * Tier 0 — busy threads (active terminal or actionable hook status) pinned to top.
+ * Tier 1 — everything else.
+ * Within each tier: most-recently-updated first, then ID as tiebreaker.
+ */
+export function compareThreadsForSidebar(a: ThreadSortInput, b: ThreadSortInput): number {
+  const aBusy = isThreadBusy(a);
+  const bBusy = isThreadBusy(b);
+  if (aBusy && !bBusy) return -1;
+  if (!aBusy && bBusy) return 1;
+
+  const byDate = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  if (byDate !== 0) return byDate;
+  return b.id.localeCompare(a.id);
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
   hasPendingApprovals: boolean;

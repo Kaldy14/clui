@@ -9,6 +9,7 @@ import * as claudeCache from "../lib/claudeTerminalCache";
 import { isMacPlatform } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import type { Thread } from "../types";
 import type { EnvMode } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
@@ -52,7 +53,11 @@ function NewThreadView({
 }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dangerouslySkipPermissions, setDangerouslySkipPermissions] = useState(false);
+  const dangerouslySkipPermissions = useTerminalStateStore((s) =>
+    selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  );
+  const setDangerouslySkipPermissions = useTerminalStateStore((s) => s.setYoloMode);
+  const setYolo = useCallback((v: boolean) => setDangerouslySkipPermissions(threadId, v), [threadId, setDangerouslySkipPermissions]);
   const [envMode, setEnvMode] = useState<EnvMode>("local");
   const [prDialogOpen, setPrDialogOpen] = useState(false);
   const [prInitialReference, setPrInitialReference] = useState<string | null>(null);
@@ -235,7 +240,7 @@ function NewThreadView({
           <input
             type="checkbox"
             checked={dangerouslySkipPermissions}
-            onChange={(e) => setDangerouslySkipPermissions(e.target.checked)}
+            onChange={(e) => setYolo(e.target.checked)}
             className="size-3.5 rounded border-border/40 accent-red-500"
           />
           <span>{dangerouslySkipPermissions ? "YOLO mode" : "YOLO mode"}</span>

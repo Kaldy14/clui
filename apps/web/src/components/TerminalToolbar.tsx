@@ -8,6 +8,7 @@ import {
   GitBranchIcon,
   PlayIcon,
   RotateCcwIcon,
+  ShieldOffIcon,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -25,7 +26,7 @@ import {
 } from "../projectScripts";
 import { useStore } from "../store";
 import { LAST_EDITOR_KEY } from "../terminal-links";
-import { useTerminalStateStore } from "../terminalStateStore";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { projectTerminalThreadId, type Thread } from "../types";
 import GitActionsControl from "./GitActionsControl";
 import { SpeechControl } from "./SpeechControl";
@@ -35,6 +36,7 @@ import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScri
 import { Button } from "./ui/button";
 import { Group, GroupSeparator } from "./ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
+import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Toggle } from "./ui/toggle";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
@@ -431,6 +433,37 @@ export default function TerminalToolbar({
     });
   }, [navigate, threadId, diffOpen]);
 
+  // ── YOLO mode ──
+  const yoloMode = useTerminalStateStore((s) =>
+    selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  );
+  const setYoloMode = useTerminalStateStore((s) => s.setYoloMode);
+
+  const handleYoloToggle = useCallback(async (enable: boolean) => {
+    const api = readNativeApi();
+    if (!api || !thread) return;
+    const cwd = thread.worktreePath ?? project?.cwd ?? "";
+    if (!cwd) return;
+    setYoloMode(threadId, enable);
+    // Restart the session with --resume so context is preserved
+    const cached = claudeCache.get(threadId);
+    const cols = cached?.terminal.cols ?? 120;
+    const rows = cached?.terminal.rows ?? 40;
+    try {
+      await api.claude.start({
+        threadId,
+        cwd,
+        cols,
+        rows,
+        resumeSessionId: thread.claudeSessionId ?? undefined,
+        ...(enable ? { dangerouslySkipPermissions: true } : {}),
+      });
+    } catch {
+      // Revert on failure
+      setYoloMode(threadId, !enable);
+    }
+  }, [threadId, thread, project, setYoloMode]);
+
   const handleResume = useCallback(async () => {
     const api = readNativeApi();
     if (!api || !thread) return;
@@ -448,11 +481,12 @@ export default function TerminalToolbar({
         cols,
         rows,
         resumeSessionId: thread.claudeSessionId ?? undefined,
+        ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
       });
     } catch {
       // Start failure handled by ThreadTerminalView
     }
-  }, [threadId, thread, project]);
+  }, [threadId, thread, project, yoloMode]);
 
   if (!thread) return null;
 
@@ -524,6 +558,72 @@ export default function TerminalToolbar({
           </>
         )}
 
+        {/* YOLO mode toggle */}
+        <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
+        <Popover>
+          <Tooltip>
+            <PopoverTrigger
+              render={
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant={yoloMode ? "default" : "ghost"}
+                      aria-label="YOLO mode"
+                      className={
+                        yoloMode
+                          ? "size-6 rounded-md p-0 bg-red-500/15 text-red-500 hover:bg-red-500/25 dark:bg-red-500/20 dark:text-red-400 dark:hover:bg-red-500/30"
+                          : "size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
+                      }
+                    />
+                  }
+                />
+              }
+            >
+              <ShieldOffIcon className="size-3" aria-hidden="true" />
+            </PopoverTrigger>
+            <TooltipPopup side="bottom">
+              {yoloMode ? "YOLO mode active" : "YOLO mode"}
+            </TooltipPopup>
+          </Tooltip>
+          <PopoverPopup side="bottom" align="end" className="w-64">
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                {yoloMode ? "Disable YOLO mode?" : "Enable YOLO mode?"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                YOLO mode auto-accepts all tool calls without asking for permission.
+              </p>
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                This will restart the current session to apply the change. Your conversation
+                context is preserved, but the terminal will briefly reset.
+                Best used when Claude is idle.
+              </p>
+              <div className="flex justify-end gap-2 pt-1">
+                <PopoverClose
+                  render={
+                    <Button size="xs" variant="outline">
+                      Cancel
+                    </Button>
+                  }
+                />
+                <PopoverClose
+                  render={
+                    <Button
+                      size="xs"
+                      variant={yoloMode ? "outline" : "default"}
+                      className={yoloMode ? "" : "bg-red-500 text-white hover:bg-red-600"}
+                      onClick={() => void handleYoloToggle(!yoloMode)}
+                    >
+                      {yoloMode ? "Disable" : "Enable YOLO"}
+                    </Button>
+                  }
+                />
+              </div>
+            </div>
+          </PopoverPopup>
+        </Popover>
+
         {/* Separator before terminal actions */}
         {isDormant && (
           <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
@@ -561,7 +661,13 @@ export default function TerminalToolbar({
                       const cwd = thread.worktreePath ?? project?.cwd ?? "";
                       if (!cwd) return;
                       claudeCache.dispose(threadId);
-                      void api.claude.start({ threadId, cwd, cols: 120, rows: 40 });
+                      void api.claude.start({
+                        threadId,
+                        cwd,
+                        cols: 120,
+                        rows: 40,
+                        ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
+                      });
                     }}
                     className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
                   />

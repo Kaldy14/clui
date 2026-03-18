@@ -164,9 +164,11 @@ function now(): string {
 }
 
 export function buildUserPromptSubmitEvents(threadId: string): ClaudeSessionEvent[] {
-  // User sent a message — Claude is about to start processing
+  // User sent a message — Claude is about to start processing.
+  // Uses "turnStart" instead of "hookStatus" so the client can bypass
+  // the completed grace period (a new turn is unambiguous).
   return [
-    { type: "hookStatus", threadId, createdAt: now(), hookStatus: "working" },
+    { type: "turnStart", threadId, createdAt: now() },
   ];
 }
 

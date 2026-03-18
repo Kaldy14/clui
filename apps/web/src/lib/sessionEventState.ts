@@ -17,6 +17,8 @@ export interface SessionEventDeps {
 
 export interface SessionEventState {
   handleHookStatus(rawThreadId: string, hookStatus: ClaudeHookStatus): HandleHookResult;
+  /** Handle UserPromptSubmit — always accepted, bypasses completed grace period. */
+  handleTurnStart(rawThreadId: string): void;
   handleOutput(rawThreadId: string, data: string): void;
   handleStarted(rawThreadId: string): void;
   handleDormant(rawThreadId: string, reason: "hibernated" | "exited"): void;
@@ -32,6 +34,8 @@ export interface SessionEventState {
   _workingIdleLastReset: Map<string, number>;
   /** Exposed for testing */
   _turnInProgress: Map<string, boolean>;
+  /** Exposed for testing */
+  _pendingApprovalAt: Map<string, number>;
 }
 
 /**
@@ -49,6 +53,8 @@ export const COMPLETED_GRACE_MS = 8_000;
 export const STARTUP_GRACE_MS = 8_000;
 export const WORKING_IDLE_TIMEOUT_MS = 90_000;
 export const IDLE_TIMER_RESET_THROTTLE_MS = 2_000;
+/** After pendingApproval is set, output arriving after this delay transitions to "working". */
+export const PENDING_APPROVAL_OUTPUT_DELAY_MS = 1_000;
 
 export function createSessionEventState(deps: SessionEventDeps): SessionEventState {
   const completedAt = new Map<string, number>();
@@ -61,6 +67,9 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   // The output→"working" recovery heuristic is ONLY allowed when this is true,
   // preventing false "Working" badges from startup output or keystroke echo.
   const turnInProgress = new Map<string, boolean>();
+  // Records when "pendingApproval" was set, so handleOutput can transition
+  // to "working" when output arrives after a short delay (user approved).
+  const pendingApprovalAt = new Map<string, number>();
 
   const now = deps.now ?? Date.now;
 
@@ -103,6 +112,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     if (hookStatus === "completed") {
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);
+      pendingApprovalAt.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, "completed");
       return { applied: true, hookStatus: "completed" };
@@ -119,6 +129,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       }
       completedAt.delete(rawThreadId);
       terminalStartedAt.delete(rawThreadId);
+      pendingApprovalAt.delete(rawThreadId);
       turnInProgress.set(rawThreadId, true);
       deps.setHookStatus(rawThreadId, hookStatus);
       resetWorkingIdleTimer(rawThreadId, true);
@@ -133,8 +144,24 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     terminalStartedAt.delete(rawThreadId);
     turnInProgress.set(rawThreadId, true);
     clearWorkingIdleTimer(rawThreadId);
+    if (hookStatus === "pendingApproval") {
+      pendingApprovalAt.set(rawThreadId, now());
+    } else {
+      pendingApprovalAt.delete(rawThreadId);
+    }
     deps.setHookStatus(rawThreadId, hookStatus);
     return { applied: true, hookStatus };
+  }
+
+  /** UserPromptSubmit — always accepted, bypasses completed grace period. */
+  function handleTurnStart(rawThreadId: string): void {
+    completedAt.delete(rawThreadId);
+    terminalStartedAt.delete(rawThreadId);
+    pendingApprovalAt.delete(rawThreadId);
+    turnInProgress.set(rawThreadId, true);
+    clearWorkingIdleTimer(rawThreadId);
+    deps.setHookStatus(rawThreadId, "working");
+    resetWorkingIdleTimer(rawThreadId, true);
   }
 
   function handleOutput(rawThreadId: string, data: string): void {
@@ -144,6 +171,21 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     // Reset idle timer -- output means Claude is still working
     if (hookStatus === "working") {
       resetWorkingIdleTimer(rawThreadId);
+    }
+
+    // Transition pendingApproval → working when output arrives after a short
+    // delay.  When the user approves a permission prompt, Claude starts
+    // executing the tool and produces output — but PostToolUse only fires
+    // after the tool finishes.  This bridges the gap so the badge shows
+    // "Working" instead of stale "Pending Approval" during tool execution.
+    if (hookStatus === "pendingApproval" && terminalStatus === "active") {
+      const approvalTs = pendingApprovalAt.get(rawThreadId);
+      if (approvalTs != null && now() - approvalTs >= PENDING_APPROVAL_OUTPUT_DELAY_MS) {
+        pendingApprovalAt.delete(rawThreadId);
+        deps.setHookStatus(rawThreadId, "working");
+        resetWorkingIdleTimer(rawThreadId, true);
+        return; // Skip other output checks — we just transitioned
+      }
     }
 
     // Recover "Working" badge when output arrives on an active terminal with no
@@ -170,6 +212,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     ) {
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);
+      pendingApprovalAt.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, null);
     }
@@ -193,6 +236,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleDormant(rawThreadId: string, reason: "hibernated" | "exited"): void {
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
+    pendingApprovalAt.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
     deps.setTerminalLifecycle(rawThreadId, "dormant", null, reason);
@@ -201,6 +245,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleInterrupted(rawThreadId: string): void {
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
+    pendingApprovalAt.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     deps.setHookStatus(rawThreadId, null);
   }
@@ -208,6 +253,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function clearAll(): void {
     completedAt.clear();
     turnInProgress.clear();
+    pendingApprovalAt.clear();
     for (const timer of workingIdleTimers.values()) clearTimeout(timer);
     workingIdleTimers.clear();
     workingIdleLastReset.clear();
@@ -216,6 +262,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
 
   return {
     handleHookStatus,
+    handleTurnStart,
     handleOutput,
     handleStarted,
     handleDormant,
@@ -226,5 +273,6 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     _workingIdleTimers: workingIdleTimers,
     _workingIdleLastReset: workingIdleLastReset,
     _turnInProgress: turnInProgress,
+    _pendingApprovalAt: pendingApprovalAt,
   };
 }
