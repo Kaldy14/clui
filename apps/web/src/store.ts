@@ -15,7 +15,7 @@ import {
   resolveModelSlugForProvider,
 } from "@clui/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread } from "./types";
+import { type ChatMessage, type Project, type Thread, type DormantReason } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -359,6 +359,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         })),
         activities: thread.activities.map((activity) => ({ ...activity })),
         terminalStatus: existing?.terminalStatus ?? thread.terminalStatus ?? "new",
+        dormantReason: existing?.dormantReason ?? null,
         claudeSessionId: thread.claudeSessionId ?? null,
         scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
         titleSource: thread.titleSource ?? "auto",
@@ -503,6 +504,7 @@ export function addOptimisticThread(
     turnDiffSummaries: [],
     activities: [],
     terminalStatus: "new",
+    dormantReason: null,
     claudeSessionId: null,
     scrollbackSnapshot: null,
     titleSource: "auto",
@@ -513,6 +515,39 @@ export function addOptimisticThread(
 
 export function setProjectOrder(state: AppState, order: string[]): AppState {
   return { ...state, projectOrder: order };
+}
+
+export function setTerminalStatus(
+  state: AppState,
+  threadId: ThreadId,
+  terminalStatus: TerminalStatus,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.terminalStatus === terminalStatus && thread.dormantReason === null) return thread;
+    // Clear dormantReason when terminal becomes active (e.g. on "started" event)
+    return { ...thread, terminalStatus, dormantReason: null };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setTerminalLifecycle(
+  state: AppState,
+  threadId: ThreadId,
+  terminalStatus: TerminalStatus,
+  hookStatus: ClaudeHookStatus | null,
+  dormantReason?: DormantReason,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    const newDormantReason = dormantReason !== undefined ? dormantReason : thread.dormantReason;
+    if (
+      thread.terminalStatus === terminalStatus &&
+      thread.hookStatus === hookStatus &&
+      thread.dormantReason === newDormantReason
+    )
+      return thread;
+    return { ...thread, terminalStatus, hookStatus, dormantReason: newDormantReason };
+  });
+  return threads === state.threads ? state : { ...state, threads };
 }
 
 /**
@@ -546,8 +581,8 @@ interface AppStore extends AppState {
   removeThread: (threadId: ThreadId) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
   setTerminalStatus: (threadId: ThreadId, terminalStatus: TerminalStatus) => void;
-  /** Atomically update both terminalStatus and hookStatus in a single render. */
-  setTerminalLifecycle: (threadId: ThreadId, terminalStatus: TerminalStatus, hookStatus: ClaudeHookStatus | null) => void;
+  /** Atomically update terminalStatus, hookStatus, and dormantReason in a single render. */
+  setTerminalLifecycle: (threadId: ThreadId, terminalStatus: TerminalStatus, hookStatus: ClaudeHookStatus | null, dormantReason?: DormantReason) => void;
   addOptimisticThread: (input: {
     id: ThreadId;
     projectId: Project["id"];
@@ -588,21 +623,9 @@ export const useStore = create<AppStore>((set) => ({
       return threads === state.threads ? state : { ...state, threads };
     }),
   setTerminalStatus: (threadId, terminalStatus) =>
-    set((state) => {
-      const threads = updateThread(state.threads, threadId, (thread) => {
-        if (thread.terminalStatus === terminalStatus) return thread;
-        return { ...thread, terminalStatus };
-      });
-      return threads === state.threads ? state : { ...state, threads };
-    }),
-  setTerminalLifecycle: (threadId, terminalStatus, hookStatus) =>
-    set((state) => {
-      const threads = updateThread(state.threads, threadId, (thread) => {
-        if (thread.terminalStatus === terminalStatus && thread.hookStatus === hookStatus) return thread;
-        return { ...thread, terminalStatus, hookStatus };
-      });
-      return threads === state.threads ? state : { ...state, threads };
-    }),
+    set((state) => setTerminalStatus(state, threadId, terminalStatus)),
+  setTerminalLifecycle: (threadId, terminalStatus, hookStatus, dormantReason) =>
+    set((state) => setTerminalLifecycle(state, threadId, terminalStatus, hookStatus, dormantReason)),
 }));
 
 // Persist state changes with debouncing to avoid localStorage thrashing

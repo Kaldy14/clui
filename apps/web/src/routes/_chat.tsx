@@ -167,20 +167,15 @@ function ChatRouteLayout() {
         event.preventDefault();
         if (routeThreadId) {
           const store = useSpeechStore.getState();
-          if (store.status === "recording") {
-            store.setStatus("idle");
-          } else if (store.status === "idle") {
-            if (!store.modelDownloaded) {
-              toastManager.add({
-                type: "info",
-                title: "Voice input requires a speech model",
-                description: "Click the mic icon in the toolbar or go to Settings to download one.",
-              });
-              return;
-            }
-            store.setActiveThreadId(routeThreadId);
-            store.setStatus("recording");
+          if (!store.modelDownloaded && store.status === "idle") {
+            toastManager.add({
+              type: "info",
+              title: "Voice input requires a speech model",
+              description: "Click the mic icon in the toolbar or go to Settings to download one.",
+            });
+            return;
           }
+          window.dispatchEvent(new CustomEvent("clui:speech-toggle", { detail: { threadId: routeThreadId } }));
         }
         return;
       }

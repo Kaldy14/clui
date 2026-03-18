@@ -680,6 +680,21 @@ function SettingsRouteView() {
                     <option value="ko">Korean</option>
                   </select>
                 </label>
+
+                <label htmlFor="voice-prefix" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Voice prefix</span>
+                  <p className="text-[11px] text-muted-foreground">
+                    Text prepended to every voice transcription before sending. Leave empty for none.
+                  </p>
+                  <input
+                    id="voice-prefix"
+                    type="text"
+                    value={settings.voicePrefix ?? ""}
+                    onChange={(event) => updateSettings({ voicePrefix: event.target.value })}
+                    placeholder="e.g. ultrathink"
+                    className="block w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                </label>
               </div>
             </section>
 

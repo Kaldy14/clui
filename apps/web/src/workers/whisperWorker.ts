@@ -4,16 +4,17 @@ import {
 } from "@huggingface/transformers";
 
 type IncomingMessage =
-  | { type: "load"; modelId: string }
-  | { type: "transcribe"; audio: Float32Array; language: string };
+  | { type: "load"; modelId: string; id: string }
+  | { type: "transcribe"; audio: Float32Array; language: string; id: string };
 
 type OutgoingMessage =
-  | { type: "ready" }
-  | { type: "result"; text: string }
-  | { type: "error"; message: string }
+  | { type: "ready"; id: string }
+  | { type: "result"; text: string; id: string }
+  | { type: "error"; message: string; id: string }
   | {
       type: "progress";
       progress: { status: string; file?: string; progress?: number };
+      id: string;
     };
 
 let asr: AutomaticSpeechRecognitionPipeline | null = null;
@@ -26,9 +27,9 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
 
   if (msg.type === "load") {
-    const { modelId } = msg;
+    const { modelId, id } = msg;
     if (loadedModelId === modelId && asr !== null) {
-      self.postMessage({ type: "ready" } satisfies OutgoingMessage);
+      self.postMessage({ type: "ready", id } satisfies OutgoingMessage);
       return;
     }
 
@@ -46,26 +47,30 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
           self.postMessage({
             type: "progress",
             progress,
+            id,
           } satisfies OutgoingMessage);
         },
       })) as AutomaticSpeechRecognitionPipeline;
 
       loadedModelId = modelId;
-      self.postMessage({ type: "ready" } satisfies OutgoingMessage);
+      self.postMessage({ type: "ready", id } satisfies OutgoingMessage);
     } catch (err) {
       self.postMessage({
         type: "error",
         message: err instanceof Error ? err.message : String(err),
+        id,
       } satisfies OutgoingMessage);
     }
     return;
   }
 
   if (msg.type === "transcribe") {
+    const { id } = msg;
     if (!asr) {
       self.postMessage({
         type: "error",
         message: "Model not loaded. Call load first.",
+        id,
       } satisfies OutgoingMessage);
       return;
     }
@@ -80,11 +85,12 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
         ? (result[0]?.text ?? "")
         : (result.text ?? "");
 
-      self.postMessage({ type: "result", text } satisfies OutgoingMessage);
+      self.postMessage({ type: "result", text, id } satisfies OutgoingMessage);
     } catch (err) {
       self.postMessage({
         type: "error",
         message: err instanceof Error ? err.message : String(err),
+        id,
       } satisfies OutgoingMessage);
     }
   }

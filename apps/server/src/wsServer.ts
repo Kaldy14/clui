@@ -1178,7 +1178,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.claudeGetScrollback: {
         const body = stripRequestTag(request.body);
         const result = yield* claudeSessionManager.getScrollback(body.threadId, body.sinceOffset);
-        return { threadId: body.threadId, scrollback: result.scrollback, offset: result.offset };
+        return { threadId: body.threadId, scrollback: result.scrollback, offset: result.offset, reset: result.reset };
       }
 
       case WS_METHODS.claudeWrite: {

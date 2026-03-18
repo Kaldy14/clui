@@ -55,6 +55,9 @@ const AppSettingsSchema = Schema.Struct({
   whisperLanguage: Schema.String.check(Schema.isMaxLength(64)).pipe(
     Schema.withConstructorDefault(() => Option.some("en")),
   ),
+  voicePrefix: Schema.String.check(Schema.isMaxLength(256)).pipe(
+    Schema.withConstructorDefault(() => Option.some("ultrathink")),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {

@@ -29,6 +29,7 @@ import {
   requestNotificationPermission,
 } from "../lib/notifications";
 import { providerQueryKeys } from "../lib/providerReactQuery";
+import { createSessionEventState } from "../lib/sessionEventState";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 
 /** Lightweight mapping duplicating the store's toLegacySessionStatus so we can
@@ -354,60 +355,30 @@ function EventRouter() {
           hasRunningSubprocess,
         );
     });
-    // Track when threads were marked completed to ignore late Notification hooks
-    // that arrive after the Stop hook (race condition).
-    const completedAt = new Map<string, number>();
-    const COMPLETED_GRACE_MS = 2000;
-
-    // Safety net: if hookStatus stays "working" with no output/hooks for too long,
-    // the Stop hook likely failed — clear it so the UI doesn't stay stuck.
-    // 90s accommodates long-running tool operations (large file reads, bash commands).
-    const WORKING_IDLE_TIMEOUT_MS = 90_000;
-    // Throttle timer resets to avoid churn during high-frequency output streaming.
-    const IDLE_TIMER_RESET_THROTTLE_MS = 2_000;
-    const workingIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    const workingIdleLastReset = new Map<string, number>();
-    const resetWorkingIdleTimer = (rawThreadId: string, force = false) => {
-      // Throttle: skip reset if last reset was recent (unless forced by hook events)
-      if (!force) {
-        const lastReset = workingIdleLastReset.get(rawThreadId) ?? 0;
-        if (Date.now() - lastReset < IDLE_TIMER_RESET_THROTTLE_MS) return;
-      }
-      workingIdleLastReset.set(rawThreadId, Date.now());
-      const existing = workingIdleTimers.get(rawThreadId);
-      if (existing) clearTimeout(existing);
-      const thread = useStore.getState().threads.find((t) => t.id === rawThreadId);
-      if (thread?.hookStatus !== "working") return;
-      workingIdleTimers.set(
-        rawThreadId,
-        setTimeout(() => {
-          workingIdleTimers.delete(rawThreadId);
-          workingIdleLastReset.delete(rawThreadId);
-          const current = useStore.getState().threads.find((t) => t.id === rawThreadId);
-          if (current?.hookStatus === "working") {
-            useStore.getState().setHookStatus(ThreadId.makeUnsafe(rawThreadId), null);
-          }
-        }, WORKING_IDLE_TIMEOUT_MS),
-      );
-    };
-    const clearWorkingIdleTimer = (rawThreadId: string) => {
-      const existing = workingIdleTimers.get(rawThreadId);
-      if (existing) {
-        clearTimeout(existing);
-        workingIdleTimers.delete(rawThreadId);
-      }
-      workingIdleLastReset.delete(rawThreadId);
-    };
+    const sessionState = createSessionEventState({
+      getThreadHookStatus: (rawId) =>
+        useStore.getState().threads.find((t) => t.id === rawId)?.hookStatus ?? null,
+      getThreadTerminalStatus: (rawId) =>
+        useStore.getState().threads.find((t) => t.id === rawId)?.terminalStatus,
+      setHookStatus: (rawId, status) =>
+        useStore.getState().setHookStatus(ThreadId.makeUnsafe(rawId), status),
+      setTerminalStatus: (rawId, status) =>
+        useStore.getState().setTerminalStatus(ThreadId.makeUnsafe(rawId), status),
+      setTerminalLifecycle: (rawId, status, hookStatus, dormantReason) =>
+        useStore.getState().setTerminalLifecycle(
+          ThreadId.makeUnsafe(rawId),
+          status,
+          hookStatus,
+          dormantReason,
+        ),
+    });
 
     const unsubClaudeSessionEvent = api.claude.onSessionEvent((event) => {
       if (event.type === "hookStatus") {
-        const threadId = ThreadId.makeUnsafe(event.threadId);
+        const result = sessionState.handleHookStatus(event.threadId, event.hookStatus);
 
-        if (event.hookStatus === "completed") {
-          completedAt.set(event.threadId, Date.now());
-          clearWorkingIdleTimer(event.threadId);
-          useStore.getState().setHookStatus(threadId, "completed");
-          // Fire OS notification for turn completion
+        // Fire OS notification for turn completion (kept here — depends on navigate/thread title)
+        if (result.applied && result.hookStatus === "completed") {
           const currentThreadId = getCurrentThreadId();
           const threads = useStore.getState().threads;
           const thread = threads.find((t) => t.id === event.threadId);
@@ -419,94 +390,16 @@ function EventRouter() {
               void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
             },
           );
-        } else if (event.hookStatus === "working") {
-          // "working" means user sent a new prompt — but could also be a late
-          // PostToolUse hook arriving after the session exited/completed.
-          // Guard: ignore if the terminal is already dormant or within grace period.
-          const thread = useStore.getState().threads.find((t) => t.id === event.threadId);
-          if (thread?.terminalStatus === "dormant" || thread?.terminalStatus === "new") {
-            // Stale hook for a dead session — ignore
-          } else {
-            const doneTs = completedAt.get(event.threadId);
-            if (doneTs && Date.now() - doneTs < COMPLETED_GRACE_MS) {
-              // Late hook after Stop/exit — ignore
-            } else {
-              completedAt.delete(event.threadId);
-              useStore.getState().setHookStatus(threadId, event.hookStatus);
-              resetWorkingIdleTimer(event.threadId, true);
-            }
-          }
-        } else {
-          // For needsInput/pendingApproval/error: ignore if within grace period after completed
-          const doneTs = completedAt.get(event.threadId);
-          if (doneTs && Date.now() - doneTs < COMPLETED_GRACE_MS) {
-            // Late hook after Stop — ignore
-          } else {
-            clearWorkingIdleTimer(event.threadId);
-            useStore.getState().setHookStatus(threadId, event.hookStatus);
-          }
         }
       }
-      // Detect user-initiated interrupts (Escape to cancel).
-      // Claude Code doesn't fire the Stop hook when cancelled via Escape,
-      // so hookStatus stays stuck. Clear it when we see "Interrupted" in output.
       if (event.type === "output") {
-        const threadId = ThreadId.makeUnsafe(event.threadId);
-        const thread = useStore.getState().threads.find((t) => t.id === event.threadId);
-        // Reset idle timer — output means Claude is still working
-        if (thread?.hookStatus === "working") {
-          resetWorkingIdleTimer(event.threadId);
-        }
-        // Recover "Working" badge when output arrives on an active terminal
-        // with no hookStatus.  This handles:
-        //  - The idle timer (90s) clearing hookStatus during a gap in output
-        //    (e.g. long tool execution) — once cleared, subsequent output
-        //    wouldn't restore it since the output handler only resets the
-        //    timer when hookStatus is already "working".
-        //  - Context compaction, where no hooks fire.
-        //  - Any other case where hooks fail silently (curl timeout, etc.).
-        // The completion grace period prevents false recovery right after
-        // a Stop event.
-        if (
-          thread?.terminalStatus === "active" &&
-          !thread.hookStatus
-        ) {
-          const doneTs = completedAt.get(event.threadId);
-          if (!doneTs || Date.now() - doneTs >= COMPLETED_GRACE_MS) {
-            completedAt.delete(event.threadId);
-            useStore.getState().setHookStatus(threadId, "working");
-            resetWorkingIdleTimer(event.threadId, true);
-          }
-        }
-        if (
-          (thread?.hookStatus === "working" ||
-            thread?.hookStatus === "pendingApproval" ||
-            thread?.hookStatus === "needsInput") &&
-          event.data.includes("Interrupted")
-        ) {
-          completedAt.set(event.threadId, Date.now());
-          clearWorkingIdleTimer(event.threadId);
-          useStore.getState().setHookStatus(threadId, null);
-        }
+        sessionState.handleOutput(event.threadId, event.data);
       }
-      // Eagerly patch terminalStatus so background threads reflect the real
-      // state without waiting for the (deferred) full snapshot sync.
       if (event.type === "started") {
-        useStore.getState().setTerminalStatus(
-          ThreadId.makeUnsafe(event.threadId),
-          "active",
-        );
+        sessionState.handleStarted(event.threadId);
       }
-      // Atomically clear hook status and set dormant when terminal goes dormant.
-      // Set grace window (don't delete) so late hooks arriving after exit are filtered.
       if (event.type === "hibernated" || event.type === "exited") {
-        completedAt.set(event.threadId, Date.now());
-        clearWorkingIdleTimer(event.threadId);
-        useStore.getState().setTerminalLifecycle(
-          ThreadId.makeUnsafe(event.threadId),
-          "dormant",
-          null,
-        );
+        sessionState.handleDormant(event.threadId, event.type);
       }
       // Forward hook notifications as OS notifications
       if (event.type === "hookNotification") {
@@ -529,10 +422,7 @@ function EventRouter() {
         // Reset connection-scoped state on reconnect so stale entries from
         // a previous server session don't cause dropped or misfiltered events.
         latestSequence = 0;
-        completedAt.clear();
-        for (const timer of workingIdleTimers.values()) clearTimeout(timer);
-        workingIdleTimers.clear();
-        workingIdleLastReset.clear();
+        sessionState.clearAll();
         deferredThreadIdsRef.current.clear();
 
         await syncSnapshot();
@@ -593,10 +483,7 @@ function EventRouter() {
       needsProviderInvalidation = false;
       syncSnapshotRef.current = null;
       domainEventFlushThrottler.cancel();
-      completedAt.clear();
-      for (const timer of workingIdleTimers.values()) clearTimeout(timer);
-      workingIdleTimers.clear();
-      workingIdleLastReset.clear();
+      sessionState.clearAll();
       unsubDomainEvent();
       unsubTerminalEvent();
       unsubClaudeSessionEvent();

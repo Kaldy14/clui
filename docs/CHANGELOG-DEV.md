@@ -4,6 +4,77 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-18 — Extract session event state from EventRouter into testable module
+
+**Problem:** The EventRouter component in `__root.tsx` had 4 Maps and complex timer/grace period logic inside a `useEffect` closure, making it untestable. Flagged as P2 tech debt.
+
+**Root cause:** All session event state (completedAt, workingIdleTimers, workingIdleLastReset, terminalStartedAt) and their associated logic were tightly coupled to the React component lifecycle.
+
+**Fix:**
+- Extracted Maps and timer/grace logic into `apps/web/src/lib/sessionEventState.ts` as a standalone `createSessionEventState()` factory with injectable deps (including `now()` for testing).
+- Updated `__root.tsx` to create and use the extracted module, keeping notification dispatch and navigation in the component.
+- Added 16 unit tests in `sessionEventState.test.ts` covering startup grace, completion grace, idle timers, interrupt detection, and cleanup.
+
+**Affected files:** `apps/web/src/lib/sessionEventState.ts` (new), `apps/web/src/lib/sessionEventState.test.ts` (new), `apps/web/src/routes/__root.tsx`
+
+---
+
+## 2026-03-18 — Fix double Claude Code banner on session resume
+
+**Problem:** When clicking on a finished/dormant thread and resuming, or switching away from an active thread and back, the Claude Code startup banner (`▐▛███▜▌ Claude Code v2.1.78`) appeared twice — old session content stacked on top of new content.
+
+**Root cause (two bugs):**
+1. **Server:** `ScrollbackRingBuffer` was never cleared when starting a new session on an existing thread entry. Old output persisted and accumulated with new session output.
+2. **Client:** When the server's ring buffer trimmed old lines and couldn't provide a delta, it fell through to full materialization — but the response was indistinguishable from a delta. The client appended full content on top of existing cached terminal content instead of resetting.
+
+**Fix:**
+- `ScrollbackRingBuffer.clear()` now also resets `_totalBytes` and `_droppedBytes` to zero, creating a clean epoch boundary.
+- `materializeSince()` returns `null` (force full reset) when `sinceOffset > _totalBytes`, detecting stale offsets from a previous session epoch.
+- `ClaudeSessionManager.startSession()` clears the scrollback buffer when reusing an existing session entry.
+- Added `reset` flag to `getScrollback` response so the client knows when it received full content instead of a delta (covers both session restart and ring buffer trim cases).
+- `ActiveTerminalView.flushIfReady()` uses the `reset` flag to clear the terminal (`\u001bc`) before writing, preventing stale content from persisting.
+
+**Affected files:** `packages/contracts/src/ipc.ts`, `apps/server/src/terminal/Services/ClaudeSession.ts`, `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`, `apps/server/src/wsServer.ts`, `apps/web/src/components/ThreadTerminalView.tsx`
+
+---
+
+## 2026-03-18 — Fix false "Working" badge on finished/dormant threads
+
+**Problem:** Clicking a finished thread immediately showed a "Working" badge even though nothing was actively running. Additionally, threads that completed work sometimes stayed stuck on "Working" indefinitely.
+
+**Root cause (two bugs):**
+1. `DormantTerminalView` auto-resumed ALL dormant threads unconditionally — including threads where Claude finished its work and the CLI exited. The resumed CLI outputted startup text, and the output recovery heuristic (`__root.tsx`) interpreted it as "working" (since `terminalStatus === "active"` and `hookStatus === null`).
+2. After the "completed" hook fired and hookStatus was cleared to null, post-completion CLI output (prompt rendering) arriving after the 2-second `COMPLETED_GRACE_MS` window would re-trigger the output recovery heuristic, setting hookStatus back to "working" with no way to clear it except the 90-second idle timer.
+
+**Fix:**
+- Added `dormantReason` field to `Thread` ("hibernated" | "exited" | null) to distinguish LRU-evicted threads from CLI-exited threads. Only auto-resume hibernated threads.
+- Added 8-second startup grace period (`terminalStartedAt` map) to suppress output→"working" inference during CLI startup.
+- Increased `COMPLETED_GRACE_MS` from 2s to 8s to cover post-completion CLI output.
+- Stopped deleting `completedAt` entry in the output recovery path — keeps the grace window alive until a real "working" hook (new turn) clears it.
+- Real hook events (`UserPromptSubmit`, `PostToolUse`) clear both `terminalStartedAt` and `completedAt`, re-enabling output recovery for subsequent turns.
+
+**Affected files:** `apps/web/src/types.ts`, `apps/web/src/store.ts`, `apps/web/src/routes/__root.tsx`, `apps/web/src/components/ThreadTerminalView.tsx`, `apps/web/src/store.test.ts`, `apps/web/src/worktreeCleanup.test.ts`
+
+---
+
+## 2026-03-18 — Fix voice input: transcription, push-to-talk UX, voice prefix
+
+**Problem:** Voice input recorded audio but transcribed text never reached the terminal. UX was a confusing toggle; no way to auto-prepend a prompt prefix like "ultrathink".
+
+**Root cause:** The whisper web worker dropped the `id` field from incoming messages, so the manager could never match transcription results to pending promises — they silently resolved nothing. The keyboard shortcut handler also just set store status without actually starting audio capture.
+
+**Fix:**
+- `apps/web/src/workers/whisperWorker.ts`: Pass `id` through in all `IncomingMessage`/`OutgoingMessage` types and every `postMessage` call.
+- `apps/web/src/hooks/useSpeechToText.ts`: Exposed separate `startRecording`/`stopRecording` (not just `toggle`). Added empty-transcription guard. Prepends configurable `voicePrefix` and appends `\n` to auto-submit. Listens for `clui:speech-toggle` custom event for keyboard shortcut support.
+- `apps/web/src/components/SpeechControl.tsx`: Replaced toggle UX with explicit start/stop buttons. Recording state shows a stop icon. Idle tooltip shows the active voice prefix. Active recording shows the prefix tag.
+- `apps/web/src/appSettings.ts`: Added `voicePrefix` setting (default: `"ultrathink"`).
+- `apps/web/src/routes/_chat.settings.tsx`: Added voice prefix input field in Speech-to-Text settings section.
+- `apps/web/src/routes/_chat.tsx`: Keybinding handler dispatches `clui:speech-toggle` custom event instead of directly manipulating store state.
+
+**Affected files:** `apps/web/src/workers/whisperWorker.ts`, `apps/web/src/hooks/useSpeechToText.ts`, `apps/web/src/components/SpeechControl.tsx`, `apps/web/src/appSettings.ts`, `apps/web/src/routes/_chat.settings.tsx`, `apps/web/src/routes/_chat.tsx`, `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-03-17 — Claude Code CLI check and settings cleanup
 
 **Problem:** Settings page contained dead t3code leftovers (Codex App Server binary/home path, assistant streaming toggle). New users had no way to know if Claude Code CLI was installed.

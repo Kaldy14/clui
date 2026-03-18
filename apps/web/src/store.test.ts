@@ -7,7 +7,14 @@ import {
 } from "@clui/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
+import {
+  markThreadUnread,
+  reorderProjects,
+  syncServerReadModel,
+  setTerminalStatus,
+  setTerminalLifecycle,
+  type AppState,
+} from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -34,6 +41,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     scrollbackSnapshot: null,
     titleSource: "auto" as const,
     hookStatus: null,
+    dormantReason: null,
     ...overrides,
   };
 }
@@ -326,5 +334,68 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+  });
+});
+
+describe("dormantReason", () => {
+  it("syncServerReadModel preserves client dormantReason", () => {
+    const initialState = makeState(makeThread({ dormantReason: "hibernated" }));
+    const readModel = makeReadModel(makeReadModelThread({}));
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.dormantReason).toBe("hibernated");
+  });
+
+  it("syncServerReadModel defaults dormantReason to null for new threads", () => {
+    const emptyState: AppState = {
+      projects: [],
+      threads: [],
+      threadsHydrated: false,
+      projectOrder: [],
+    };
+    const readModel = makeReadModel(makeReadModelThread({}));
+
+    const next = syncServerReadModel(emptyState, readModel);
+
+    expect(next.threads[0]?.dormantReason).toBeNull();
+  });
+
+  it("setTerminalStatus clears dormantReason to null", () => {
+    const initialState = makeState(makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }));
+    const threadId = initialState.threads[0]!.id;
+
+    const next = setTerminalStatus(initialState, threadId, "active");
+
+    expect(next.threads[0]?.dormantReason).toBeNull();
+    expect(next.threads[0]?.terminalStatus).toBe("active");
+  });
+
+  it("setTerminalLifecycle sets dormantReason when provided", () => {
+    const initialState = makeState(makeThread({ dormantReason: null, terminalStatus: "active" }));
+    const threadId = initialState.threads[0]!.id;
+
+    const next = setTerminalLifecycle(initialState, threadId, "dormant", null, "hibernated");
+
+    expect(next.threads[0]?.dormantReason).toBe("hibernated");
+    expect(next.threads[0]?.terminalStatus).toBe("dormant");
+  });
+
+  it("setTerminalLifecycle preserves dormantReason when param is undefined", () => {
+    const initialState = makeState(makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }));
+    const threadId = initialState.threads[0]!.id;
+
+    const next = setTerminalLifecycle(initialState, threadId, "dormant", null, undefined);
+
+    expect(next.threads[0]?.dormantReason).toBe("hibernated");
+  });
+
+  it("setTerminalLifecycle can explicitly set dormantReason to null", () => {
+    const initialState = makeState(makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }));
+    const threadId = initialState.threads[0]!.id;
+
+    const next = setTerminalLifecycle(initialState, threadId, "active", null, null);
+
+    expect(next.threads[0]?.dormantReason).toBeNull();
   });
 });

@@ -312,6 +312,7 @@ function DormantTerminalView({
   thread: Thread;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const resumeButtonRef = useRef<HTMLButtonElement>(null);
   const [resuming, setResuming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const project = useStore((s) => s.projects.find((p) => p.id === thread.projectId));
@@ -379,6 +380,11 @@ function DormantTerminalView({
     };
   }, [threadId]);
 
+  // Focus the Resume button on mount so keyboard users have an obvious target.
+  useEffect(() => {
+    resumeButtonRef.current?.focus();
+  }, []);
+
   const handleResume = useCallback(async () => {
     const api = readNativeApi();
     if (!api || !cwd) return;
@@ -405,18 +411,21 @@ function DormantTerminalView({
     }
   }, [threadId, cwd, thread.claudeSessionId]);
 
-  // Auto-resume dormant sessions when the thread is opened.
-  // Guard against infinite loops: if a resume fails (e.g. stale session ID),
-  // the CLI exits immediately → status goes back to "dormant" → this component
-  // remounts → without the guard, auto-resume would fire again endlessly.
+  // Auto-resume dormant sessions when the thread is opened — but ONLY if the
+  // thread was hibernated (LRU eviction while still active).  Threads whose CLI
+  // exited normally (completed work, user quit) should stay dormant so the user
+  // sees the scrollback + Resume button instead of an immediate false-positive
+  // "Working" badge from startup output.
+  const shouldAutoResume = thread.dormantReason === "hibernated";
   useEffect(() => {
+    if (!shouldAutoResume) return;
     const lastAttempt = autoResumeLastAttempt.get(threadId) ?? 0;
     if (!resuming && cwd && Date.now() - lastAttempt > AUTO_RESUME_COOLDOWN_MS) {
       pruneAutoResumeMap();
       autoResumeLastAttempt.set(threadId, Date.now());
       handleResume();
     }
-  }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [threadId, shouldAutoResume]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full flex-col">
@@ -426,6 +435,7 @@ function DormantTerminalView({
       {/* Resume bar — compact, glass-like */}
       <div className="flex items-center justify-center gap-3 border-t border-border/40 bg-card/60 px-4 py-2 backdrop-blur-sm dark:border-border/20 dark:bg-card/40">
         <button
+          ref={resumeButtonRef}
           type="button"
           disabled={resuming || !cwd}
           aria-busy={resuming}
@@ -478,7 +488,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     const eventBuffer: ClaudeSessionEvent[] = [];
     let terminalReady = false;
     let fitComplete = false;
-    let pendingScrollback: { scrollback: string | null; offset: number | null } | null = null;
+    let pendingScrollback: { scrollback: string | null; offset: number | null; reset: boolean } | null = null;
 
     const entry = claudeCache.attach(threadId, el);
     const { terminal, fitAddon } = entry;
@@ -508,15 +518,24 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     /** Flush scrollback + buffered events once both fit and scrollback are ready. */
     const flushIfReady = () => {
       if (!fitComplete || !pendingScrollback || disposed) return;
-      const { scrollback, offset } = pendingScrollback;
+      const { scrollback, offset, reset } = pendingScrollback;
       pendingScrollback = null;
 
+      // The server sets `reset: true` when it couldn't provide a delta
+      // (scrollback buffer was cleared after session restart, or old data was
+      // trimmed by the ring buffer). In that case the returned content is a
+      // full materialization — clear the terminal first to avoid stale content
+      // (e.g. duplicate Claude Code banners).
+      const needsReset = sinceOffset == null || reset;
+
       if (scrollback) {
-        if (sinceOffset == null) {
-          // Fresh terminal — full reset + write
+        if (needsReset) {
           terminal.write("\u001bc");
         }
         terminal.write(scrollback);
+      } else if (reset) {
+        // Buffer was reset but no content yet — just clear stale content
+        terminal.write("\u001bc");
       }
       if (offset != null) {
         entry.lastServerOffset = offset;
@@ -547,13 +566,13 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       .getScrollback({ threadId, sinceOffset })
       .then((result) => {
         if (disposed) return;
-        pendingScrollback = { scrollback: result.scrollback, offset: result.offset ?? null };
+        pendingScrollback = { scrollback: result.scrollback, offset: result.offset ?? null, reset: result.reset ?? false };
         flushIfReady();
       })
       .catch(() => {
         if (disposed) return;
         // Even if scrollback fetch fails, allow live events after fit
-        pendingScrollback = { scrollback: "", offset: null };
+        pendingScrollback = { scrollback: "", offset: null, reset: false };
         flushIfReady();
       });
 
@@ -670,10 +689,8 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     // and reliably forward arrow keys to the PTY so the user can scroll
     // within Claude Code's conversation view.
     //
-    // When xterm.js mouse tracking IS active (Claude Code or another TUI
-    // requested mouse events via DECSET 1003 etc.), we let xterm.js handle
-    // the event — its mouse protocol handler sends proper mouse escape
-    // sequences which is preferable to arrow keys.
+    // We always intercept wheel in alternate buffer and send arrow keys,
+    // even when mouse tracking is active — see note inside the handler.
     let wheelPartialScroll = 0;
     const onAltBufferWheel = (ev: WheelEvent) => {
       if (disposed) return;
@@ -682,9 +699,11 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (ev.shiftKey) return;
       const deltaY = ev.deltaY;
       if (deltaY === 0) return;
-      // If xterm.js has mouse tracking active, let it handle wheel natively
-      // (it sends proper mouse escape sequences to the application)
-      if (terminal.element?.classList.contains("enable-mouse-events")) return;
+      // NOTE: We intentionally do NOT bail out when xterm.js has mouse tracking
+      // active (enable-mouse-events class). xterm.js's internal wheel→mouse
+      // handler silently eats events when render dimensions are unavailable,
+      // leaving scroll completely dead. Arrow keys are universally understood
+      // by terminal TUIs for vertical navigation, so we always intercept.
 
       ev.preventDefault();
       ev.stopPropagation();

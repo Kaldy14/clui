@@ -72,7 +72,8 @@ class ScrollbackRingBuffer {
    * returns `null` to signal the caller must do a full reset.
    */
   materializeSince(sinceOffset: number): string | null {
-    if (sinceOffset >= this._totalBytes) return ""; // nothing new
+    if (sinceOffset > this._totalBytes) return null; // stale offset from previous session — force full reset
+    if (sinceOffset === this._totalBytes) return ""; // nothing new
     const currentData = this.materialize();
     const availableStart = this._totalBytes - currentData.length;
     if (sinceOffset < availableStart) return null; // requested data was already trimmed
@@ -82,6 +83,8 @@ class ScrollbackRingBuffer {
   clear(): void {
     this.lines = [];
     this.partial = "";
+    this._totalBytes = 0;
+    this._droppedBytes = 0;
   }
 
 }
@@ -172,6 +175,13 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       entry.rows = input.rows;
       entry.status = "active";
       entry.lastInteractedAt = Date.now();
+      // Clear old scrollback when starting a new session so the buffer only
+      // contains output from the current CLI process. Without this, old output
+      // (including the previous session's startup banner) persists and gets
+      // re-sent to the client, causing duplicate banners.
+      if (existing) {
+        entry.scrollbackBuffer.clear();
+      }
       this.sessions.set(input.threadId, entry);
 
       const args: string[] = [];
@@ -293,21 +303,24 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     });
   }
 
-  getScrollback(threadId: string, sinceOffset?: number): { scrollback: string | null; offset: number } {
+  getScrollback(threadId: string, sinceOffset?: number): { scrollback: string | null; offset: number; reset: boolean } {
     const entry = this.sessions.get(threadId);
-    if (!entry) return { scrollback: null, offset: 0 };
+    if (!entry) return { scrollback: null, offset: 0, reset: false };
 
     const offset = entry.scrollbackBuffer.offset;
 
     if (sinceOffset != null) {
       const delta = entry.scrollbackBuffer.materializeSince(sinceOffset);
       if (delta != null) {
-        return { scrollback: delta, offset };
+        return { scrollback: delta, offset, reset: false };
       }
-      // Delta unavailable (data was trimmed) — fall through to full materialization
+      // Delta unavailable (data was trimmed or buffer was cleared after session
+      // restart) — fall through to full materialization with reset flag so the
+      // client knows to clear the terminal before writing.
+      return { scrollback: entry.scrollbackBuffer.materialize(), offset, reset: true };
     }
 
-    return { scrollback: entry.scrollbackBuffer.materialize(), offset };
+    return { scrollback: entry.scrollbackBuffer.materialize(), offset, reset: false };
   }
 
   getClaudeSessionId(threadId: string): string | null {

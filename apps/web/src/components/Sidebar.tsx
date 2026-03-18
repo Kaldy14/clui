@@ -1592,9 +1592,12 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                         )}
                                         {threadStatus && (
                                           <span
+                                            role="status"
+                                            aria-label={threadStatus.label}
                                             className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
                                           >
                                             <span
+                                              aria-hidden="true"
                                               className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
                                                 threadStatus.pulse ? "animate-pulse" : ""
                                               }`}

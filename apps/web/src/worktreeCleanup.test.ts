@@ -28,6 +28,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     scrollbackSnapshot: null,
     titleSource: "auto" as const,
     hookStatus: null,
+    dormantReason: null,
     ...overrides,
   };
 }

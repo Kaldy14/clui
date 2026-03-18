@@ -96,6 +96,10 @@ export interface Project {
   scripts: ProjectScript[];
 }
 
+/** Why the terminal went dormant — "hibernated" (LRU eviction, safe to auto-resume)
+ *  vs "exited" (CLI process exited, e.g. completed work). Null when not dormant. */
+export type DormantReason = "hibernated" | "exited" | null;
+
 export interface Thread {
   id: ThreadId;
   projectId: ProjectId;
@@ -116,6 +120,7 @@ export interface Thread {
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
   terminalStatus: TerminalStatus;
+  dormantReason: DormantReason;
   claudeSessionId: string | null;
   scrollbackSnapshot: string | null;
   titleSource: TitleSource;

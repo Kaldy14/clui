@@ -214,7 +214,7 @@ export interface NativeApi {
     resize: (input: ClaudeResizeInput) => Promise<void>;
     getScrollback: (
       input: ClaudeGetScrollbackInput,
-    ) => Promise<{ threadId: string; scrollback: string | null; offset: number }>;
+    ) => Promise<{ threadId: string; scrollback: string | null; offset: number; reset?: boolean }>;
     onSessionEvent: (callback: (event: ClaudeSessionEvent) => void) => () => void;
   };
 }
