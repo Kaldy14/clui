@@ -42,6 +42,9 @@ export type HandleHookResult =
   | { applied: true; hookStatus: ClaudeHookStatus }
   | { applied: false };
 
+/** Matches Claude Code API error lines (529 overloaded, 429 rate-limit, 5xx server errors). */
+const API_ERROR_RE = /API Error: (?:429|5\d{2})\b/;
+
 export const COMPLETED_GRACE_MS = 8_000;
 export const STARTUP_GRACE_MS = 8_000;
 export const WORKING_IDLE_TIMEOUT_MS = 90_000;
@@ -169,6 +172,15 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       turnInProgress.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, null);
+    }
+
+    // Detect API errors (e.g. 529 overloaded, 429 rate limit, 500 server error)
+    // that don't trigger a /hooks/stop callback, leaving hookStatus stuck on "working".
+    if (hookStatus === "working" && API_ERROR_RE.test(data)) {
+      completedAt.set(rawThreadId, now());
+      turnInProgress.delete(rawThreadId);
+      clearWorkingIdleTimer(rawThreadId);
+      deps.setHookStatus(rawThreadId, "error");
     }
   }
 

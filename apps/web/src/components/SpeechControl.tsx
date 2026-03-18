@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { DownloadIcon, Loader2Icon, MicIcon, SettingsIcon, SquareIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -17,6 +17,22 @@ export function SpeechControl({ threadId }: { threadId: string }) {
   const audioLevel = useSpeechStore((s) => s.audioLevel);
   const downloadProgress = useSpeechStore((s) => s.downloadProgress);
   const prefix = getAppSettingsSnapshot().voicePrefix?.trim() || "";
+
+  // On mount, check if the model is already in the browser cache and auto-load it
+  const cacheChecked = useRef(false);
+  useEffect(() => {
+    if (cacheChecked.current || modelDownloaded) return;
+    cacheChecked.current = true;
+
+    const tier = getAppSettingsSnapshot().whisperModel ?? "small";
+    void whisperManager.isModelCached(tier).then((cached) => {
+      if (!cached) return;
+      // Model files are in the Cache API — load silently (instant from cache)
+      void whisperManager.ensureModel(tier).then(() => {
+        useSpeechStore.getState().setModelDownloaded(true);
+      });
+    });
+  }, [modelDownloaded]);
 
   // Downloading state
   if (status === "downloading") {

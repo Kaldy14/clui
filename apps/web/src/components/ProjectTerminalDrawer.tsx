@@ -1,5 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import { TerminalSquare, XIcon } from "lucide-react";
 import type { ProjectId } from "@clui/contracts";
 import {
@@ -196,7 +197,9 @@ function ProjectTerminalViewport({
       },
     });
 
-    const inputDisposable = terminal.onData((data) => {
+    const inputDisposable = terminal.onData((rawData) => {
+      const data = stripTerminalResponses(rawData);
+      if (!data) return;
       void api.terminal
         .write({ threadId, terminalId, data })
         .catch((err) =>

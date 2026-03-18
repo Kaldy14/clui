@@ -165,6 +165,7 @@ function ChatRouteLayout() {
 
       if (isSpeechToggleShortcut(event, keybindings)) {
         event.preventDefault();
+        if (event.repeat) return;
         if (routeThreadId) {
           const store = useSpeechStore.getState();
           if (!store.modelDownloaded && store.status === "idle") {

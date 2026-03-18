@@ -22,6 +22,25 @@ let worker: Worker | null = null;
 let loadedModelTier: string | null = null;
 let modelReady = false;
 
+/**
+ * Check if a model's files are already present in the browser Cache API
+ * (populated by @huggingface/transformers on prior downloads).
+ * Returns true if at least one ONNX file is cached for the model.
+ */
+async function isModelCached(modelTier: string): Promise<boolean> {
+  const modelId = MODEL_IDS[modelTier];
+  if (!modelId) return false;
+
+  try {
+    const cache = await caches.open("transformers-cache");
+    const keys = await cache.keys();
+    // HF transformers stores files under URLs containing the model ID
+    return keys.some((req) => req.url.includes(modelId));
+  } catch {
+    return false;
+  }
+}
+
 type PendingLoad = {
   resolve: () => void;
   reject: (err: Error) => void;
@@ -185,6 +204,7 @@ const whisperManager = {
   downloadModel: ensureModel,
   transcribe,
   isModelReady,
+  isModelCached,
   getLoadedModel,
   dispose,
 };
@@ -192,4 +212,4 @@ const whisperManager = {
 export default whisperManager;
 
 // Named exports for direct import
-export { ensureModel, transcribe, isModelReady, getLoadedModel, dispose };
+export { ensureModel, transcribe, isModelReady, isModelCached, getLoadedModel, dispose };

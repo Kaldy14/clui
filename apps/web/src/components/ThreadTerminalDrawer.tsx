@@ -1,5 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import { type ThreadId } from "@clui/contracts";
 import { Terminal } from "@xterm/xterm";
 import {
@@ -211,7 +212,9 @@ function TerminalViewport({
       },
     });
 
-    const inputDisposable = terminal.onData((data) => {
+    const inputDisposable = terminal.onData((rawData) => {
+      const data = stripTerminalResponses(rawData);
+      if (!data) return;
       void api.terminal
         .write({ threadId, terminalId, data })
         .catch((err) =>

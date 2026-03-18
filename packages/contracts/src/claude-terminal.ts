@@ -71,6 +71,8 @@ const ClaudeOutputEvent = Schema.Struct({
   ...ClaudeSessionEventBase.fields,
   type: Schema.Literal("output"),
   data: Schema.String,
+  /** Monotonic byte offset in the scrollback buffer *after* this chunk was appended. */
+  offset: Schema.Number,
 });
 
 const ClaudeStartedEvent = Schema.Struct({

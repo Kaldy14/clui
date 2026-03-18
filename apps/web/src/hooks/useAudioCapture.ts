@@ -87,7 +87,7 @@ export function useAudioCapture(): UseAudioCaptureReturn {
         stopLevelLoop();
         setAudioLevel(0);
 
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
         chunksRef.current = [];
 
         try {

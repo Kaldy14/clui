@@ -4,6 +4,85 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-18 — Fix Whisper speech-to-text: key-repeat auto-stop, hallucinations, slow transcription
+
+**Problem:** Holding Cmd+Shift+V auto-stops recording immediately, producing phantom text like "ultrathink you". Transcription with whisper-small is extremely slow (30-60s+ for short clips). Long audio recordings may hang or never complete.
+
+**Root cause:**
+1. The `keydown` handler in `_chat.tsx` didn't filter `event.repeat`, so holding the shortcut rapidly toggled start→stop→start→stop.
+2. Sub-second recordings cause Whisper to hallucinate common phrases ("you", "Thank you", etc.) on near-silence, which combined with the voice prefix to produce "ultrathink you".
+3. The Whisper worker used default WASM fp32 inference with no quantization — the slowest possible path.
+4. No chunked processing for long audio, causing the model to choke on recordings >30s.
+
+**Fix:**
+- `_chat.tsx`: Added `event.repeat` guard to prevent key-repeat from toggling speech.
+- `useSpeechToText.ts`: Added minimum audio duration guard (0.7s / 11,200 samples at 16kHz) — rejects too-short recordings before transcription. Added hallucination phrase filter (Set of known Whisper phantom outputs).
+- `whisperWorker.ts`: Added WebGPU detection with fp32 fallback, q8 quantization for WASM (massive speedup). Added `chunk_length_s: 30` and `stride_length_s: 5` for chunked processing of long recordings.
+
+**Affected files:** `apps/web/src/routes/_chat.tsx`, `apps/web/src/hooks/useSpeechToText.ts`, `apps/web/src/workers/whisperWorker.ts`
+
+---
+
+## 2026-03-18 — Filter terminal query responses leaking as visible text
+
+**Problem:** Garbage escape sequences (`^[]11;rgb:0c0c/0c0c/0c0c^[\^[[16;1R`) appear in terminal threads and keep reappearing after deletion.
+
+**Root cause:** Claude Code CLI queries the terminal for background color (OSC 11) and cursor position (DSR/CPR). xterm.js correctly generates response sequences, but the `onData` handler forwards them back to the PTY as raw input. The shell then echoes these responses as visible text.
+
+**Fix:** Added `stripTerminalResponses()` utility that filters out OSC responses (`\x1b]...\x1b\\` or `\x1b]...\x07`) and CPR responses (`\x1b[row;colR`) from xterm.js `onData` before forwarding to the server. Applied to all three terminal input handlers.
+
+**Affected files:**
+- `apps/web/src/lib/terminalInputFilter.ts` (new): Regex-based filter for terminal query responses.
+- `apps/web/src/lib/terminalInputFilter.test.ts` (new): 8 test cases covering OSC 10/11, CPR, mixed input.
+- `apps/web/src/components/ThreadTerminalView.tsx`: Filter `onData` before forwarding to PTY.
+- `apps/web/src/components/ProjectTerminalDrawer.tsx`: Same filter applied.
+- `apps/web/src/components/ThreadTerminalDrawer.tsx`: Same filter applied.
+
+---
+
+## 2026-03-18 — Detect API errors (529/429/5xx) and clear stuck "Working" badge
+
+**Problem:** When Claude Code hits an API error (e.g. 529 overloaded, 429 rate limit), the sidebar badge stays stuck on "Working" because the CLI doesn't fire a `/hooks/stop` callback on API errors. The only recovery was the 90-second idle timeout.
+
+**Root cause:** The hook-based status system relies on Claude Code firing stop hooks to transition out of "working" state. API errors are printed to terminal output but don't trigger any hook, leaving `hookStatus` stuck.
+
+**Fix:** Added regex-based detection of `API Error: 429|5xx` patterns in terminal output (alongside existing `Interrupted` detection). When matched while `hookStatus` is `"working"`, immediately transitions to `"error"` status, clears `turnInProgress`, and stops the idle timer.
+
+**Affected files:**
+- `apps/web/src/lib/sessionEventState.ts`: Added `API_ERROR_RE` regex and error detection in `handleOutput`.
+- `apps/web/src/lib/sessionEventState.test.ts`: Added tests for 529, 429, and non-working-state scenarios.
+
+---
+
+## 2026-03-18 — Fix duplicate terminal content when switching back to active thread
+
+**Problem:** When switching away from an active Claude Code thread and switching back, the terminal content (banner, prompt, output) appeared duplicated — the same lines rendered twice.
+
+**Root cause:** The scrollback delta from `getScrollback(sinceOffset)` and live `output` events buffered during the async RPC overlap in content. Both are written to xterm.js with no deduplication, causing the visible duplication.
+
+**Fix:** Added a monotonic byte `offset` field to `ClaudeOutputEvent`. The server includes the scrollback buffer offset after each chunk is appended. On the client, after flushing the scrollback delta (which updates `lastServerOffset`), buffered output events with `offset <= lastServerOffset` are skipped since the delta already covered them.
+
+**Affected files:**
+- `packages/contracts/src/claude-terminal.ts`: Added `offset: Schema.Number` to `ClaudeOutputEvent`.
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`: Include `entry.scrollbackBuffer.offset` in emitted output events.
+- `apps/web/src/components/ThreadTerminalView.tsx`: Skip buffered output events already covered by the scrollback delta.
+
+---
+
+## 2026-03-18 — Persist Whisper model across releases
+
+**Problem:** Every app reload/release required re-downloading the Whisper speech model, even though the model files were still present in the browser's Cache API from a previous download.
+
+**Root cause:** `speechStore.modelDownloaded` starts as `false` on every app load (ephemeral Zustand state, no persistence). The UI always showed the download prompt regardless of whether the model was already cached.
+
+**Fix:** Added `isModelCached()` to `whisperManager` that probes the browser's Cache API for existing HuggingFace Transformers model files. `SpeechControl` now checks the cache on mount and silently auto-loads the model if found (instant from cache, no network).
+
+**Affected files:**
+- `apps/web/src/lib/whisperManager.ts`: Added `isModelCached()` that checks the `transformers-cache` Cache API store.
+- `apps/web/src/components/SpeechControl.tsx`: Added `useEffect` on mount to probe cache and auto-load.
+
+---
+
 ## 2026-03-18 — Fix false "Working" badge on new threads during typing
 
 **Problem:** Creating a new thread and typing the first prompt showed a "Working" badge even though Claude Code hadn't started processing anything. The badge appeared after ~8 seconds of the terminal being active.

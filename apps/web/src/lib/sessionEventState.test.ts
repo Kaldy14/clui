@@ -120,6 +120,38 @@ describe("createSessionEventState", () => {
       expect(state._completedAt.has("t1")).toBe(true);
     });
 
+    it("detects 529 API error and sets hookStatus to 'error'", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+
+      state.handleOutput(
+        "t1",
+        '  API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}   ',
+      );
+
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "error");
+      expect(state._completedAt.has("t1")).toBe(true);
+      expect(state._turnInProgress.has("t1")).toBe(false);
+    });
+
+    it("detects 429 rate-limit API error", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+
+      state.handleOutput("t1", "API Error: 429 Rate limited");
+
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "error");
+    });
+
+    it("does not trigger API error detection when not working", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", null);
+
+      state.handleOutput("t1", "API Error: 529 overloaded");
+
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "error");
+    });
+
     it("clears turnInProgress on Interrupted so output recovery doesn't re-trigger", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleHookStatus("t1", "working");

@@ -4,6 +4,7 @@ import { PlayIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
+import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { isMacPlatform } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -535,9 +536,13 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (offset != null) {
         entry.lastServerOffset = offset;
       }
-      // Now safe to process live events — dimensions are correct
+      // Now safe to process live events — dimensions are correct.
+      // Skip any buffered output events whose data was already included in the
+      // scrollback delta (their offset <= the offset we just synced to).
       terminalReady = true;
+      const syncedOffset = entry.lastServerOffset;
       for (const event of eventBuffer) {
+        if (event.type === "output" && event.offset <= syncedOffset) continue;
         writeEvent(event);
       }
       eventBuffer.length = 0;
@@ -639,9 +644,14 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       return true;
     });
 
-    // Forward keystrokes to the server
+    // Forward keystrokes to the server, filtering out terminal query
+    // responses (OSC 11 background color, CPR cursor position) that
+    // xterm.js generates internally — these would echo as garbage text.
     const inputDisposable = terminal.onData((data) => {
-      void api.claude.write({ threadId, data }).catch(() => undefined);
+      const filtered = stripTerminalResponses(data);
+      if (filtered) {
+        void api.claude.write({ threadId, data: filtered }).catch(() => undefined);
+      }
     });
 
     // Handle resize

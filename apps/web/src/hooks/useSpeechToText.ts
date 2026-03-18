@@ -6,6 +6,31 @@ import whisperManager from "../lib/whisperManager";
 import { readNativeApi } from "../nativeApi";
 import { useSpeechStore } from "../speechStore";
 
+// Minimum audio duration in samples at 16kHz.  Anything shorter than ~0.7s
+// is almost certainly a key-repeat artefact and will cause Whisper to
+// hallucinate phantom phrases ("you", "Thank you", "Thanks for watching").
+const MIN_AUDIO_SAMPLES = 16_000 * 0.7;
+
+// Whisper is notorious for outputting these phrases on silence / near-silence.
+// Strip them so they don't leak into the terminal.
+const WHISPER_HALLUCINATIONS = new Set([
+  "you",
+  "thank you",
+  "thank you.",
+  "thanks for watching",
+  "thanks for watching!",
+  "thanks for watching.",
+  "subscribe",
+  "the end",
+  "the end.",
+  "bye",
+  "bye.",
+  "bye bye",
+  "bye-bye",
+  "...",
+  "(silence)",
+]);
+
 interface UseSpeechToTextReturn {
   startRecording: () => void;
   stopRecording: () => void;
@@ -52,11 +77,21 @@ export function useSpeechToText(threadId: string): UseSpeechToTextReturn {
     void (async () => {
       try {
         const audio = await stopAudio();
+
+        // Reject very short recordings — likely key-repeat artefacts
+        if (audio.length < MIN_AUDIO_SAMPLES) {
+          setStatus("idle");
+          setActiveThreadId(null);
+          return;
+        }
+
         setStatus("transcribing");
         const settings = getAppSettingsSnapshot();
         const rawText = await whisperManager.transcribe(audio, settings.whisperLanguage ?? "en");
         const trimmed = rawText.trim();
-        if (!trimmed) {
+
+        // Filter Whisper hallucination phrases and empty results
+        if (!trimmed || WHISPER_HALLUCINATIONS.has(trimmed.toLowerCase())) {
           setStatus("idle");
           setActiveThreadId(null);
           return;

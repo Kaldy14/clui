@@ -437,6 +437,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       threadId: entry.threadId,
       createdAt: new Date().toISOString(),
       data,
+      offset: entry.scrollbackBuffer.offset,
     });
   }
 
