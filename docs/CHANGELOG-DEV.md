@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-18 — Fix false "Working" badge on new threads during typing
+
+**Problem:** Creating a new thread and typing the first prompt showed a "Working" badge even though Claude Code hadn't started processing anything. The badge appeared after ~8 seconds of the terminal being active.
+
+**Root cause:** The output recovery heuristic in `sessionEventState.ts` set `hookStatus = "working"` whenever ANY terminal output arrived on an active terminal with null hookStatus — including PTY keystroke echo, TUI redraws, and cursor movement. After the 8-second startup grace expired, every keystroke the user typed triggered the false badge. cmux has the [same issue](https://github.com/manaflow-ai/cmux/issues/1238).
+
+**Fix:** Added a `turnInProgress` flag per thread that gates the output recovery heuristic:
+- Set `true` when a real hook fires (`UserPromptSubmit` → "working", `PostToolUse` → "working", `PermissionRequest` → "needsInput"/"pendingApproval")
+- Set `false` when the turn ends (`Stop` → "completed", terminal exits/hibernates, "Interrupted" detected)
+- Output recovery ONLY fires when `turnInProgress === true`
+
+This means: new thread typing (no hooks yet) → `turnInProgress = false` → output recovery blocked → no false badge. Long tool execution where idle timer cleared hookStatus → `turnInProgress = true` → output recovery works correctly.
+
+**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts` (8 new tests)
+
+---
+
 ## 2026-03-18 — Extract session event state from EventRouter into testable module
 
 **Problem:** The EventRouter component in `__root.tsx` had 4 Maps and complex timer/grace period logic inside a `useEffect` closure, making it untestable. Flagged as P2 tech debt.

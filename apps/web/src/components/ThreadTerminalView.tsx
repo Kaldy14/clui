@@ -411,21 +411,16 @@ function DormantTerminalView({
     }
   }, [threadId, cwd, thread.claudeSessionId]);
 
-  // Auto-resume dormant sessions when the thread is opened — but ONLY if the
-  // thread was hibernated (LRU eviction while still active).  Threads whose CLI
-  // exited normally (completed work, user quit) should stay dormant so the user
-  // sees the scrollback + Resume button instead of an immediate false-positive
-  // "Working" badge from startup output.
-  const shouldAutoResume = thread.dormantReason === "hibernated";
+  // Auto-resume on mount. Cooldown guard prevents infinite loops when
+  // --resume fails (stale session → immediate exit → remount cycle).
   useEffect(() => {
-    if (!shouldAutoResume) return;
     const lastAttempt = autoResumeLastAttempt.get(threadId) ?? 0;
     if (!resuming && cwd && Date.now() - lastAttempt > AUTO_RESUME_COOLDOWN_MS) {
       pruneAutoResumeMap();
       autoResumeLastAttempt.set(threadId, Date.now());
       handleResume();
     }
-  }, [threadId, shouldAutoResume]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full flex-col">

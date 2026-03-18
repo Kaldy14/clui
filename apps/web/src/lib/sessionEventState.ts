@@ -30,6 +30,8 @@ export interface SessionEventState {
   _workingIdleTimers: Map<string, ReturnType<typeof setTimeout>>;
   /** Exposed for testing */
   _workingIdleLastReset: Map<string, number>;
+  /** Exposed for testing */
+  _turnInProgress: Map<string, boolean>;
 }
 
 /**
@@ -50,6 +52,12 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   const terminalStartedAt = new Map<string, number>();
   const workingIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const workingIdleLastReset = new Map<string, number>();
+  // Tracks whether a turn is in progress per thread.  Set to true when a real
+  // hook fires (UserPromptSubmit / PostToolUse → "working"), set to false when
+  // the turn ends (Stop → "completed", interrupt, or terminal exit).
+  // The output→"working" recovery heuristic is ONLY allowed when this is true,
+  // preventing false "Working" badges from startup output or keystroke echo.
+  const turnInProgress = new Map<string, boolean>();
 
   const now = deps.now ?? Date.now;
 
@@ -91,6 +99,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   ): HandleHookResult {
     if (hookStatus === "completed") {
       completedAt.set(rawThreadId, now());
+      turnInProgress.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, "completed");
       return { applied: true, hookStatus: "completed" };
@@ -107,17 +116,19 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       }
       completedAt.delete(rawThreadId);
       terminalStartedAt.delete(rawThreadId);
+      turnInProgress.set(rawThreadId, true);
       deps.setHookStatus(rawThreadId, hookStatus);
       resetWorkingIdleTimer(rawThreadId, true);
       return { applied: true, hookStatus: "working" };
     }
 
-    // needsInput / pendingApproval / error
+    // needsInput / pendingApproval / error — these also indicate a turn is active
     const doneTs = completedAt.get(rawThreadId);
     if (doneTs && now() - doneTs < COMPLETED_GRACE_MS) {
       return { applied: false };
     }
     terminalStartedAt.delete(rawThreadId);
+    turnInProgress.set(rawThreadId, true);
     clearWorkingIdleTimer(rawThreadId);
     deps.setHookStatus(rawThreadId, hookStatus);
     return { applied: true, hookStatus };
@@ -132,8 +143,12 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       resetWorkingIdleTimer(rawThreadId);
     }
 
-    // Recover "Working" badge when output arrives on an active terminal with no hookStatus
-    if (terminalStatus === "active" && !hookStatus) {
+    // Recover "Working" badge when output arrives on an active terminal with no
+    // hookStatus — but ONLY if we know a turn is in progress (we saw a real
+    // hook like UserPromptSubmit or PostToolUse).  Without this guard, any PTY
+    // output (keystroke echo, TUI redraws, startup banner) would falsely set
+    // "Working" on idle terminals.
+    if (terminalStatus === "active" && !hookStatus && turnInProgress.get(rawThreadId)) {
       const doneTs = completedAt.get(rawThreadId);
       const startTs = terminalStartedAt.get(rawThreadId);
       const inStartupGrace = startTs != null && now() - startTs < STARTUP_GRACE_MS;
@@ -151,6 +166,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       data.includes("Interrupted")
     ) {
       completedAt.set(rawThreadId, now());
+      turnInProgress.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, null);
     }
@@ -164,6 +180,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
 
   function handleDormant(rawThreadId: string, reason: "hibernated" | "exited"): void {
     completedAt.set(rawThreadId, now());
+    turnInProgress.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
     deps.setTerminalLifecycle(rawThreadId, "dormant", null, reason);
@@ -171,12 +188,14 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
 
   function handleInterrupted(rawThreadId: string): void {
     completedAt.set(rawThreadId, now());
+    turnInProgress.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     deps.setHookStatus(rawThreadId, null);
   }
 
   function clearAll(): void {
     completedAt.clear();
+    turnInProgress.clear();
     for (const timer of workingIdleTimers.values()) clearTimeout(timer);
     workingIdleTimers.clear();
     workingIdleLastReset.clear();
@@ -194,5 +213,6 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     _terminalStartedAt: terminalStartedAt,
     _workingIdleTimers: workingIdleTimers,
     _workingIdleLastReset: workingIdleLastReset,
+    _turnInProgress: turnInProgress,
   };
 }

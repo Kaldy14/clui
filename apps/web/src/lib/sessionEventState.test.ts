@@ -97,18 +97,16 @@ describe("createSessionEventState", () => {
 
     it("does NOT delete completedAt on recovery", () => {
       ctx.terminalStatusByThread.set("t1", "active");
-      // Mark completed, then wait past grace
-      state.handleHookStatus("t1", "completed");
-      vi.mocked(ctx.deps.setHookStatus).mockClear();
-
-      vi.advanceTimersByTime(COMPLETED_GRACE_MS + 1);
-      // hookStatus is currently "completed" — set to null to simulate cleared
-      ctx.hookStatusByThread.set("t1", null);
+      // Set up: turnInProgress is true, hookStatus is null (idle timer cleared it),
+      // and there's a stale completedAt from a prior turn.
+      state._turnInProgress.set("t1", true);
+      // Set a completedAt timestamp far in the past (outside grace)
+      state._completedAt.set("t1", Date.now() - COMPLETED_GRACE_MS - 1);
 
       state.handleOutput("t1", "unexpected output");
       // Should recover to working
       expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
-      // But completedAt should still be set (not deleted)
+      // But completedAt should still be set (not deleted by recovery)
       expect(state._completedAt.has("t1")).toBe(true);
     });
 
@@ -120,6 +118,20 @@ describe("createSessionEventState", () => {
 
       expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
       expect(state._completedAt.has("t1")).toBe(true);
+    });
+
+    it("clears turnInProgress on Interrupted so output recovery doesn't re-trigger", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "working");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+
+      state.handleOutput("t1", "⏎ Interrupted");
+
+      expect(state._turnInProgress.has("t1")).toBe(false);
+      // Subsequent output should NOT recover to "working"
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+      state.handleOutput("t1", "What would you like to do?");
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });
   });
 
@@ -270,16 +282,87 @@ describe("createSessionEventState", () => {
     });
   });
 
-  describe("handleOutput with startup grace ending", () => {
-    it("allows working recovery after startup grace expires", () => {
+  describe("turnInProgress gating", () => {
+    it("blocks output recovery when no turn is in progress (new thread, user typing)", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleStarted("t1");
 
-      // Advance past startup grace
+      // Advance past startup grace — but no hook has fired, so turnInProgress is false
       vi.advanceTimersByTime(STARTUP_GRACE_MS + 1);
-      state.handleOutput("t1", "real output");
+      state.handleOutput("t1", "keystroke echo");
 
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
+    });
+
+    it("allows output recovery when a turn is in progress (idle timer cleared hookStatus)", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleStarted("t1");
+
+      // Simulate a real turn: UserPromptSubmit fires → hookStatus = "working"
+      state.handleHookStatus("t1", "working");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // Idle timer fires (90s), clearing hookStatus — but turnInProgress stays true
+      vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
+      expect(ctx.hookStatusByThread.get("t1")).toBeNull();
+
+      // Output arrives — should recover to "working" because turnInProgress is true
+      state.handleOutput("t1", "tool output after idle timer");
       expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+    });
+
+    it("sets turnInProgress on 'working' hook and clears on 'completed'", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "working");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+
+      state.handleHookStatus("t1", "completed");
+      expect(state._turnInProgress.has("t1")).toBe(false);
+    });
+
+    it("sets turnInProgress on 'needsInput' hook", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "needsInput");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+    });
+
+    it("clears turnInProgress on handleDormant", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "working");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+
+      state.handleDormant("t1", "exited");
+      expect(state._turnInProgress.has("t1")).toBe(false);
+    });
+
+    it("clears turnInProgress on handleInterrupted", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "working");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+
+      state.handleInterrupted("t1");
+      expect(state._turnInProgress.has("t1")).toBe(false);
+    });
+
+    it("clears turnInProgress on clearAll", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "working");
+      expect(state._turnInProgress.size).toBe(1);
+
+      state.clearAll();
+      expect(state._turnInProgress.size).toBe(0);
+    });
+
+    it("blocks output recovery on resumed thread startup output", () => {
+      // Simulate a resumed thread: started event but no hooks yet
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleStarted("t1");
+
+      // Even past both startup and completion grace, no turn is in progress
+      vi.advanceTimersByTime(STARTUP_GRACE_MS + COMPLETED_GRACE_MS + 1);
+      state.handleOutput("t1", "Claude Code banner loading...");
+
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });
   });
 });
