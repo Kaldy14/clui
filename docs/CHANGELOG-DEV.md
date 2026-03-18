@@ -4,6 +4,18 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-18 — Fix YOLO mode lost on dormant session resume
+
+**Problem:** When a session running in "Bypass permissions" (YOLO) mode goes dormant and is later resumed (auto-resume or manual Resume button), the `dangerouslySkipPermissions` flag was not passed to the `claude.start()` call. The session would resume in safe/default permission mode despite the toggle still being on in the UI.
+
+**Root cause:** `DormantTerminalView.handleResume` in `ThreadTerminalView.tsx` did not read `yoloMode` from `terminalStateStore`. The toolbar's resume path (`TerminalToolbar.handleResume`) correctly passed the flag, but the dormant view's resume path was missing it entirely.
+
+**Fix:** Added `yoloMode` selector from `useTerminalStateStore` in `DormantTerminalView` and forwarded `dangerouslySkipPermissions` in the resume `claude.start()` call, matching the toolbar's behavior.
+
+**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
+
+---
+
 ## 2026-03-18 — Add YOLO mode toggle to toolbar (mid-session permission bypass)
 
 **Problem:** YOLO mode (auto-accept all tool calls) could only be set at session start via the checkbox on the launch screen. There was no way to toggle it on a running session without manually restarting.
@@ -14,15 +26,15 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
-## 2026-03-18 — Fix sidebar thread sorting: active threads now pinned to top
+## 2026-03-18 — Fix sidebar thread sorting: clicking old threads no longer jumps to top
 
-**Problem:** Thread ordering in the sidebar was unpredictable. Active/working threads would drop down when other threads received updates. The sort was purely `updatedAt`-based with no awareness of thread activity state.
+**Problem:** Thread ordering in the sidebar was unpredictable. Clicking an old dormant thread made it jump to the top (even without sending any input). Working threads would drop below idle threads. The sort was purely `updatedAt`-based, and `session-set` events bumped `updatedAt` on every session lifecycle change (terminal resume, reconnect), not just on meaningful user activity.
 
-**Root cause:** The sort comparator only compared `updatedAt` timestamps. Terminal status changes (`thread.terminal-status-changed`) don't bump `updatedAt` in the projector, so an actively working thread's position was determined solely by when it last received a message — not by whether it's currently busy. Other threads receiving any event that bumps `updatedAt` (messages, session changes, turn diffs) would push the active thread down.
+**Root cause:** The in-memory projector and ProjectionPipeline both bumped `thread.updatedAt` unconditionally for every `thread.session-set` event. This includes terminal resume/reconnect (status → "ready"), not just new user turns (status → "running"). Clicking an old thread resumes its terminal → `session-set` fires → `updatedAt` bumped → thread jumps to top. Similarly, other threads getting spurious `session-set` bumps would push actively working threads down.
 
-**Fix:** Replaced the flat `updatedAt` sort with a tiered comparator (`compareThreadsForSidebar` in `Sidebar.logic.ts`). Tier 0 pins busy threads (active terminal or actionable hook status: working/needsInput/pendingApproval) to the top. Tier 1 contains everything else. Within each tier, threads sort by `updatedAt` descending with ID as tiebreaker. Applied to both the render-loop sort and the `focusMostRecentThreadForProject` helper.
+**Fix:** Changed both the in-memory projector (`projector.ts`) and the SQLite projection pipeline (`ProjectionPipeline.ts`) to only bump `updatedAt` for `session-set` when a genuinely new turn begins: `session.status === "running"` AND `activeTurnId` differs from the previous turn. Session lifecycle events (resume, reconnect, idle transitions) no longer affect sort order. Also extracted a shared `compareThreadsForSidebar` comparator in `Sidebar.logic.ts` for the two sort call-sites. Follows the standard messaging-app pattern (Slack, WhatsApp, iMessage, Telegram): only new message/turn activity affects list position; viewing never reorders.
 
-**Affected files:** `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.tsx`
+**Affected files:** `apps/server/src/orchestration/projector.ts`, `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.tsx`
 
 ---
 

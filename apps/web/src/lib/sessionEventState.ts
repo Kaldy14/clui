@@ -123,6 +123,21 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       if (terminalStatus === "dormant" || terminalStatus === "new") {
         return { applied: false };
       }
+
+      // Reject stale PostToolUse "working" that arrives out-of-order after
+      // PermissionRequest already set "pendingApproval" or "needsInput".
+      // Both hooks fire near-simultaneously via async curl, so arrival
+      // order is non-deterministic.  A "working" arriving within the
+      // protection window is almost certainly from the *previous* tool,
+      // not the one the user just approved.
+      const currentHookStatus = deps.getThreadHookStatus(rawThreadId);
+      if (currentHookStatus === "pendingApproval" || currentHookStatus === "needsInput") {
+        const actionTs = pendingApprovalAt.get(rawThreadId);
+        if (actionTs != null && now() - actionTs < PENDING_APPROVAL_OUTPUT_DELAY_MS) {
+          return { applied: false };
+        }
+      }
+
       const doneTs = completedAt.get(rawThreadId);
       if (doneTs && now() - doneTs < COMPLETED_GRACE_MS) {
         return { applied: false };
@@ -144,7 +159,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     terminalStartedAt.delete(rawThreadId);
     turnInProgress.set(rawThreadId, true);
     clearWorkingIdleTimer(rawThreadId);
-    if (hookStatus === "pendingApproval") {
+    if (hookStatus === "pendingApproval" || hookStatus === "needsInput") {
       pendingApprovalAt.set(rawThreadId, now());
     } else {
       pendingApprovalAt.delete(rawThreadId);

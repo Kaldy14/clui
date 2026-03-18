@@ -548,10 +548,18 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           if (Option.isNone(existingRow)) {
             return;
           }
+          const newTurnId = event.payload.session.activeTurnId;
+          // Only bump updatedAt when a genuinely new turn begins — not on
+          // session lifecycle events (terminal resume, reconnect) which
+          // shouldn't affect sidebar sort order.
+          const isNewTurn =
+            event.payload.session.status === "running" &&
+            newTurnId !== null &&
+            existingRow.value.latestTurnId !== newTurnId;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.session.activeTurnId,
-            updatedAt: event.occurredAt,
+            latestTurnId: newTurnId,
+            ...(isNewTurn ? { updatedAt: event.occurredAt } : {}),
           });
           return;
         }

@@ -323,6 +323,9 @@ function DormantTerminalView({
   const [error, setError] = useState<string | null>(null);
   const project = useStore((s) => s.projects.find((p) => p.id === thread.projectId));
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
+  const yoloMode = useTerminalStateStore((s) =>
+    selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  );
 
   // Render scrollback in a read-only xterm.js instance (or reuse cached)
   useEffect(() => {
@@ -410,12 +413,13 @@ function DormantTerminalView({
         cols,
         rows,
         resumeSessionId: thread.claudeSessionId ?? undefined,
+        ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resume session");
       setResuming(false);
     }
-  }, [threadId, cwd, thread.claudeSessionId]);
+  }, [threadId, cwd, thread.claudeSessionId, yoloMode]);
 
   // Auto-resume on mount. Cooldown guard prevents infinite loops when
   // --resume fails (stale session → immediate exit → remount cycle).

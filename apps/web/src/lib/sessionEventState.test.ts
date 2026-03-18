@@ -445,6 +445,49 @@ describe("createSessionEventState", () => {
     });
   });
 
+  describe("PostToolUse race protection", () => {
+    it("rejects stale 'working' from PostToolUse when pendingApproval was just set", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      // PermissionRequest arrives first
+      state.handleHookStatus("t1", "pendingApproval");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // Stale PostToolUse arrives ~50ms later (out-of-order)
+      vi.advanceTimersByTime(50);
+      const result = state.handleHookStatus("t1", "working");
+
+      expect(result).toEqual({ applied: false });
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalled();
+      // pendingApproval should still be set
+      expect(ctx.hookStatusByThread.get("t1")).toBe("pendingApproval");
+    });
+
+    it("rejects stale 'working' from PostToolUse when needsInput was just set", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "needsInput");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      vi.advanceTimersByTime(50);
+      const result = state.handleHookStatus("t1", "working");
+
+      expect(result).toEqual({ applied: false });
+      expect(ctx.hookStatusByThread.get("t1")).toBe("needsInput");
+    });
+
+    it("allows 'working' after protection window expires", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "pendingApproval");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // Past the protection window — legitimate PostToolUse after user approved
+      vi.advanceTimersByTime(PENDING_APPROVAL_OUTPUT_DELAY_MS + 1);
+      const result = state.handleHookStatus("t1", "working");
+
+      expect(result).toEqual({ applied: true, hookStatus: "working" });
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+    });
+  });
+
   describe("pendingApproval output transition", () => {
     it("transitions pendingApproval to working when output arrives after delay", () => {
       ctx.terminalStatusByThread.set("t1", "active");
