@@ -4,7 +4,7 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell, systemPreferences } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@clui/contracts";
@@ -1199,6 +1199,23 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  // Grant microphone permission for speech-to-text.
+  // Without this, getUserMedia() is silently denied in Electron.
+  window.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    if (permission === "media") {
+      // On macOS, trigger the OS-level microphone permission dialog if needed
+      if (process.platform === "darwin") {
+        void systemPreferences.askForMediaAccess("microphone").then((granted) => {
+          callback(granted);
+        });
+        return;
+      }
+      callback(true);
+      return;
+    }
+    callback(false);
   });
 
   window.webContents.on("context-menu", (event, params) => {

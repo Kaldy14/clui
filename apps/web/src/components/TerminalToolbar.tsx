@@ -1,4 +1,5 @@
 import { EDITORS, type EditorId, type KeybindingCommand, type ProjectId, type ProjectScript, type ThreadId } from "@clui/contracts";
+import { isElectron } from "../env";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -495,7 +496,7 @@ export default function TerminalToolbar({
 
   return (
     <TooltipProvider>
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-card/60 px-2 backdrop-blur-sm dark:border-border/25 dark:bg-card/40">
+      <div className={`flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-card/60 px-2 backdrop-blur-sm dark:border-border/25 dark:bg-card/40${isElectron ? " drag-region" : ""}`}>
         {/* Title */}
         <div className="min-w-0 flex-1">
           <EditableTitle threadId={threadId} title={thread.title} />

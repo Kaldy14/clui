@@ -51,20 +51,24 @@ export function useSpeechToText(threadId: string): UseSpeechToTextReturn {
 
   const startRecording = useCallback(() => {
     const store = useSpeechStore.getState();
-    if (store.status !== "idle") return;
+    if (store.status !== "idle" && store.status !== "notInstalled") return;
 
     if (!whisperManager.isModelReady()) {
       setStatus("notInstalled");
+      setError("Speech model not loaded. Download it from the mic button first.");
       return;
     }
 
     void (async () => {
       try {
+        setError(null);
         await startAudio();
         setStatus("recording");
         setActiveThreadId(threadId);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        const msg = err instanceof Error ? err.message : String(err);
+        const isPermission = msg.includes("NotAllowedError") || msg.includes("Permission");
+        setError(isPermission ? "Microphone permission denied. Check your browser/system settings." : msg);
         setStatus("idle");
       }
     })();
@@ -111,7 +115,7 @@ export function useSpeechToText(threadId: string): UseSpeechToTextReturn {
 
   const toggle = useCallback(() => {
     const store = useSpeechStore.getState();
-    if (store.status === "idle") {
+    if (store.status === "idle" || store.status === "notInstalled") {
       startRecording();
     } else if (store.status === "recording") {
       stopRecording();

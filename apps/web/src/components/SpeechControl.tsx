@@ -16,6 +16,7 @@ export function SpeechControl({ threadId }: { threadId: string }) {
   const modelDownloaded = useSpeechStore((s) => s.modelDownloaded);
   const audioLevel = useSpeechStore((s) => s.audioLevel);
   const downloadProgress = useSpeechStore((s) => s.downloadProgress);
+  const error = useSpeechStore((s) => s.error);
   const prefix = getAppSettingsSnapshot().voicePrefix?.trim() || "";
 
   // On mount, check if the model is already in the browser cache and auto-load it
@@ -136,8 +137,8 @@ export function SpeechControl({ threadId }: { threadId: string }) {
     );
   }
 
-  // Not installed (model not downloaded) — show popover with download CTA
-  if (!modelDownloaded) {
+  // Not installed (model not downloaded or not loaded) — show popover with download CTA
+  if (!modelDownloaded || status === "notInstalled") {
     return <SpeechDownloadPopover threadId={threadId} />;
   }
 
@@ -151,16 +152,18 @@ export function SpeechControl({ threadId }: { threadId: string }) {
             variant="ghost"
             onClick={startRecording}
             aria-label="Start voice input"
-            className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
+            className={`size-6 rounded-md p-0 hover:text-foreground ${error ? "text-red-400" : "text-muted-foreground/70"}`}
           />
         }
       >
         <MicIcon className="size-3" aria-hidden="true" />
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        {prefix
-          ? `Voice input — prefix: "${prefix}" (⌘⇧V)`
-          : "Voice input (⌘⇧V)"}
+        {error
+          ? error
+          : prefix
+            ? `Voice input — prefix: "${prefix}" (⌘⇧V)`
+            : "Voice input (⌘⇧V)"}
       </TooltipPopup>
     </Tooltip>
   );

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const TARGET_SAMPLE_RATE = 16_000;
+
 export interface UseAudioCaptureReturn {
   isRecording: boolean;
   audioLevel: number;
@@ -8,19 +10,43 @@ export interface UseAudioCaptureReturn {
   error: string | null;
 }
 
+/**
+ * Linearly interpolate to resample from `inputRate` to `outputRate`.
+ * This avoids the unreliable AudioContext/OfflineAudioContext resampling path.
+ */
+function resamplePCM(
+  input: Float32Array,
+  inputRate: number,
+  outputRate: number,
+): Float32Array {
+  if (inputRate === outputRate) return input;
+  const ratio = inputRate / outputRate;
+  const outputLength = Math.round(input.length / ratio);
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const srcIdx = i * ratio;
+    const lo = Math.floor(srcIdx);
+    const hi = Math.min(lo + 1, input.length - 1);
+    const frac = srcIdx - lo;
+    output[i] = input[lo]! * (1 - frac) + input[hi]! * frac;
+  }
+  return output;
+}
+
 export function useAudioCapture(): UseAudioCaptureReturn {
   const [isRecording, setIsRecording] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const chunksRef = useRef<Float32Array[]>([]);
   const animFrameRef = useRef<number | null>(null);
   const stopResolveRef = useRef<((audio: Float32Array) => void) | null>(null);
-  const stopRejectRef = useRef<((err: Error) => void) | null>(null);
+  const stoppedRef = useRef(false);
 
   const stopLevelLoop = useCallback(() => {
     if (animFrameRef.current !== null) {
@@ -44,6 +70,28 @@ export function useAudioCapture(): UseAudioCaptureReturn {
     animFrameRef.current = requestAnimationFrame(tick);
   }, []);
 
+  const cleanup = useCallback(() => {
+    stopLevelLoop();
+    setAudioLevel(0);
+
+    // Disconnect processor and source
+    processorRef.current?.disconnect();
+    sourceRef.current?.disconnect();
+    processorRef.current = null;
+    sourceRef.current = null;
+
+    // Stop media tracks
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+
+    // Close AudioContext
+    if (audioContextRef.current?.state !== "closed") {
+      void audioContextRef.current?.close();
+    }
+    audioContextRef.current = null;
+    analyserRef.current = null;
+  }, [stopLevelLoop]);
+
   const startRecording = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("Audio capture is not supported in this browser.");
@@ -53,85 +101,51 @@ export function useAudioCapture(): UseAudioCaptureReturn {
     setError(null);
 
     try {
+      // Request mono audio at the system's native sample rate.
+      // Do NOT request sampleRate: 16000 — browsers ignore it and it can
+      // cause getUserMedia to fail on some devices.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          sampleRate: 16000,
           echoCancellation: true,
           noiseSuppression: true,
         },
       });
-
       streamRef.current = stream;
 
+      // AudioContext will run at the system's native sample rate (44.1k or 48k)
       const audioCtx = new AudioContext();
       audioContextRef.current = audioCtx;
 
       const source = audioCtx.createMediaStreamSource(stream);
+      sourceRef.current = source;
+
+      // Set up analyser for audio level visualization
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
       analyserRef.current = analyser;
 
+      // Capture raw PCM via ScriptProcessorNode.
+      // This gives us Float32Array chunks at the native sample rate —
+      // no MediaRecorder encoding/decoding roundtrip needed.
+      const bufferSize = 4096;
+      const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
       chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
+      stoppedRef.current = false;
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data);
-        }
+      processor.onaudioprocess = (e) => {
+        if (stoppedRef.current) return;
+        // Copy the input data — the buffer is reused by the audio system
+        const input = e.inputBuffer.getChannelData(0);
+        chunksRef.current.push(new Float32Array(input));
       };
 
-      recorder.onstop = async () => {
-        stopLevelLoop();
-        setAudioLevel(0);
+      source.connect(processor);
+      // ScriptProcessorNode must be connected to destination to receive events
+      processor.connect(audioCtx.destination);
+      processorRef.current = processor;
 
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
-        chunksRef.current = [];
-
-        try {
-          const arrayBuffer = await blob.arrayBuffer();
-          // Decode using an OfflineAudioContext to resample to 16kHz mono
-          const tmpCtx = new AudioContext({ sampleRate: 16000 });
-          const decoded = await tmpCtx.decodeAudioData(arrayBuffer);
-          await tmpCtx.close();
-
-          // Mix down to mono
-          const mono = new Float32Array(decoded.length);
-          for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-            const channelData = decoded.getChannelData(ch);
-            for (let i = 0; i < channelData.length; i++) {
-              mono[i] = (mono[i] ?? 0) + (channelData[i] ?? 0);
-            }
-          }
-          if (decoded.numberOfChannels > 1) {
-            for (let i = 0; i < mono.length; i++) {
-              mono[i] = (mono[i] ?? 0) / decoded.numberOfChannels;
-            }
-          }
-
-          stopResolveRef.current?.(mono);
-        } catch (err) {
-          stopRejectRef.current?.(
-            err instanceof Error ? err : new Error(String(err)),
-          );
-        } finally {
-          stopResolveRef.current = null;
-          stopRejectRef.current = null;
-          // Cleanup stream tracks
-          stream.getTracks().forEach((t) => t.stop());
-          if (audioCtx.state !== "closed") {
-            await audioCtx.close();
-          }
-          audioContextRef.current = null;
-          analyserRef.current = null;
-          streamRef.current = null;
-          mediaRecorderRef.current = null;
-        }
-      };
-
-      recorder.start();
       startLevelLoop(analyser);
       setIsRecording(true);
     } catch (err) {
@@ -143,34 +157,49 @@ export function useAudioCapture(): UseAudioCaptureReturn {
 
   const stopRecording = useCallback((): Promise<Float32Array> => {
     return new Promise<Float32Array>((resolve, reject) => {
-      const recorder = mediaRecorderRef.current;
-      if (!recorder || recorder.state === "inactive") {
+      const audioCtx = audioContextRef.current;
+      if (!audioCtx || stoppedRef.current) {
         reject(new Error("Not recording"));
         return;
       }
-      stopResolveRef.current = resolve;
-      stopRejectRef.current = reject;
+
+      stoppedRef.current = true;
       setIsRecording(false);
-      recorder.stop();
+
+      const nativeSampleRate = audioCtx.sampleRate;
+      const chunks = chunksRef.current;
+      chunksRef.current = [];
+
+      // Concatenate all PCM chunks into a single buffer
+      const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+      if (totalLength === 0) {
+        cleanup();
+        reject(new Error("No audio data captured"));
+        return;
+      }
+
+      const raw = new Float32Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        raw.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      // Resample from native rate (44.1k/48k) to 16kHz for Whisper
+      const resampled = resamplePCM(raw, nativeSampleRate, TARGET_SAMPLE_RATE);
+
+      cleanup();
+      resolve(resampled);
     });
-  }, []);
+  }, [cleanup]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopLevelLoop();
-      if (
-        mediaRecorderRef.current &&
-        mediaRecorderRef.current.state !== "inactive"
-      ) {
-        mediaRecorderRef.current.stop();
-      }
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      if (audioContextRef.current?.state !== "closed") {
-        audioContextRef.current?.close();
-      }
+      stoppedRef.current = true;
+      cleanup();
     };
-  }, [stopLevelLoop]);
+  }, [cleanup]);
 
   return { isRecording, audioLevel, startRecording, stopRecording, error };
 }

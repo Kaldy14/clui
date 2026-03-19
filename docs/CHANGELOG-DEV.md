@@ -4,6 +4,76 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-18 — Add window drag region to active thread toolbar
+
+**Problem:** In Electron, the window could only be dragged from the sidebar header when a thread was active. The main toolbar at the top had no drag region, forcing users to reach for the sidebar to reposition the window.
+
+**Root cause:** `TerminalToolbar` did not apply the `drag-region` CSS class, unlike other top-bar areas (`_chat.index.tsx`, `Sidebar.tsx`, `DiffPanel.tsx`).
+
+**Fix:** Conditionally add the `drag-region` class to the toolbar container when running in Electron. All interactive elements (buttons, inputs, toggles) remain clickable via existing CSS `no-drag` rules.
+
+**Affected files:**
+- `apps/web/src/components/TerminalToolbar.tsx`
+
+---
+
+## 2026-03-18 — Default git toolbar quick action to Commit & Push
+
+**Problem:** The git toolbar button defaulted to "Commit, push & PR" on non-default branches without an open PR, and "Push & create PR" when ahead. Users wanted "Commit & Push" / "Push" as the default instead.
+
+**Root cause:** `resolveQuickAction` in `GitActionsControl.logic.ts` conditionally chose `commit_push_pr` as the quick action when no open PR existed and the branch wasn't the default.
+
+**Fix:** Simplified `resolveQuickAction` to always return `commit_push` (Commit & Push / Push) as the default action, removing the automatic PR creation from the quick action. PR creation remains available via the dropdown menu.
+
+**Affected files:**
+- `apps/web/src/components/GitActionsControl.logic.ts`
+- `apps/web/src/components/GitActionsControl.logic.test.ts`
+
+---
+
+## 2026-03-18 — Fix speech-to-text: replace MediaRecorder with raw PCM capture
+
+**Problem:** Speech-to-text produced no transcription output. Speaking into the microphone resulted in silence — nothing was ever written to the terminal.
+
+**Root cause:** The audio capture pipeline used `MediaRecorder` → webm/opus blob → `AudioContext.decodeAudioData()` → Float32Array. This roundtrip is unreliable:
+1. `MediaRecorder` encodes audio into webm/opus codec format.
+2. `new AudioContext({ sampleRate: 16000 }).decodeAudioData()` does not reliably resample across browsers and Electron — the spec says the context "may" honor the requested sample rate.
+3. The `getUserMedia({ sampleRate: 16000 })` constraint is ignored by most browsers, so audio arrives at 44.1/48kHz but is treated as 16kHz, producing garbage input for Whisper.
+
+**Fix:** Rewrote `useAudioCapture` to capture raw PCM directly via `ScriptProcessorNode`, bypassing `MediaRecorder` entirely:
+- `getUserMedia` requests mono audio at the system's native sample rate (no fake 16kHz constraint).
+- `ScriptProcessorNode` copies raw Float32Array PCM chunks on each audio process event.
+- On stop, chunks are concatenated and explicitly resampled from the native rate (44.1k/48k) to 16kHz using linear interpolation.
+- No encoding/decoding roundtrip — the Float32Array goes straight to the Whisper worker.
+
+**Affected files:**
+- `apps/web/src/hooks/useAudioCapture.ts`: Complete rewrite — raw PCM capture with explicit resampling.
+
+---
+
+## 2026-03-18 — Fix speech-to-text: microphone permissions, status deadlock, error display
+
+**Problem:** Voice input did nothing when clicked. Three compounding issues:
+1. Electron never granted microphone permission — no `setPermissionRequestHandler` on the session, so `getUserMedia()` was silently denied. On macOS, `systemPreferences.askForMediaAccess("microphone")` was never called, so the OS permission dialog never appeared.
+2. When the Whisper model wasn't ready, `startRecording` set status to `"notInstalled"` but the function only proceeded on `"idle"`, creating a permanent deadlock — the mic button became unresponsive until page refresh.
+3. Errors (permission denied, model not loaded) were captured in the speech store but never displayed in the UI.
+
+**Root cause:** Missing Electron permission plumbing, a status state machine bug, and missing error UI.
+
+**Fix:**
+- Added `setPermissionRequestHandler` in Electron's `createWindow()` to grant `"media"` permission, with macOS-specific `askForMediaAccess("microphone")` call.
+- Fixed `startRecording` and `toggle` in `useSpeechToText` to also proceed from `"notInstalled"` status, and clear errors on retry.
+- Added descriptive error messages for permission denial and model-not-loaded states.
+- `SpeechControl` now reads the error store, shows errors in the mic tooltip, and tints the mic icon red on error.
+- Falls through to download popover when status is `"notInstalled"`.
+
+**Affected files:**
+- `apps/desktop/src/main.ts`: Added `systemPreferences` import, `setPermissionRequestHandler` with macOS `askForMediaAccess`.
+- `apps/web/src/hooks/useSpeechToText.ts`: Fixed status deadlock, added permission error detection, clear errors on retry.
+- `apps/web/src/components/SpeechControl.tsx`: Added error display in tooltip, red tint on error, handle `"notInstalled"` status.
+
+---
+
 ## 2026-03-18 — Fix YOLO mode lost on dormant session resume
 
 **Problem:** When a session running in "Bypass permissions" (YOLO) mode goes dormant and is later resumed (auto-resume or manual Resume button), the `dangerouslySkipPermissions` flag was not passed to the `claude.start()` call. The session would resume in safe/default permission mode despite the toggle still being on in the UI.

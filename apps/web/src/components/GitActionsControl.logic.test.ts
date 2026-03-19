@@ -209,12 +209,12 @@ describe("when: branch is clean, ahead, and has an open PR", () => {
 });
 
 describe("when: branch is clean, ahead, and has no open PR", () => {
-  it("resolveQuickAction pushes and creates a PR", () => {
+  it("resolveQuickAction pushes", () => {
     const quick = resolveQuickAction(status({ aheadCount: 2, pr: null }), false);
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Push & create PR",
+      action: "commit_push",
+      label: "Push",
     });
   });
 
@@ -339,12 +339,12 @@ describe("when: branch has diverged from upstream", () => {
 });
 
 describe("when: working tree has local changes", () => {
-  it("resolveQuickAction returns commit, push, and create PR", () => {
+  it("resolveQuickAction returns commit and push", () => {
     const quick = resolveQuickAction(status({ hasWorkingTreeChanges: true }), false);
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
+      action: "commit_push",
+      label: "Commit & push",
     });
   });
 
@@ -432,15 +432,15 @@ describe("when: on default branch without open PR", () => {
 });
 
 describe("when: working tree has local changes and branch is behind upstream", () => {
-  it("resolveQuickAction still prefers commit, push, and create PR", () => {
+  it("resolveQuickAction still prefers commit and push", () => {
     const quick = resolveQuickAction(
       status({ hasWorkingTreeChanges: true, behindCount: 1 }),
       false,
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
+      action: "commit_push",
+      label: "Commit & push",
     });
   });
 
@@ -606,7 +606,7 @@ describe("when: branch has no upstream configured", () => {
     ]);
   });
 
-  it("resolveQuickAction runs push and create PR when no upstream and commits are ahead", () => {
+  it("resolveQuickAction runs push when no upstream and commits are ahead", () => {
     const quick = resolveQuickAction(
       status({
         hasUpstream: false,
@@ -617,8 +617,8 @@ describe("when: branch has no upstream configured", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Push & create PR",
+      action: "commit_push",
+      label: "Push",
       disabled: false,
     });
   });
