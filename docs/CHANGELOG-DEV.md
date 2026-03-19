@@ -4,6 +4,35 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-19 — DiffPanel: File Header Invisible in Light Mode
+
+**Problem:** The sticky file header bar in the diff panel had no background in light mode, so scrolling content showed through it making the filename and controls unreadable.
+
+**Root cause:** The sticky header only had `dark:bg-[#252a31]` — no light mode background was set, leaving it transparent.
+
+**Fix:** Added `bg-background` to the base classes of the sticky file header so it has a solid background in light mode. Dark mode continues using the custom `#252a31` override.
+
+**Affected files:** `apps/web/src/components/DiffPanel.tsx`
+
+---
+
+## 2026-03-19 — Terminal Scroll Lock: Preserve Position While CC Is Working
+
+**Problem:** When Claude Code is actively working and outputting content, scrolling up to read terminal history was impossible — the viewport kept jumping back to the top/bottom on every new output or layout change.
+
+**Root cause:** `terminal.write()` and `fitAddon.fit()` in `ActiveTerminalView` had no scroll position preservation. New output or container resize (sidebar toggle, diff panel open/close) would reset the viewport position, especially when the terminal switches between normal and alternate screen buffers.
+
+**Fix:** Added a scroll lock mechanism to `ActiveTerminalView`:
+- Detects when the user scrolls up via wheel events and sets a `scrollLocked` flag
+- Wraps live output writes (`scrollAwareWrite`) to save/restore the viewport's `scrollTop` around `terminal.write()` calls, with a rAF safety net for async rendering
+- Preserves scroll position across `fitAddon.fit()` in both the ResizeObserver and window resize handlers
+- Auto-clears the lock when the user scrolls back to the bottom
+- Shows a floating "↓ New output" button so the user can jump back to the live view
+
+**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
+
+---
+
 ## 2026-03-19 — Git Quick Action: Default to Commit & Push, PR via Menu
 
 **Problem:** The git quick action button defaulted to "Commit, push & PR" which always created a PR, even when users often just want to commit and push.

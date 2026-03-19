@@ -195,6 +195,26 @@ function getChangeTypeBadge(type: ChangeType): { label: string; className: strin
   }
 }
 
+/** Extract the line number from a right-click inside the @pierre/diffs Shadow DOM. */
+function getLineNumberFromEvent(event: React.MouseEvent): number | null {
+  for (const element of event.nativeEvent.composedPath()) {
+    if (!(element instanceof HTMLElement)) continue;
+    const columnNumber = element.getAttribute("data-column-number");
+    if (columnNumber != null) return Number.parseInt(columnNumber, 10);
+    const lineAttr = element.getAttribute("data-line");
+    if (lineAttr != null) return Number.parseInt(lineAttr, 10);
+    if (element.hasAttribute("data-code")) break;
+  }
+  return null;
+}
+
+interface DiffContextMenu {
+  x: number;
+  y: number;
+  filePath: string;
+  lineNumber: number;
+}
+
 function formatTurnChipTimestamp(isoDate: string): string {
   return new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
@@ -211,12 +231,14 @@ function EditableFileView({
   cwd,
   onSave,
   onCancel,
+  scrollToLine,
 }: {
   filePath: string;
   cwd: string;
   onSave: (filePath: string, content: string) => void;
   onCancel: (filePath: string) => void;
   isSaving: boolean;
+  scrollToLine?: number | undefined;
 }) {
   const fileQuery = useQuery(readFileQueryOptions(cwd, filePath));
   const queryClient = useQueryClient();
@@ -227,9 +249,8 @@ function EditableFileView({
       return api.projects.writeFile({ cwd, relativePath: filePath, contents: content });
     },
     onSuccess: () => {
-      // Invalidate diff queries so the diff view refreshes
-      void queryClient.invalidateQueries({ queryKey: ["orchestration"] });
-      void queryClient.invalidateQueries({ queryKey: ["workingTreeDiff"] });
+      // Invalidate diff + file queries so the diff view refreshes after save
+      void queryClient.invalidateQueries({ queryKey: ["providers"] });
       void queryClient.invalidateQueries({ queryKey: ["projects", "readFile", cwd, filePath] });
       onSave(filePath, "");
     },
@@ -276,6 +297,7 @@ function EditableFileView({
         onSave={(content) => writeMutation.mutate(content)}
         onCancel={() => onCancel(filePath)}
         isSaving={writeMutation.isPending}
+        scrollToLine={scrollToLine}
       />
     </Suspense>
   );
@@ -456,13 +478,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, []);
 
   const [editingFiles, setEditingFiles] = useState<Set<string>>(new Set());
+  const [editScrollLine, setEditScrollLine] = useState<Record<string, number>>({});
+  const [contextMenu, setContextMenu] = useState<DiffContextMenu | null>(null);
 
   useEffect(() => {
     setEditingFiles(new Set());
   }, [selectedPatch]);
 
-  const startEditing = useCallback((filePath: string) => {
+  const startEditing = useCallback((filePath: string, lineNumber?: number) => {
     setEditingFiles((prev) => new Set(prev).add(filePath));
+    if (lineNumber) {
+      setEditScrollLine((prev) => ({ ...prev, [filePath]: lineNumber }));
+    }
   }, []);
 
   const stopEditing = useCallback((filePath: string) => {
@@ -471,6 +498,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       next.delete(filePath);
       return next;
     });
+    setEditScrollLine((prev) => {
+      const next = { ...prev };
+      delete next[filePath];
+      return next;
+    });
+    setContextMenu(null);
   }, []);
 
   // Files keep their original alphabetical order — viewed files just collapse in place
@@ -505,12 +538,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     if (!viewport || sortedRenderableFiles.length === 0) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      // Don't capture when typing in inputs or when terminal has focus
+      // Don't capture when typing in inputs, editors, or when terminal has focus
       const target = event.target as HTMLElement;
       if (
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
-        target.closest("[data-terminal]")
+        target.isContentEditable ||
+        target.closest("[data-terminal]") ||
+        target.closest(".cm-editor")
       ) {
         return;
       }
@@ -952,7 +987,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     >
                       <div
                         className={cn(
-                          "sticky top-0 z-10 flex items-center gap-3 px-3 py-2.5 text-[13px] transition-[background-color,border-color] duration-300",
+                          "sticky top-0 z-10 flex items-center gap-3 bg-background px-3 py-2.5 text-[13px] transition-[background-color,border-color] duration-300",
                           isViewed
                             ? "border-b border-border/30"
                             : "border-b border-border/60 dark:bg-[#252a31]",
@@ -1031,9 +1066,23 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           onSave={stopEditing}
                           onCancel={stopEditing}
                           isSaving={false}
+                          scrollToLine={editScrollLine[filePath] ?? fileDiff.hunks[0]?.additionStart}
                         />
                       ) : !isViewed ? (
-                        <div className="animate-[diffExpand_250ms_ease-out] overflow-clip">
+                        <div
+                          className="animate-[diffExpand_250ms_ease-out] overflow-clip"
+                          onContextMenu={(event) => {
+                            const lineNumber = getLineNumberFromEvent(event);
+                            if (lineNumber == null || !projectCwd) return;
+                            event.preventDefault();
+                            setContextMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              filePath,
+                              lineNumber,
+                            });
+                          }}
+                        >
                           <FileDiff
                             fileDiff={fileDiff}
                             options={{
@@ -1063,6 +1112,32 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             )}
           </div>
         </>
+      )}
+      {contextMenu && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={() => setContextMenu(null)}
+          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+          onKeyDown={(e) => { if (e.key === "Escape") setContextMenu(null); }}
+          tabIndex={-1}
+        >
+          <div
+            className="absolute rounded-md border border-border/80 bg-popover py-1 shadow-lg dark:border-[#30363d] dark:bg-[#252a31]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-foreground hover:bg-accent"
+              onClick={() => {
+                startEditing(contextMenu.filePath, contextMenu.lineNumber);
+                setContextMenu(null);
+              }}
+            >
+              <PencilIcon className="size-3.5" />
+              Edit at line {contextMenu.lineNumber}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

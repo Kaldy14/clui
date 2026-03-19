@@ -474,6 +474,8 @@ function DormantTerminalView({
 function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [showNewOutput, setShowNewOutput] = useState(false);
+  const scrollLockedRef = useRef(false);
   const searchAddonRef = useRef<claudeCache.CachedTerminal["searchAddon"] | null>(null);
 
   useEffect(() => {
@@ -500,14 +502,57 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     searchAddonRef.current = entry.searchAddon;
     terminal.options.disableStdin = false;
 
+    // ── Scroll lock: preserve viewport when user is reading history ──
+    scrollLockedRef.current = false;
+    setShowNewOutput(false);
+    let scrollLockRafId: number | null = null;
+    let hasNewOutputFlag = false;
+    const getViewport = (): HTMLElement | null =>
+      terminal.element?.querySelector(".xterm-viewport") as HTMLElement | null;
+    const isViewportAtBottom = (): boolean => {
+      const vp = getViewport();
+      if (!vp) return true;
+      return vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 5;
+    };
+    /** Write to terminal, preserving scroll position if user has scrolled up. */
+    const scrollAwareWrite = (data: string) => {
+      // Auto-clear scroll lock if user has returned to bottom
+      if (scrollLockedRef.current && isViewportAtBottom()) {
+        scrollLockedRef.current = false;
+        hasNewOutputFlag = false;
+        setShowNewOutput(false);
+      }
+      if (!scrollLockedRef.current) {
+        terminal.write(data);
+        return;
+      }
+      const vp = getViewport();
+      if (!vp) {
+        terminal.write(data);
+        return;
+      }
+      const savedTop = vp.scrollTop;
+      terminal.write(data);
+      vp.scrollTop = savedTop;
+      if (scrollLockRafId != null) cancelAnimationFrame(scrollLockRafId);
+      scrollLockRafId = requestAnimationFrame(() => {
+        scrollLockRafId = null;
+        if (!disposed && vp) vp.scrollTop = savedTop;
+      });
+      if (!hasNewOutputFlag) {
+        hasNewOutputFlag = true;
+        setShowNewOutput(true);
+      }
+    };
+
     const writeEvent = (event: ClaudeSessionEvent) => {
       if (event.threadId !== threadId) return;
       switch (event.type) {
         case "output":
-          terminal.write(event.data);
+          scrollAwareWrite(event.data);
           break;
         case "error":
-          terminal.write(`\r\n[error] ${event.message}\r\n`);
+          scrollAwareWrite(`\r\n[error] ${event.message}\r\n`);
           break;
         case "exited":
         case "started":
@@ -690,7 +735,10 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
 
     // Watch for window resize
     const onWindowResize = () => {
+      const vp = scrollLockedRef.current ? getViewport() : null;
+      const savedTop = vp?.scrollTop;
       fitAddon.fit();
+      if (vp && savedTop !== undefined) vp.scrollTop = savedTop;
     };
     window.addEventListener("resize", onWindowResize);
 
@@ -747,6 +795,29 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     };
     el.addEventListener("wheel", onAltBufferWheel, { capture: true, passive: false });
 
+    // ── Scroll lock detection via wheel events ──
+    const onScrollLockDetect = (e: WheelEvent) => {
+      if (disposed) return;
+      if (e.deltaY < 0) {
+        // User is scrolling up to read history
+        requestAnimationFrame(() => {
+          if (!disposed && !isViewportAtBottom()) {
+            scrollLockedRef.current = true;
+          }
+        });
+      } else if (e.deltaY > 0) {
+        // User scrolled down — check if they reached the bottom
+        requestAnimationFrame(() => {
+          if (!disposed && isViewportAtBottom()) {
+            scrollLockedRef.current = false;
+            hasNewOutputFlag = false;
+            setShowNewOutput(false);
+          }
+        });
+      }
+    };
+    el.addEventListener("wheel", onScrollLockDetect, { passive: true });
+
     // Watch for container resize (sidebar collapse/expand, split changes)
     // Throttled via rAF to avoid excessive reflows during sidebar drag
     let resizeRafId: number | null = null;
@@ -754,7 +825,10 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (resizeRafId !== null) return;
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = null;
+        const vp = scrollLockedRef.current ? getViewport() : null;
+        const savedTop = vp?.scrollTop;
         fitAddon.fit();
+        if (vp && savedTop !== undefined) vp.scrollTop = savedTop;
       });
     });
     resizeObserver.observe(el);
@@ -773,7 +847,9 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+      if (scrollLockRafId !== null) cancelAnimationFrame(scrollLockRafId);
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
+      el.removeEventListener("wheel", onScrollLockDetect);
       window.removeEventListener("resize", onWindowResize);
       resizeObserver.disconnect();
       themeObserver.disconnect();
@@ -792,6 +868,16 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     if (cached) cached.terminal.focus();
   }, [threadId]);
 
+  const handleScrollToBottom = useCallback(() => {
+    scrollLockedRef.current = false;
+    setShowNewOutput(false);
+    const cached = claudeCache.get(threadId);
+    if (cached) {
+      cached.terminal.scrollToBottom();
+      cached.terminal.focus();
+    }
+  }, [threadId]);
+
   return (
     <div className="relative h-full w-full">
       {searchOpen && searchAddonRef.current && (
@@ -801,6 +887,16 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
         />
       )}
       <div ref={containerRef} className="h-full w-full" />
+      {showNewOutput && (
+        <button
+          type="button"
+          onClick={handleScrollToBottom}
+          className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border/40 bg-card/90 px-3 py-1 text-xs font-medium text-foreground/80 shadow-lg backdrop-blur-sm transition-all hover:bg-card hover:text-foreground dark:border-border/20 dark:bg-card/80"
+        >
+          <span className="text-[10px]">↓</span>
+          New output
+        </button>
+      )}
     </div>
   );
 }

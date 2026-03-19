@@ -19,6 +19,8 @@ export interface DiffInlineEditorProps {
   onSave: (content: string) => void;
   onCancel: () => void;
   isSaving: boolean;
+  /** Line number (1-based) to scroll to and highlight on mount. */
+  scrollToLine?: number | undefined;
 }
 
 function getLanguageExtension(lang: string): Extension {
@@ -60,6 +62,7 @@ export default function DiffInlineEditor({
   onSave,
   onCancel,
   isSaving,
+  scrollToLine,
 }: DiffInlineEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -110,11 +113,20 @@ export default function DiffInlineEditor({
     viewRef.current = view;
     view.focus();
 
+    // Scroll to the first changed line so the user lands right at the diff
+    if (scrollToLine && scrollToLine > 0) {
+      const lineInfo = view.state.doc.line(Math.min(scrollToLine, view.state.doc.lines));
+      view.dispatch({
+        selection: { anchor: lineInfo.from },
+        effects: EditorView.scrollIntoView(lineInfo.from, { y: "center" }),
+      });
+    }
+
     return () => {
       view.destroy();
       viewRef.current = null;
     };
-  }, [language]);
+  }, [language, scrollToLine]);
 
   const handleCancel = useCallback(() => {
     if (isDirtyRef.current) {
