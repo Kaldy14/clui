@@ -3,7 +3,16 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@clui/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Columns2Icon,
+  FolderTreeIcon,
+  RotateCcw,
+  Rows3Icon,
+  Square,
+  SquareCheckBig,
+} from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
   useCallback,
@@ -24,12 +33,13 @@ import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
+import DiffFileTree from "./DiffFileTree";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 
-const DIFF_PANEL_UNSAFE_CSS = `
+const DIFF_CSS_LIGHT = `
 [data-diffs-header],
 [data-diff],
 [data-file],
@@ -62,34 +72,35 @@ const DIFF_PANEL_UNSAFE_CSS = `
 
   background-color: var(--diffs-bg) !important;
 }
+`;
 
-[data-file-info] {
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-block-color: var(--border) !important;
-  color: var(--foreground) !important;
-}
+const DIFF_CSS_DARK = `
+[data-diff],
+[data-file],
+[data-error-wrapper],
+[data-virtualizer-buffer] {
+  --diffs-bg: #1e2228 !important;
+  --diffs-light-bg: #1e2228 !important;
+  --diffs-dark-bg: #1e2228 !important;
+  --diffs-token-light-bg: transparent;
+  --diffs-token-dark-bg: transparent;
 
-[data-diffs-header] {
-  position: sticky !important;
-  top: 0;
-  z-index: 4;
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-bottom: 1px solid var(--border) !important;
-}
+  --diffs-bg-context-override: #1b1e23;
+  --diffs-bg-hover-override: #22272e;
+  --diffs-bg-separator-override: #2a2f38;
+  --diffs-bg-buffer-override: #1b1e23;
 
-[data-title] {
-  cursor: pointer;
-  transition:
-    color 120ms ease,
-    text-decoration-color 120ms ease;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 2px;
-}
+  --diffs-bg-addition-override: #315037;
+  --diffs-bg-addition-number-override: #2a4530;
+  --diffs-bg-addition-hover-override: #3a6042;
+  --diffs-bg-addition-emphasis-override: #3a6042;
 
-[data-title]:hover {
-  color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
-  text-decoration-color: currentColor;
+  --diffs-bg-deletion-override: #392428;
+  --diffs-bg-deletion-number-override: #321f23;
+  --diffs-bg-deletion-hover-override: #462a2f;
+  --diffs-bg-deletion-emphasis-override: #592A2D;
+
+  background-color: var(--diffs-bg) !important;
 }
 `;
 
@@ -148,6 +159,32 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }
 
+function getFileDiffStats(fileDiff: FileDiffMetadata): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const hunk of fileDiff.hunks) {
+    additions += hunk.additionLines;
+    deletions += hunk.deletionLines;
+  }
+  return { additions, deletions };
+}
+
+type ChangeType = FileDiffMetadata["type"];
+
+function getChangeTypeBadge(type: ChangeType): { label: string; className: string } {
+  switch (type) {
+    case "new":
+      return { label: "A", className: "bg-green-600/20 text-green-500 dark:text-green-400" };
+    case "deleted":
+      return { label: "D", className: "bg-red-600/20 text-red-500 dark:text-red-400" };
+    case "rename-pure":
+    case "rename-changed":
+      return { label: "R", className: "bg-blue-600/20 text-blue-500 dark:text-blue-400" };
+    default:
+      return { label: "M", className: "bg-yellow-600/20 text-yellow-500 dark:text-yellow-400" };
+  }
+}
+
 function formatTurnChipTimestamp(isoDate: string): string {
   return new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
@@ -165,6 +202,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  const [showFileTree, setShowFileTree] = useState(true);
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
@@ -309,6 +347,99 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     );
   }, [renderablePatch]);
 
+  const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setViewedFiles(new Set());
+  }, [selectedPatch]);
+
+  const toggleFileViewed = useCallback((filePath: string) => {
+    setViewedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(filePath)) {
+        next.delete(filePath);
+      } else {
+        next.add(filePath);
+      }
+      return next;
+    });
+  }, []);
+
+  const resetAllViewed = useCallback(() => {
+    setViewedFiles(new Set());
+  }, []);
+
+  // Files keep their original alphabetical order — viewed files just collapse in place
+  const sortedRenderableFiles = renderableFiles;
+
+  const [focusedFileIndex, setFocusedFileIndex] = useState<number | null>(null);
+
+  // Reset focus when files change
+  useEffect(() => {
+    setFocusedFileIndex(null);
+  }, [selectedPatch]);
+
+  const scrollToFileByIndex = useCallback(
+    (index: number) => {
+      const viewport = patchViewportRef.current;
+      if (!viewport) return;
+      const filePath = sortedRenderableFiles[index]
+        ? resolveFileDiffPath(sortedRenderableFiles[index])
+        : null;
+      if (!filePath) return;
+      const target = viewport.querySelector<HTMLElement>(
+        `[data-diff-file-path="${CSS.escape(filePath)}"]`,
+      );
+      target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    },
+    [sortedRenderableFiles],
+  );
+
+  // Keyboard navigation: j/k to move, v to toggle viewed
+  useEffect(() => {
+    const viewport = patchViewportRef.current;
+    if (!viewport || sortedRenderableFiles.length === 0) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Don't capture when typing in inputs or when terminal has focus
+      const target = event.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.closest("[data-terminal]")
+      ) {
+        return;
+      }
+
+      if (event.key === "j" || event.key === "ArrowDown") {
+        event.preventDefault();
+        setFocusedFileIndex((prev) => {
+          const next = prev === null ? 0 : Math.min(prev + 1, sortedRenderableFiles.length - 1);
+          requestAnimationFrame(() => scrollToFileByIndex(next));
+          return next;
+        });
+      } else if (event.key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        setFocusedFileIndex((prev) => {
+          const next = prev === null ? 0 : Math.max(prev - 1, 0);
+          requestAnimationFrame(() => scrollToFileByIndex(next));
+          return next;
+        });
+      } else if (event.key === "v") {
+        event.preventDefault();
+        setFocusedFileIndex((prev) => {
+          if (prev === null || !sortedRenderableFiles[prev]) return prev;
+          const filePath = resolveFileDiffPath(sortedRenderableFiles[prev]);
+          toggleFileViewed(filePath);
+          return prev;
+        });
+      }
+    };
+
+    viewport.addEventListener("keydown", onKeyDown);
+    return () => viewport.removeEventListener("keydown", onKeyDown);
+  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed]);
+
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
       return;
@@ -318,6 +449,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     ).find((element) => element.dataset.diffFilePath === selectedFilePath);
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles]);
+
+  const scrollToFile = useCallback((filePath: string) => {
+    const viewport = patchViewportRef.current;
+    if (!viewport) return;
+    const target = viewport.querySelector<HTMLElement>(
+      `[data-diff-file-path="${CSS.escape(filePath)}"]`,
+    );
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, []);
 
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
@@ -507,6 +647,37 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           ))}
         </div>
       </div>
+      {renderableFiles.length > 0 && (
+        <div className="flex shrink-0 items-center gap-1.5 [-webkit-app-region:no-drag]">
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {viewedFiles.size}/{renderableFiles.length} viewed
+          </span>
+          {viewedFiles.size > 0 && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={resetAllViewed}
+              title="Reset viewed state"
+            >
+              <RotateCcw className="size-2.5" />
+              Reset
+            </button>
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        className={cn(
+          "shrink-0 rounded-md border p-1.5 transition-colors [-webkit-app-region:no-drag]",
+          showFileTree
+            ? "border-border bg-accent text-foreground"
+            : "border-border/70 text-muted-foreground hover:border-border hover:text-foreground",
+        )}
+        onClick={() => setShowFileTree((prev) => !prev)}
+        title="Toggle file tree"
+      >
+        <FolderTreeIcon className="size-3" />
+      </button>
       <ToggleGroup
         className="shrink-0 [-webkit-app-region:no-drag]"
         variant="outline"
@@ -566,9 +737,34 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         </div>
       ) : (
         <>
+          {renderableFiles.length > 0 && (
+            <div
+              className="h-0.5 shrink-0 bg-border/30"
+            >
+              <div
+                className="h-full bg-green-500/70 transition-[width] duration-500 ease-out"
+                style={{
+                  width: `${renderableFiles.length > 0 ? (viewedFiles.size / renderableFiles.length) * 100 : 0}%`,
+                }}
+              />
+            </div>
+          )}
+          {showFileTree && renderableFiles.length > 0 && (
+            <div className="shrink-0 overflow-auto border-b border-border/60 dark:bg-[#1e2228]" style={{ maxHeight: "40%" }}>
+              <DiffFileTree
+                files={renderableFiles}
+                viewedFiles={viewedFiles}
+                onFileClick={scrollToFile}
+                onToggleViewed={toggleFileViewed}
+                resolveFilePath={resolveFileDiffPath}
+                getFileStats={getFileDiffStats}
+              />
+            </div>
+          )}
           <div
             ref={patchViewportRef}
-            className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
+            className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
+            tabIndex={0}
           >
             {checkpointDiffError && !renderablePatch && (
               <div className="px-3">
@@ -593,36 +789,99 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   intersectionObserverMargin: 1200,
                 }}
               >
-                {renderableFiles.map((fileDiff) => {
+                {sortedRenderableFiles.map((fileDiff, fileIndex) => {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                  const isViewed = viewedFiles.has(filePath);
+                  const isFocused = focusedFileIndex === fileIndex;
+                  const stats = getFileDiffStats(fileDiff);
+                  const badge = getChangeTypeBadge(fileDiff.type);
+                  const lastSlash = filePath.lastIndexOf("/");
+                  const dirPath = lastSlash >= 0 ? filePath.slice(0, lastSlash + 1) : "";
+                  const baseName = lastSlash >= 0 ? filePath.slice(lastSlash + 1) : filePath;
                   return (
                     <div
                       key={themedFileKey}
                       data-diff-file-path={filePath}
-                      className="diff-render-file mb-2 rounded-md first:mt-2 last:mb-0"
-                      onClickCapture={(event) => {
-                        const nativeEvent = event.nativeEvent as MouseEvent;
-                        const composedPath = nativeEvent.composedPath?.() ?? [];
-                        const clickedHeader = composedPath.some((node) => {
-                          if (!(node instanceof Element)) return false;
-                          return node.hasAttribute("data-title");
-                        });
-                        if (!clickedHeader) return;
-                        openDiffFileInEditor(filePath);
-                      }}
+                      className={cn(
+                        "diff-render-file mb-2 rounded-md transition-[opacity,transform] duration-300 ease-out first:mt-2 last:mb-0",
+                        isViewed && "opacity-60",
+                        isFocused && "ring-1 ring-blue-500/50",
+                      )}
                     >
-                      <FileDiff
-                        fileDiff={fileDiff}
-                        options={{
-                          diffStyle: diffRenderMode === "split" ? "split" : "unified",
-                          lineDiffType: "none",
-                          theme: resolveDiffThemeName(resolvedTheme),
-                          themeType: resolvedTheme as DiffThemeType,
-                          unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
-                        }}
-                      />
+                      <div
+                        className={cn(
+                          "sticky top-0 z-10 flex items-center gap-3 px-3 py-2.5 text-[13px] transition-[background-color,border-color] duration-300",
+                          isViewed
+                            ? "border-b border-border/30"
+                            : "border-b border-border/60 dark:bg-[#252a31]",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="group shrink-0 transition-transform duration-200 active:scale-90"
+                          onClick={() => toggleFileViewed(filePath)}
+                          title={isViewed ? "Mark as unviewed" : "Mark as viewed"}
+                        >
+                          {isViewed ? (
+                            <SquareCheckBig className="size-4 animate-[viewedPop_300ms_ease-out] text-blue-500 transition-colors" />
+                          ) : (
+                            <Square className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+                          )}
+                        </button>
+                        <span
+                          className={cn(
+                            "inline-flex size-[18px] shrink-0 items-center justify-center rounded text-[10px] font-bold leading-none",
+                            badge.className,
+                          )}
+                        >
+                          {badge.label}
+                        </span>
+                        <button
+                          type="button"
+                          className={cn(
+                            "min-w-0 flex-1 truncate text-left underline decoration-transparent underline-offset-2 transition-colors duration-200 hover:decoration-current",
+                            isViewed
+                              ? "text-muted-foreground hover:text-foreground"
+                              : "text-foreground hover:text-foreground",
+                          )}
+                          onClick={() => openDiffFileInEditor(filePath)}
+                          title={`Open ${filePath} in editor`}
+                        >
+                          {dirPath && (
+                            <span className="opacity-40">{dirPath}</span>
+                          )}
+                          <span className="font-medium">{baseName}</span>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-2 tabular-nums text-[13px]">
+                          {stats.deletions > 0 && (
+                            <span className="text-red-500 dark:text-red-400">
+                              -{stats.deletions}
+                            </span>
+                          )}
+                          {stats.additions > 0 && (
+                            <span className="text-green-600 dark:text-green-400">
+                              +{stats.additions}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {!isViewed && (
+                        <div className="animate-[diffExpand_250ms_ease-out] overflow-clip">
+                          <FileDiff
+                            fileDiff={fileDiff}
+                            options={{
+                              diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                              lineDiffType: "word",
+                              theme: resolveDiffThemeName(resolvedTheme),
+                              themeType: resolvedTheme as DiffThemeType,
+                              disableFileHeader: true,
+                              unsafeCSS: resolvedTheme === "dark" ? DIFF_CSS_DARK : DIFF_CSS_LIGHT,
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}

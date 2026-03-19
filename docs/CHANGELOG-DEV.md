@@ -4,6 +4,101 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-19 — Fix thread terminal drawer stealing focus from Claude Code terminal
+
+**Problem:** When switching to a thread that has the thread terminal drawer open, focus lands in the drawer terminal instead of the Claude Code terminal. Users expect focus to always go to the Claude Code terminal on thread switch.
+
+**Root cause:** `ThreadTerminalDrawer` rendered `TerminalViewport` with `autoFocus={true}` hardcoded (both single and split view). On mount, both `ActiveTerminalView` (Claude Code) and `TerminalViewport` (drawer) called `terminal.focus()` via `requestAnimationFrame`. The drawer's focus call fired last, winning the race.
+
+**Fix:** Changed `autoFocus` to `false` on the drawer's `TerminalViewport` in both the single-terminal and split-view paths. The drawer terminal no longer auto-focuses on mount; users click into it when needed. The Claude Code terminal always wins focus on thread switch.
+
+**Affected files:** `apps/web/src/components/ThreadTerminalDrawer.tsx`
+
+---
+
+## 2026-03-19 — Fix "Pending Approval" badge not showing in sidebar
+
+**Problem:** The "Pending Approval" badge in the sidebar would intermittently not appear for background threads until the user clicked on the thread. Sometimes it showed, sometimes not.
+
+**Root cause:** Two issues: (1) The activity-based badge path (`derivePendingApprovals(thread.activities)`) was dead code — no server code ever dispatched `thread.activity.append` with `approval.requested` kind. The only working path was the hookStatus-based path (`claudeTerminalStatusPill`), which is ephemeral client-side state lost on page refresh/reconnection. (2) For background threads, domain events are deferred — even if activities were dispatched, the full snapshot sync wouldn't run until the user navigated to that thread.
+
+**Fix:** Two-part fix:
+1. **Server (wsServer.ts):** Dispatch `thread.activity.append` commands with `approval.requested` / `approval.resolved` activities when permission-request, post-tool-use, stop, and user-prompt-submit hooks fire. Activities are now persistent in the server's read model and included in snapshots, surviving reconnection.
+2. **Client (__root.tsx):** Eagerly patch thread activities in the store when `thread.activity-appended` domain events arrive for background threads (same pattern as the existing session status eager patching), so the sidebar badge appears immediately without waiting for a full snapshot sync.
+
+**Affected files:** `apps/server/src/wsServer.ts`, `apps/web/src/routes/__root.tsx`
+
+---
+
+## 2026-03-19 — Fix sidebar thread sorting with badge-driven tiered sort
+
+**Problem:** Thread ordering in the sidebar was unpredictable. Clicking an old dormant thread made it jump to the top. Working threads would drop below idle threads. Threads that just finished were hidden below actively working ones. The sort was purely `updatedAt`-based — no awareness of thread state, and `session-set` events bumped `updatedAt` on every lifecycle change (terminal resume, reconnect).
+
+**Root cause:** Two issues: (1) The in-memory projector and ProjectionPipeline both bumped `thread.updatedAt` unconditionally for every `thread.session-set` event, including terminal resume/reconnect — not just new user turns. Clicking an old thread resumes its terminal → `session-set` → `updatedAt` bumped → thread jumps to top. (2) Streaming `message-sent` events continuously bumped the working thread's `updatedAt`, keeping it above threads that had completed and needed user attention.
+
+**Fix:** Two-part fix:
+1. **Server (projector.ts, ProjectionPipeline.ts):** Only bump `updatedAt` for `session-set` when a genuinely new turn begins (`session.status === "running"` AND `activeTurnId` differs from previous). Session lifecycle events no longer affect sort order.
+2. **Client (Sidebar.logic.ts, Sidebar.tsx):** Replaced flat `updatedAt` sort with a badge-driven tiered comparator (`createThreadSortComparator`). Tiers mirror badge priority so what the user sees matches where the thread sits:
+   - Tier 0: Needs Action (Pending Approval, Needs Input, Error)
+   - Tier 1: Unseen Completion (turn finished, user hasn't visited)
+   - Tier 2: Active Work (Working/Running)
+   - Tier 3: Idle (sorted by `updatedAt` within tier)
+   Key property: merely viewing/clicking a thread never changes its tier — only real activity can promote it. Follows the Telegram/Linear model where status drives position.
+
+**Affected files:** `apps/server/src/orchestration/projector.ts`, `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.logic.test.ts`, `apps/web/src/components/Sidebar.tsx`
+
+---
+
+## 2026-03-19 — Fix thread title regeneration on compact/resume
+
+**Problem:** After compacting context or resuming a thread, the thread title would be regenerated, overwriting the existing title.
+
+**Root cause:** `autoTitledThreads` is an in-memory `Set` in `wsServer.ts` that tracks which threads have been auto-titled. On server restart, this set is empty, so any prompt submit (including those triggered by compact/resume) would re-trigger title generation. Additionally, the in-memory projector lacked the manual-title guard that the SQL projection pipeline had.
+
+**Fix:**
+- Seed `autoTitledThreads` from the projection snapshot on startup — any thread with a title other than "New thread" is marked as already titled.
+- Added manual-title guard to the in-memory projector (`projector.ts`) to skip auto-title updates when `titleSource` is "manual", matching the existing guard in `ProjectionPipeline.ts`.
+
+**Affected files:**
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/orchestration/projector.ts`
+
+---
+
+## 2026-03-19 — Add "Viewed" file review workflow and GitKraken diff colors
+
+**Problem:** The diff panel had no way to track review progress across files, and dark mode diff colors used generic `color-mix()` values that lacked contrast.
+
+**Root cause:** Missing review state management and theme-specific CSS for the shadow DOM `FileDiff` component.
+
+**Fix:**
+- Added `viewedFiles` state with toggle/reset callbacks; viewed files collapse (conditional rendering) and sort to the bottom of the list.
+- Added per-file review header with checkbox, file path (basename emphasized), and +/- stats computed from hunks.
+- Added review progress counter ("3/8 viewed") and reset button in the panel header.
+- Split `DIFF_PANEL_UNSAFE_CSS` into `DIFF_CSS_LIGHT` (existing color-mix approach) and `DIFF_CSS_DARK` (hardcoded GitKraken colors), selected by `resolvedTheme`.
+- Added `.dark` scoped overrides in `index.css` for diff viewport and file card backgrounds.
+
+**Affected files:**
+- `apps/web/src/components/DiffPanel.tsx`
+- `apps/web/src/index.css`
+
+---
+
+## 2026-03-19 — Change git toolbar quick action from "Commit & Push" to "Commit, Push & PR"
+
+**Problem:** The git quick action button in the toolbar only performed "Commit & Push" (`commit_push`) when there were working tree changes, requiring an extra step to create a PR.
+
+**Root cause:** `resolveQuickAction` returned `commit_push` as the default action for dirty working trees.
+
+**Fix:** Changed the quick action to `commit_push_pr` with label "Commit, push & PR" so the full commit-push-PR flow runs in one click. Updated the icon mapping to show the GitHub PR icon for this action.
+
+**Affected files:**
+- `apps/web/src/components/GitActionsControl.logic.ts`
+- `apps/web/src/components/GitActionsControl.tsx`
+- `apps/web/src/components/GitActionsControl.logic.test.ts`
+
+---
+
 ## 2026-03-18 — Add window drag region to active thread toolbar
 
 **Problem:** In Electron, the window could only be dragged from the sidebar header when a thread was active. The main toolbar at the top had no drag region, forcing users to reach for the sidebar to reposition the window.

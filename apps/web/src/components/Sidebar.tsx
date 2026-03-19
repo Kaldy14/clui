@@ -100,7 +100,7 @@ import {
   prStatusIndicator,
 } from "../lib/threadStatus";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
-import { compareThreadsForSidebar, resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
+import { createThreadSortComparator, resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -263,6 +263,14 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     }
     return map;
   }, [threads]);
+  const threadSortComparator = useMemo(
+    () =>
+      createThreadSortComparator({
+        pendingApprovalByThreadId,
+        pendingUserInputByThreadId,
+      }),
+    [pendingApprovalByThreadId, pendingUserInputByThreadId],
+  );
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
@@ -390,7 +398,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     (projectId: ProjectId) => {
       const latestThread = threads
         .filter((thread) => thread.projectId === projectId)
-        .toSorted(compareThreadsForSidebar)[0];
+        .toSorted(threadSortComparator)[0];
       if (!latestThread) return;
 
       void navigate({
@@ -398,7 +406,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         params: { threadId: latestThread.id },
       });
     },
-    [navigate, threads],
+    [navigate, threads, threadSortComparator],
   );
 
   const addProjectFromPath = useCallback(
@@ -1356,7 +1364,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                 {projects.map((project) => {
                   const projectThreads = threads
                     .filter((thread) => thread.projectId === project.id)
-                    .toSorted(compareThreadsForSidebar);
+                    .toSorted(threadSortComparator);
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
                   const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
                   const visibleThreads =

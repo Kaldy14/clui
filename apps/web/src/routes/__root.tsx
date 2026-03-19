@@ -273,6 +273,24 @@ function EventRouter() {
             void navigate({ to: "/$threadId", params: { threadId } });
           },
         );
+
+        // For background threads the full snapshot sync is deferred, so
+        // approval badges wouldn't show in the sidebar until the user
+        // navigates to the thread. Eagerly patch activities so the
+        // "Pending Approval" / "Awaiting Input" badges appear immediately.
+        if (!isCurrentThread && thread) {
+          const activity = event.payload.activity;
+          useStore.setState((state) => ({
+            threads: state.threads.map((t) => {
+              if (t.id !== threadId) return t;
+              const activities = [
+                ...t.activities.filter((a) => a.id !== activity.id),
+                activity,
+              ];
+              return { ...t, activities };
+            }),
+          }));
+        }
       }
       if (event.type === "thread.session-set") {
         const { threadId, session } = event.payload;

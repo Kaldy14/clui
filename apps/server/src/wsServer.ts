@@ -13,6 +13,7 @@ import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EventId,
   type ClientOrchestrationCommand,
   type ClaudeSessionEvent,
   type OrchestrationCommand,
@@ -432,6 +433,44 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   // Track threads that have already been auto-titled (in-memory, per server session)
   const autoTitledThreads = new Set<string>();
 
+  // Track pending approval requestIds per thread so we can dispatch matching
+  // approval.resolved activities when post-tool-use or stop hooks fire.
+  const pendingApprovalRequestIdByThread = new Map<string, string>();
+
+  const dispatchApprovalActivity = (
+    threadId: string,
+    kind: "approval.requested" | "approval.resolved",
+    requestId: string,
+    detail?: string,
+  ) => {
+    const createdAt = new Date().toISOString();
+    void Effect.runPromise(
+      orchestrationEngine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.makeUnsafe(`hook:${kind}:${crypto.randomUUID()}`),
+        threadId: ThreadId.makeUnsafe(threadId),
+        activity: {
+          id: EventId.makeUnsafe(crypto.randomUUID()),
+          tone: "approval",
+          kind,
+          summary: kind === "approval.requested" ? "Approval requested" : "Approval resolved",
+          payload: {
+            requestId,
+            ...(kind === "approval.requested" ? { requestKind: "command" } : { decision: "accept" }),
+            ...(detail ? { detail } : {}),
+          },
+          turnId: null,
+          createdAt,
+        },
+        createdAt,
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logError("approval activity dispatch failed", { cause: error }),
+        ),
+      ),
+    );
+  };
+
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
     const respond = (
@@ -462,6 +501,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
           if (hookPath === "/hooks/user-prompt-submit") {
             events = buildUserPromptSubmitEvents(threadId);
+
+            // A new prompt clears any lingering pending approval (user may
+            // have interrupted or the approval was granted via the terminal).
+            const pendingRequestId = pendingApprovalRequestIdByThread.get(threadId);
+            if (pendingRequestId) {
+              pendingApprovalRequestIdByThread.delete(threadId);
+              dispatchApprovalActivity(threadId, "approval.resolved", pendingRequestId);
+            }
 
             // Capture baseline checkpoint for diff comparison
             Effect.runPromise(
@@ -508,10 +555,36 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             }
           } else if (hookPath === "/hooks/permission-request") {
             events = buildPermissionRequestEvents(threadId, body);
+
+            // Dispatch a persistent approval activity so the sidebar badge
+            // survives page refresh / reconnection. Only for real approval
+            // requests — ask tools emit needsInput, not pendingApproval.
+            const isPendingApproval = events.some(
+              (e) => e.type === "hookStatus" && e.hookStatus === "pendingApproval",
+            );
+            if (isPendingApproval) {
+              const requestId = crypto.randomUUID();
+              pendingApprovalRequestIdByThread.set(threadId, requestId);
+              dispatchApprovalActivity(threadId, "approval.requested", requestId);
+            }
           } else if (hookPath === "/hooks/post-tool-use") {
             events = buildPostToolUseEvents(threadId);
+
+            // Resolve the pending approval activity so the badge clears.
+            const pendingRequestId = pendingApprovalRequestIdByThread.get(threadId);
+            if (pendingRequestId) {
+              pendingApprovalRequestIdByThread.delete(threadId);
+              dispatchApprovalActivity(threadId, "approval.resolved", pendingRequestId);
+            }
           } else if (hookPath === "/hooks/stop") {
             events = buildStopEvents(threadId);
+
+            // On stop, resolve any lingering pending approval.
+            const pendingRequestId = pendingApprovalRequestIdByThread.get(threadId);
+            if (pendingRequestId) {
+              pendingApprovalRequestIdByThread.delete(threadId);
+              dispatchApprovalActivity(threadId, "approval.resolved", pendingRequestId);
+            }
 
             // Capture checkpoint and compute diff for the DiffPanel
             Effect.runPromise(
@@ -771,6 +844,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   // Phase 5: Reset stale active terminal statuses on startup.
   // After a crash or unclean shutdown, threads may still be marked 'active' in the DB
   // even though no PTY processes are running. Set them to 'dormant' so the UI is correct.
+  // Also seed autoTitledThreads from the projection so we don't re-generate titles for
+  // threads that were already titled in a previous server session.
   yield* Effect.gen(function* () {
     const snapshot = yield* projectionReadModelQuery.getSnapshot();
     const staleActiveThreads = snapshot.threads.filter(
@@ -790,6 +865,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         }),
       { concurrency: 10 },
     );
+
+    // Seed autoTitledThreads: any non-deleted thread that already has a title
+    // other than the default "New thread" should not be re-titled.
+    for (const thread of snapshot.threads) {
+      if (thread.deletedAt === null && thread.title !== "New thread") {
+        autoTitledThreads.add(thread.id);
+      }
+    }
   }).pipe(
     Effect.catch((error) =>
       Effect.logWarning("failed to reset stale active terminal statuses on startup", {

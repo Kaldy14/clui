@@ -296,17 +296,25 @@ export function projectEvent(
 
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(payload.title !== undefined ? { title: payload.title } : {}),
-            ...(payload.model !== undefined ? { model: payload.model } : {}),
-            ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
-            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-            ...(payload.titleSource !== undefined ? { titleSource: payload.titleSource } : {}),
-            updatedAt: payload.updatedAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          // Skip auto-title updates if the thread was manually renamed
+          const existingThread = nextBase.threads.find((t) => t.id === payload.threadId);
+          const skipTitle =
+            payload.titleSource === "auto" &&
+            existingThread?.titleSource === "manual" &&
+            payload.title !== undefined;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(!skipTitle && payload.title !== undefined ? { title: payload.title } : {}),
+              ...(payload.model !== undefined ? { model: payload.model } : {}),
+              ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
+              ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+              ...(!skipTitle && payload.titleSource !== undefined ? { titleSource: payload.titleSource } : {}),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.runtime-mode-set":

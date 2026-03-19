@@ -1,6 +1,6 @@
 export const DIFF_THEME_NAMES = {
   light: "pierre-light",
-  dark: "pierre-dark",
+  dark: "clui-dark",
 } as const;
 
 export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];

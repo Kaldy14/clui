@@ -425,12 +425,31 @@ label:has(> select#reasoning-effort) select {
 .diff-panel-viewport {
   background: color-mix(in srgb, var(--background) 94%, var(--card));
 }
+.dark .diff-panel-viewport {
+  background: #1b1e23;
+}
 
 .diff-render-file {
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   overflow: clip;
   background: color-mix(in srgb, var(--card) 92%, var(--background));
+}
+.dark .diff-render-file {
+  border-color: #30363d;
+  background: #1e2228;
+}
+
+/* Diff panel review animations */
+@keyframes viewedPop {
+  0% { transform: scale(0.5); opacity: 0; }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes diffExpand {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 5000px; }
 }
 
 /* Respect user's motion preferences — stop animations for users with
