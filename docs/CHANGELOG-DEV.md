@@ -4,6 +4,18 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-19 — Fix flaky CheckpointReactor test timeout
+
+**Problem:** The `captures pre-turn baseline from project workspace root when thread worktree is unset` test in `CheckpointReactor.test.ts` intermittently timed out waiting for a git ref to be created.
+
+**Root cause:** The `waitForGitRefExists` call used the default 2000ms timeout, which was too tight for loaded machines where the async git checkpoint capture triggered by the `thread.turn.start` event could take longer.
+
+**Fix:** Increased the polling timeout from 2000ms to 5000ms for this specific assertion.
+
+**Affected files:** `apps/server/src/orchestration/Layers/CheckpointReactor.test.ts`
+
+---
+
 ## 2026-03-19 — DiffPanel: File Header Invisible in Light Mode
 
 **Problem:** The sticky file header bar in the diff panel had no background in light mode, so scrolling content showed through it making the filename and controls unreadable.

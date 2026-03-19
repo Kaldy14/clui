@@ -269,6 +269,7 @@ describe("CheckpointReactor", () => {
     await waitForGitRefExists(
       harness.cwd,
       checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+      5000,
     );
     expect(
       gitShowFileAtRef(
