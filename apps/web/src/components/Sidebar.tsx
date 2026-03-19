@@ -51,6 +51,7 @@ import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
 import { projectTerminalThreadId } from "../types";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
+import { getGlobalSessionEventState } from "../lib/sessionEventState";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
@@ -682,6 +683,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "reset-status", label: "Reset status badge" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
         ],
@@ -694,6 +696,12 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         setRenamingThreadId(threadId);
         setRenamingTitle(thread.title);
         renamingCommittedRef.current = false;
+        return;
+      }
+
+      if (clicked === "reset-status") {
+        getGlobalSessionEventState()?.clearThread(threadId);
+        useStore.getState().setHookStatus(threadId, null);
         return;
       }
 

@@ -23,6 +23,8 @@ export interface SessionEventState {
   handleStarted(rawThreadId: string): void;
   handleDormant(rawThreadId: string, reason: "hibernated" | "exited"): void;
   handleInterrupted(rawThreadId: string): void;
+  /** Clear all internal tracking state for a single thread (does NOT touch the store). */
+  clearThread(rawThreadId: string): void;
   clearAll(): void;
   /** Exposed for testing */
   _completedAt: Map<string, number>;
@@ -296,6 +298,15 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     deps.setHookStatus(rawThreadId, null);
   }
 
+  function clearThread(rawThreadId: string): void {
+    completedAt.delete(rawThreadId);
+    turnInProgress.delete(rawThreadId);
+    pendingApprovalAt.delete(rawThreadId);
+    prevOutputTail.delete(rawThreadId);
+    clearWorkingIdleTimer(rawThreadId);
+    terminalStartedAt.delete(rawThreadId);
+  }
+
   function clearAll(): void {
     completedAt.clear();
     turnInProgress.clear();
@@ -314,6 +325,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     handleStarted,
     handleDormant,
     handleInterrupted,
+    clearThread,
     clearAll,
     _completedAt: completedAt,
     _terminalStartedAt: terminalStartedAt,
@@ -322,4 +334,18 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     _turnInProgress: turnInProgress,
     _pendingApprovalAt: pendingApprovalAt,
   };
+}
+
+// ── Global instance accessor ─────────────────────────────────────────
+// Set once from __root.tsx after createSessionEventState(); consumed by
+// components that need to reset per-thread tracking (e.g. Sidebar).
+
+let _globalInstance: SessionEventState | null = null;
+
+export function setGlobalSessionEventState(instance: SessionEventState): void {
+  _globalInstance = instance;
+}
+
+export function getGlobalSessionEventState(): SessionEventState | null {
+  return _globalInstance;
 }

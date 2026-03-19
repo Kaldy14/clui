@@ -29,7 +29,7 @@ import {
   requestNotificationPermission,
 } from "../lib/notifications";
 import { providerQueryKeys } from "../lib/providerReactQuery";
-import { createSessionEventState } from "../lib/sessionEventState";
+import { createSessionEventState, setGlobalSessionEventState } from "../lib/sessionEventState";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 
 /** Lightweight mapping duplicating the store's toLegacySessionStatus so we can
@@ -390,6 +390,7 @@ function EventRouter() {
           dormantReason,
         ),
     });
+    setGlobalSessionEventState(sessionState);
 
     const unsubClaudeSessionEvent = api.claude.onSessionEvent((event) => {
       if (event.type === "turnStart") {

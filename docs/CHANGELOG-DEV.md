@@ -4,6 +4,16 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-19 — Add "Reset status badge" to thread context menu
+
+**Problem:** Thread status badges (e.g. "Pending Approval", "Working") can get stuck in a stale state when hook events arrive out of order or are missed entirely, with no way for the user to clear them.
+
+**Fix:** Added a "Reset status badge" option to the thread right-click context menu. It clears both the session event state machine's internal tracking (timers, turn-in-progress, grace periods) and the Zustand store's `hookStatus` for the thread.
+
+**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/routes/__root.tsx`, `apps/web/src/components/Sidebar.tsx`
+
+---
+
 ## 2026-03-19 — Fix terminal scroll jumping when output arrives while scrolled up
 
 **Problem:** When scrolled even slightly away from the bottom of the Claude Code terminal, new output caused the viewport to jump unexpectedly instead of preserving the user's scroll position.
