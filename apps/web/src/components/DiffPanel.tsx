@@ -328,7 +328,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const projectCwd = activeProject?.cwd ?? activeCwd;
   const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeCwd ?? null));
   const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -1041,7 +1040,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                             </span>
                           )}
                         </div>
-                        {projectCwd && !isViewed && (
+                        {activeCwd && !isViewed && (
                           <button
                             type="button"
                             className={cn(
@@ -1059,10 +1058,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           </button>
                         )}
                       </div>
-                      {!isViewed && editingFiles.has(filePath) && projectCwd ? (
+                      {!isViewed && editingFiles.has(filePath) && activeCwd ? (
                         <EditableFileView
                           filePath={filePath}
-                          cwd={projectCwd}
+                          cwd={activeCwd}
                           onSave={stopEditing}
                           onCancel={stopEditing}
                           isSaving={false}
@@ -1073,7 +1072,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           className="animate-[diffExpand_250ms_ease-out] overflow-clip"
                           onContextMenu={(event) => {
                             const lineNumber = getLineNumberFromEvent(event);
-                            if (lineNumber == null || !projectCwd) return;
+                            if (lineNumber == null || !activeCwd) return;
                             event.preventDefault();
                             setContextMenu({
                               x: event.clientX,

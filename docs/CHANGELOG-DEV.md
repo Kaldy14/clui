@@ -4,6 +4,18 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-19 — Fix DiffPanel inline editor fails in worktree threads
+
+**Problem:** Clicking "Edit file" in the DiffPanel for a thread using a git worktree fails with "File not found", even though the file exists.
+
+**Root cause:** The `EditableFileView` and context menu used `projectCwd` (the base project directory) instead of `activeCwd` (which respects `worktreePath`). Diff file paths come from the worktree, but the file read RPC was sent with the original project cwd — where the file may not exist.
+
+**Fix:** Replaced all `projectCwd` usages with `activeCwd` for the file editor, edit button guard, and context menu guard. Removed the now-unused `projectCwd` variable.
+
+**Affected files:** `apps/web/src/components/DiffPanel.tsx`
+
+---
+
 ## 2026-03-19 — Fix flaky CheckpointReactor test timeout
 
 **Problem:** The `captures pre-turn baseline from project workspace root when thread worktree is unset` test in `CheckpointReactor.test.ts` intermittently timed out waiting for a git ref to be created.
