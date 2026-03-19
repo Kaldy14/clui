@@ -580,6 +580,8 @@ interface AppStore extends AppState {
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
+  /** Reset all status-related fields for a thread (hookStatus, activities, session status). */
+  resetThreadStatus: (threadId: ThreadId) => void;
   setTerminalStatus: (threadId: ThreadId, terminalStatus: TerminalStatus) => void;
   /** Atomically update terminalStatus, hookStatus, and dormantReason in a single render. */
   setTerminalLifecycle: (threadId: ThreadId, terminalStatus: TerminalStatus, hookStatus: ClaudeHookStatus | null, dormantReason?: DormantReason) => void;
@@ -620,6 +622,15 @@ export const useStore = create<AppStore>((set) => ({
         if (thread.hookStatus === hookStatus) return thread;
         return { ...thread, hookStatus };
       });
+      return threads === state.threads ? state : { ...state, threads };
+    }),
+  resetThreadStatus: (threadId) =>
+    set((state) => {
+      const threads = updateThread(state.threads, threadId, (thread) => ({
+        ...thread,
+        hookStatus: null,
+        activities: [],
+      }));
       return threads === state.threads ? state : { ...state, threads };
     }),
   setTerminalStatus: (threadId, terminalStatus) =>

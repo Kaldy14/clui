@@ -701,7 +701,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
 
       if (clicked === "reset-status") {
         getGlobalSessionEventState()?.clearThread(threadId);
-        useStore.getState().setHookStatus(threadId, null);
+        useStore.getState().resetThreadStatus(threadId);
         return;
       }
 

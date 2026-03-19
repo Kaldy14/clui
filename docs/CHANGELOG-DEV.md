@@ -8,9 +8,11 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 **Problem:** Thread status badges (e.g. "Pending Approval", "Working") can get stuck in a stale state when hook events arrive out of order or are missed entirely, with no way for the user to clear them.
 
-**Fix:** Added a "Reset status badge" option to the thread right-click context menu. It clears both the session event state machine's internal tracking (timers, turn-in-progress, grace periods) and the Zustand store's `hookStatus` for the thread.
+**Root cause:** Status badges are driven by two independent sources: `hookStatus` (real-time hook events) and `thread.activities` (server-synced approval/input request activities). Both can get stuck — hookStatus from missed events, activities from stale `approval.requested` without matching `approval.resolved`.
 
-**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/routes/__root.tsx`, `apps/web/src/components/Sidebar.tsx`
+**Fix:** Added a "Reset status badge" option to the thread right-click context menu. It clears the session event state machine's internal tracking via `clearThread()`, and the store's `hookStatus` + `activities` via `resetThreadStatus()`. The global `SessionEventState` instance is exposed via `set/getGlobalSessionEventState` so the Sidebar can access it.
+
+**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/store.ts`, `apps/web/src/routes/__root.tsx`, `apps/web/src/components/Sidebar.tsx`
 
 ---
 
