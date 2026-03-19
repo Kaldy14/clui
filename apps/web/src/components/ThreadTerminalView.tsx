@@ -505,7 +505,6 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     // ── Scroll lock: preserve viewport when user is reading history ──
     scrollLockedRef.current = false;
     setShowNewOutput(false);
-    let scrollLockRafId: number | null = null;
     let hasNewOutputFlag = false;
     const getViewport = (): HTMLElement | null =>
       terminal.element?.querySelector(".xterm-viewport") as HTMLElement | null;
@@ -514,30 +513,37 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (!vp) return true;
       return vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 5;
     };
-    /** Write to terminal, preserving scroll position if user has scrolled up. */
+    /** Write to terminal, preserving scroll position if user has scrolled up.
+     *  Checks viewport position on every write instead of relying solely on
+     *  the wheel-event-driven scrollLockedRef — this catches scrollbar-drag,
+     *  keyboard scroll, and sub-row offsets that wheel detection misses.
+     *  Uses terminal.write(data, callback) so the scroll restoration runs
+     *  AFTER xterm.js has fully processed and rendered the data, avoiding a
+     *  race with xterm's async _innerRefresh that overwrites scrollTop. */
     const scrollAwareWrite = (data: string) => {
-      // Auto-clear scroll lock if user has returned to bottom
-      if (scrollLockedRef.current && isViewportAtBottom()) {
-        scrollLockedRef.current = false;
-        hasNewOutputFlag = false;
-        setShowNewOutput(false);
-      }
-      if (!scrollLockedRef.current) {
+      if (isViewportAtBottom()) {
+        // User is at (or very near) the bottom — clear scroll lock, let xterm auto-scroll
+        if (scrollLockedRef.current) {
+          scrollLockedRef.current = false;
+          hasNewOutputFlag = false;
+          setShowNewOutput(false);
+        }
         terminal.write(data);
         return;
       }
+      // User has scrolled up — preserve their viewport position
+      scrollLockedRef.current = true;
       const vp = getViewport();
       if (!vp) {
         terminal.write(data);
         return;
       }
       const savedTop = vp.scrollTop;
-      terminal.write(data);
-      vp.scrollTop = savedTop;
-      if (scrollLockRafId != null) cancelAnimationFrame(scrollLockRafId);
-      scrollLockRafId = requestAnimationFrame(() => {
-        scrollLockRafId = null;
-        if (!disposed && vp) vp.scrollTop = savedTop;
+      terminal.write(data, () => {
+        if (disposed) return;
+        // Re-query in case the DOM was reparented between enqueue and render
+        const currentVp = getViewport();
+        if (currentVp) currentVp.scrollTop = savedTop;
       });
       if (!hasNewOutputFlag) {
         hasNewOutputFlag = true;
@@ -735,10 +741,17 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
 
     // Watch for window resize
     const onWindowResize = () => {
-      const vp = scrollLockedRef.current ? getViewport() : null;
+      const atBottom = isViewportAtBottom();
+      const vp = getViewport();
       const savedTop = vp?.scrollTop;
       fitAddon.fit();
-      if (vp && savedTop !== undefined) vp.scrollTop = savedTop;
+      if (vp) {
+        if (atBottom) {
+          terminal.scrollToBottom();
+        } else if (savedTop !== undefined) {
+          vp.scrollTop = savedTop;
+        }
+      }
     };
     window.addEventListener("resize", onWindowResize);
 
@@ -825,10 +838,17 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (resizeRafId !== null) return;
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = null;
-        const vp = scrollLockedRef.current ? getViewport() : null;
+        const atBottom = isViewportAtBottom();
+        const vp = getViewport();
         const savedTop = vp?.scrollTop;
         fitAddon.fit();
-        if (vp && savedTop !== undefined) vp.scrollTop = savedTop;
+        if (vp) {
+          if (atBottom) {
+            terminal.scrollToBottom();
+          } else if (savedTop !== undefined) {
+            vp.scrollTop = savedTop;
+          }
+        }
       });
     });
     resizeObserver.observe(el);
@@ -847,7 +867,6 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
-      if (scrollLockRafId !== null) cancelAnimationFrame(scrollLockRafId);
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onScrollLockDetect);
       window.removeEventListener("resize", onWindowResize);

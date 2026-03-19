@@ -56,6 +56,11 @@ export const IDLE_TIMER_RESET_THROTTLE_MS = 2_000;
 /** After pendingApproval is set, output arriving after this delay transitions to "working". */
 export const PENDING_APPROVAL_OUTPUT_DELAY_MS = 1_000;
 
+/** Regex matching the Claude Code interrupt banner ("⏎ Interrupted"), allowing ANSI codes between. */
+const INTERRUPT_RE = /⏎[^\n]{0,30}Interrupted/;
+/** Number of characters to keep from the tail of each output chunk for cross-chunk matching. */
+const PREV_OUTPUT_TAIL_LENGTH = 30;
+
 export function createSessionEventState(deps: SessionEventDeps): SessionEventState {
   const completedAt = new Map<string, number>();
   const terminalStartedAt = new Map<string, number>();
@@ -70,6 +75,9 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   // Records when "pendingApproval" was set, so handleOutput can transition
   // to "working" when output arrives after a short delay (user approved).
   const pendingApprovalAt = new Map<string, number>();
+  // Tail of the previous output chunk per thread, used to detect the
+  // interrupt banner ("⏎ Interrupted") when it spans two PTY chunks.
+  const prevOutputTail = new Map<string, string>();
 
   const now = deps.now ?? Date.now;
 
@@ -228,18 +236,25 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       }
     }
 
-    // Detect user-initiated interrupts (Escape to cancel)
+    // Detect user-initiated interrupts (Escape to cancel).
+    // The interrupt banner "⏎ Interrupted" may be split across two PTY
+    // output chunks, so we bridge the tail of the previous chunk with the
+    // head of the current one and check both with a proximity regex.
     if (
-      (hookStatus === "working" ||
-        hookStatus === "pendingApproval" ||
-        hookStatus === "needsInput") &&
-      data.includes("⏎") && data.includes("Interrupted")
+      hookStatus === "working" ||
+      hookStatus === "pendingApproval" ||
+      hookStatus === "needsInput"
     ) {
-      completedAt.set(rawThreadId, now());
-      turnInProgress.delete(rawThreadId);
-      pendingApprovalAt.delete(rawThreadId);
-      clearWorkingIdleTimer(rawThreadId);
-      deps.setHookStatus(rawThreadId, null);
+      const tail = prevOutputTail.get(rawThreadId) ?? "";
+      const bridge = tail + data.slice(0, 40);
+      if (INTERRUPT_RE.test(data) || INTERRUPT_RE.test(bridge)) {
+        completedAt.set(rawThreadId, now());
+        turnInProgress.delete(rawThreadId);
+        pendingApprovalAt.delete(rawThreadId);
+        prevOutputTail.delete(rawThreadId);
+        clearWorkingIdleTimer(rawThreadId);
+        deps.setHookStatus(rawThreadId, null);
+      }
     }
 
     // Detect API errors (e.g. 529 overloaded, 429 rate limit, 500 server error)
@@ -247,9 +262,13 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     if (hookStatus === "working" && API_ERROR_RE.test(data)) {
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);
+      prevOutputTail.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, "error");
     }
+
+    // Store tail for cross-chunk interrupt detection on next output event.
+    prevOutputTail.set(rawThreadId, data.slice(-PREV_OUTPUT_TAIL_LENGTH));
   }
 
   function handleStarted(rawThreadId: string): void {
@@ -262,6 +281,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
     pendingApprovalAt.delete(rawThreadId);
+    prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
     deps.setTerminalLifecycle(rawThreadId, "dormant", null, reason);
@@ -271,6 +291,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
     pendingApprovalAt.delete(rawThreadId);
+    prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     deps.setHookStatus(rawThreadId, null);
   }
@@ -279,6 +300,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     completedAt.clear();
     turnInProgress.clear();
     pendingApprovalAt.clear();
+    prevOutputTail.clear();
     for (const timer of workingIdleTimers.values()) clearTimeout(timer);
     workingIdleTimers.clear();
     workingIdleLastReset.clear();

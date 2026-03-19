@@ -797,7 +797,7 @@ export default function ThreadTerminalDrawer({
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         focusRequestId={focusRequestId}
-                        autoFocus={false}
+                        autoFocus={terminalId === resolvedActiveTerminalId}
                         resizeEpoch={resizeEpoch}
                         drawerHeight={drawerHeight}
                       />
@@ -815,7 +815,7 @@ export default function ThreadTerminalDrawer({
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   focusRequestId={focusRequestId}
-                  autoFocus={false}
+                  autoFocus={true}
                   resizeEpoch={resizeEpoch}
                   drawerHeight={drawerHeight}
                 />

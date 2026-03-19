@@ -4,6 +4,47 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-19 — Fix terminal scroll jumping when output arrives while scrolled up
+
+**Problem:** When scrolled even slightly away from the bottom of the Claude Code terminal, new output caused the viewport to jump unexpectedly instead of preserving the user's scroll position.
+
+**Root cause:** Three issues in `ActiveTerminalView`:
+1. `scrollAwareWrite` relied on `scrollLockedRef` which was only set by wheel events — scrollbar drag, keyboard scroll, and sub-row pixel offsets never triggered scroll lock, so `terminal.write()` was called with no scroll protection.
+2. Scroll restoration used synchronous assignment + rAF, which raced with xterm.js's async rendering pipeline (`_innerRefresh` overwrites `scrollTop` after both).
+3. Resize handlers (ResizeObserver, window resize) only preserved scroll when scroll lock was active.
+
+**Fix:**
+- `scrollAwareWrite` now checks viewport position on every write instead of relying on the scroll lock flag. Uses `terminal.write(data, callback)` so scroll restoration runs after xterm finishes rendering.
+- Resize handlers always preserve scroll when user is scrolled up (not gated on `scrollLockedRef`).
+
+**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
+
+---
+
+## 2026-03-19 — Fix "Working" badge stuck after cancelling Claude Code
+
+**Problem:** Pressing Escape to cancel work in Claude Code left the thread's sidebar badge stuck on "Working" indefinitely.
+
+**Root cause:** The interrupt detection in `handleOutput` required both `"⏎"` and `"Interrupted"` in the same output chunk (`data.includes("⏎") && data.includes("Interrupted")`). PTY streaming often splits the interrupt banner `"⏎ Interrupted"` across two chunks, so the pattern never matched. The Stop hook also doesn't reliably fire on all cancellation types.
+
+**Fix:** Replaced the dual-`includes` check with a proximity regex (`/⏎[^\n]{0,30}Interrupted/`) and added cross-chunk bridging — the tail of the previous output chunk is joined with the head of the current chunk so the pattern is detected even when split across two PTY writes.
+
+**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`
+
+---
+
+## 2026-03-19 — Auto-focus thread terminal on Cmd+J open
+
+**Problem:** Opening the thread terminal drawer with Cmd+J did not focus the terminal, requiring an extra click.
+
+**Root cause:** `ThreadTerminalDrawer` hardcoded `autoFocus={false}` on all `TerminalViewport` instances, so the mount effect never called `terminal.focus()`.
+
+**Fix:** Set `autoFocus={true}` for the active terminal viewport (non-split), and `autoFocus={terminalId === resolvedActiveTerminalId}` in split view.
+
+**Affected files:** `apps/web/src/components/ThreadTerminalDrawer.tsx`
+
+---
+
 ## 2026-03-19 — Fix DiffPanel inline editor fails in worktree threads
 
 **Problem:** Clicking "Edit file" in the DiffPanel for a thread using a git worktree fails with "File not found", even though the file exists.

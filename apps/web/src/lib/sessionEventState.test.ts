@@ -121,13 +121,50 @@ describe("createSessionEventState", () => {
       expect(state._completedAt.has("t1")).toBe(true);
     });
 
+    it("detects Interrupted split across two output chunks", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+
+      // First chunk ends with "⏎", second chunk starts with " Interrupted"
+      state.handleOutput("t1", "some output ⏎");
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", null);
+
+      state.handleOutput("t1", " Interrupted");
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
+      expect(state._completedAt.has("t1")).toBe(true);
+      expect(state._turnInProgress.has("t1")).toBe(false);
+    });
+
+    it("detects Interrupted with ANSI codes between ⏎ and Interrupted across chunks", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+
+      // ⏎ at end of first chunk, ANSI + Interrupted at start of second
+      state.handleOutput("t1", "⏎");
+      state.handleOutput("t1", "\x1b[1;31mInterrupted\x1b[0m");
+
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
+    });
+
     it("does not false-positive on 'Interrupted' embedded in prose", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       ctx.hookStatusByThread.set("t1", "working");
 
       state.handleOutput("t1", "The process was Interrupted by the user");
 
-      // Should NOT clear hookStatus — "Interrupted" is preceded by a letter
+      // Should NOT clear hookStatus — no "⏎" in this chunk or the previous one
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", null);
+    });
+
+    it("does not false-positive when ⏎ in status bar and Interrupted in distant prose", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+
+      // Status bar chunk contains ⏎ but it's far from any "Interrupted"
+      state.handleOutput("t1", "⏎ to send, esc to cancel -- lots of padding text here");
+      // Next chunk has prose with "Interrupted" but ⏎ is >30 chars away in prev tail
+      state.handleOutput("t1", "The operation was Interrupted by a timeout");
+
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", null);
     });
 
