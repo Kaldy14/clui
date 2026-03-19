@@ -277,7 +277,7 @@ function EventRouter() {
         // For background threads the full snapshot sync is deferred, so
         // approval badges wouldn't show in the sidebar until the user
         // navigates to the thread. Eagerly patch activities so the
-        // "Pending Approval" / "Awaiting Input" badges appear immediately.
+        // "Pending Approval" / "Needs Input" badges appear immediately.
         if (!isCurrentThread && thread) {
           const activity = event.payload.activity;
           useStore.setState((state) => ({
@@ -411,6 +411,21 @@ function EventRouter() {
               void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
             },
           );
+
+          // Eagerly patch latestTurn.completedAt for background threads so
+          // hasUnseenCompletion works without waiting for a full snapshot sync.
+          if (event.threadId !== currentThreadId) {
+            useStore.setState((state) => ({
+              threads: state.threads.map((t) => {
+                if (t.id !== event.threadId || !t.latestTurn?.startedAt) return t;
+                if (t.latestTurn.completedAt) return t; // Already set
+                return {
+                  ...t,
+                  latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
+                };
+              }),
+            }));
+          }
         }
       }
       if (event.type === "output") {
@@ -444,6 +459,19 @@ function EventRouter() {
         // a previous server session don't cause dropped or misfiltered events.
         latestSequence = 0;
         sessionState.clearAll();
+        // Clear stale hookStatus values preserved in the Zustand store —
+        // the state machine's internal tracking (timers, turnInProgress,
+        // grace periods) was just wiped, so orphaned hookStatus values
+        // would cause permanently wrong badges.
+        useStore.setState((state) => {
+          const needsUpdate = state.threads.some((t) => t.hookStatus !== null);
+          if (!needsUpdate) return state;
+          return {
+            threads: state.threads.map((t) =>
+              t.hookStatus !== null ? { ...t, hookStatus: null } : t,
+            ),
+          };
+        });
         deferredThreadIdsRef.current.clear();
 
         await syncSnapshot();

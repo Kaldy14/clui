@@ -121,6 +121,16 @@ describe("createSessionEventState", () => {
       expect(state._completedAt.has("t1")).toBe(true);
     });
 
+    it("does not false-positive on 'Interrupted' embedded in prose", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+
+      state.handleOutput("t1", "The process was Interrupted by the user");
+
+      // Should NOT clear hookStatus — "Interrupted" is preceded by a letter
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", null);
+    });
+
     it("detects 529 API error and sets hookStatus to 'error'", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       ctx.hookStatusByThread.set("t1", "working");
@@ -214,6 +224,27 @@ describe("createSessionEventState", () => {
 
       expect(result).toEqual({ applied: false });
     });
+
+    it("'pendingApproval' is ignored when terminal is dormant", () => {
+      ctx.terminalStatusByThread.set("t1", "dormant");
+      const result = state.handleHookStatus("t1", "pendingApproval");
+
+      expect(result).toEqual({ applied: false });
+    });
+
+    it("'needsInput' is ignored when terminal is dormant", () => {
+      ctx.terminalStatusByThread.set("t1", "dormant");
+      const result = state.handleHookStatus("t1", "needsInput");
+
+      expect(result).toEqual({ applied: false });
+    });
+
+    it("'completed' is still accepted when terminal is dormant", () => {
+      ctx.terminalStatusByThread.set("t1", "dormant");
+      const result = state.handleHookStatus("t1", "completed");
+
+      expect(result).toEqual({ applied: true, hookStatus: "completed" });
+    });
   });
 
   describe("handleStarted", () => {
@@ -280,16 +311,51 @@ describe("createSessionEventState", () => {
   });
 
   describe("working idle timer", () => {
-    it("clears hookStatus after 90s of no output", () => {
+    it("clears hookStatus after 90s when terminal is no longer active", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       ctx.hookStatusByThread.set("t1", "working");
       state.handleHookStatus("t1", "working");
 
       expect(state._workingIdleTimers.has("t1")).toBe(true);
 
+      // Terminal becomes dormant — simulates PTY gone but hookStatus stuck
+      ctx.terminalStatusByThread.set("t1", "dormant");
+
       // Advance past idle timeout
       vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
 
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
+      expect(state._workingIdleTimers.has("t1")).toBe(false);
+    });
+
+    it("re-arms idle timer when turn is in progress and terminal is active", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+      state.handleHookStatus("t1", "working");
+
+      expect(state._workingIdleTimers.has("t1")).toBe(true);
+
+      // First timeout fires — turn is still in progress, terminal active → re-arm
+      vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
+      expect(ctx.hookStatusByThread.get("t1")).toBe("working");
+      expect(state._workingIdleTimers.has("t1")).toBe(true); // re-armed
+
+      // Second timeout fires — still in progress → re-arm again
+      vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
+      expect(ctx.hookStatusByThread.get("t1")).toBe("working");
+      expect(state._workingIdleTimers.has("t1")).toBe(true);
+    });
+
+    it("clears hookStatus after idle timeout when turnInProgress is false", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      ctx.hookStatusByThread.set("t1", "working");
+      state.handleHookStatus("t1", "working");
+
+      // Manually clear turnInProgress to simulate a stale state
+      // (e.g. hookStatus stuck at "working" after turn ended)
+      state._turnInProgress.delete("t1");
+
+      vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
       expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
       expect(state._workingIdleTimers.has("t1")).toBe(false);
     });
@@ -308,10 +374,6 @@ describe("createSessionEventState", () => {
       vi.advanceTimersByTime(80_000);
       // At this point it's 80s since last output reset -- still within 90s
       expect(ctx.hookStatusByThread.get("t1")).toBe("working");
-
-      // 10 more seconds -> 90s since last output
-      vi.advanceTimersByTime(10_001);
-      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
     });
   });
 
@@ -327,7 +389,7 @@ describe("createSessionEventState", () => {
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });
 
-    it("allows output recovery when a turn is in progress (idle timer cleared hookStatus)", () => {
+    it("keeps hookStatus 'working' through idle timeout when turn is in progress", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleStarted("t1");
 
@@ -335,13 +397,10 @@ describe("createSessionEventState", () => {
       state.handleHookStatus("t1", "working");
       vi.mocked(ctx.deps.setHookStatus).mockClear();
 
-      // Idle timer fires (90s), clearing hookStatus — but turnInProgress stays true
+      // Idle timer fires (90s) — turn is still in progress, so badge stays
       vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
-      expect(ctx.hookStatusByThread.get("t1")).toBeNull();
-
-      // Output arrives — should recover to "working" because turnInProgress is true
-      state.handleOutput("t1", "tool output after idle timer");
-      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+      expect(ctx.hookStatusByThread.get("t1")).toBe("working");
+      expect(state._workingIdleTimers.has("t1")).toBe(true); // re-armed
     });
 
     it("sets turnInProgress on 'working' hook and clears on 'completed'", () => {
@@ -510,8 +569,8 @@ describe("createSessionEventState", () => {
       state.handleHookStatus("t1", "pendingApproval");
       vi.mocked(ctx.deps.setHookStatus).mockClear();
 
-      // User interrupts
-      state.handleOutput("t1", "Interrupted");
+      // User interrupts (⏎ prefix required for interrupt detection)
+      state.handleOutput("t1", "⏎ Interrupted");
       expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });

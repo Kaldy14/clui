@@ -166,6 +166,31 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
+/**
+ * Walk up from `startDir` to find the nearest directory containing `.git`.
+ * Returns the git root path, or `startDir` if no `.git` is found within 10 levels.
+ */
+function findGitRoot(
+  startDir: string,
+  pathModule: Path.Path,
+  fs: FileSystem.FileSystem,
+): Effect.Effect<string> {
+  return Effect.gen(function* () {
+    let candidate = pathModule.resolve(startDir);
+    for (let i = 0; i < 10; i++) {
+      const gitDir = pathModule.join(candidate, ".git");
+      const exists = yield* fs
+        .stat(gitDir)
+        .pipe(Effect.map(() => true), Effect.catch(() => Effect.succeed(false)));
+      if (exists) return candidate;
+      const parent = pathModule.dirname(candidate);
+      if (parent === candidate) break;
+      candidate = parent;
+    }
+    return startDir;
+  });
+}
+
 function resolveWorkspaceWritePath(params: {
   workspaceRoot: string;
   relativePath: string;
@@ -202,6 +227,18 @@ function resolveWorkspaceWritePath(params: {
     absolutePath,
     relativePath: relativeToRoot,
   });
+}
+
+function inferLanguage(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const langMap: Record<string, string> = {
+    ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
+    json: "json", css: "css", html: "html", md: "markdown",
+    py: "python", rs: "rust", go: "go", yaml: "yaml", yml: "yaml",
+    sh: "shell", bash: "shell", zsh: "shell",
+    sql: "sql", graphql: "graphql", xml: "xml", svg: "xml",
+  };
+  return langMap[ext] ?? "text";
 }
 
 function stripRequestTag<T extends { _tag: string }>(body: T) {
@@ -1106,8 +1143,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsWriteFile: {
         const body = stripRequestTag(request.body);
+        const writeGitRoot = yield* findGitRoot(body.cwd, path, fileSystem);
         const target = yield* resolveWorkspaceWritePath({
-          workspaceRoot: body.cwd,
+          workspaceRoot: writeGitRoot,
           relativePath: body.relativePath,
           path,
         });
@@ -1130,6 +1168,53 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.projectsReadFile: {
+        const body = stripRequestTag(request.body);
+        // Diff paths are relative to the git root, which may differ from the
+        // project cwd (e.g. monorepo where project cwd is a subdirectory).
+        // Try the provided cwd first, then fall back to the git root.
+        const gitRoot = yield* findGitRoot(body.cwd, path, fileSystem);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: gitRoot,
+          relativePath: body.relativePath,
+          path,
+        });
+        const absolutePath = target.absolutePath;
+        const fileStat = yield* fileSystem.stat(absolutePath).pipe(
+          Effect.mapError(
+            () =>
+              new RouteRequestError({
+                message: `File not found: ${body.relativePath}`,
+              }),
+          ),
+        );
+        if (fileStat.size > 1_048_576) {
+          return yield* new RouteRequestError({
+            message: "File too large to edit (max 1MB)",
+          });
+        }
+        const contents = yield* fileSystem.readFileString(absolutePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to read workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        // Check for binary content: if the first 8KB contains null bytes
+        const checkSlice = contents.slice(0, 8192);
+        if (checkSlice.includes("\0")) {
+          return yield* new RouteRequestError({
+            message: "Binary files cannot be edited",
+          });
+        }
+        return {
+          relativePath: target.relativePath,
+          contents,
+          language: inferLanguage(target.relativePath),
+        };
       }
 
       case WS_METHODS.shellOpenInEditor: {

@@ -341,6 +341,11 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                To match Claude Code's output colors, type{" "}
+                <code className="rounded bg-muted px-1 py-0.5 text-[11px] font-mono text-foreground">/theme</code>{" "}
+                inside a terminal session and select <span className="font-medium">{resolvedTheme}</span>.
+              </p>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

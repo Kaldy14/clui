@@ -422,6 +422,11 @@ export default function TerminalToolbar({
     [scripts, persistProjectScripts],
   );
 
+  const diffShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "diff.toggle"),
+    [keybindings],
+  );
+
   const onToggleDiff = useCallback(() => {
     void navigate({
       to: "/$threadId",
@@ -554,7 +559,9 @@ export default function TerminalToolbar({
                   </Toggle>
                 }
               />
-              <TooltipPopup side="bottom">Toggle diff panel</TooltipPopup>
+              <TooltipPopup side="bottom">
+                Toggle diff panel{diffShortcutLabel ? ` (${diffShortcutLabel})` : ""}
+              </TooltipPopup>
             </Tooltip>
           </>
         )}

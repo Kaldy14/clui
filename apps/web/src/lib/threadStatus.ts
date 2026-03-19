@@ -49,6 +49,21 @@ export function threadStatusPill(
   hasPendingApprovals: boolean,
   hasPendingUserInput: boolean,
 ): ThreadStatusPill | null {
+  if (thread.session?.status === "connecting") {
+    return {
+      label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  // Real-time hook status is the most authoritative signal when set.
+  // Check before activity-based pending approvals so stale activities
+  // don't override a live "Working" or "Completed" badge.
+  const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  if (pill) return pill;
+
   if (hasPendingApprovals) {
     return {
       label: "Pending Approval",
@@ -75,20 +90,6 @@ export function threadStatusPill(
       pulse: true,
     };
   }
-
-  if (thread.session?.status === "connecting") {
-    return {
-      label: "Connecting",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  // Hook-derived status checked before unseen completion so real-time state
-  // ("working", "needsInput") wins over a stale completion marker.
-  const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
-  if (pill) return pill;
 
   if (hasUnseenCompletion(thread)) {
     return {

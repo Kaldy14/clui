@@ -4,6 +4,123 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-19 — Git Quick Action: Default to Commit & Push, PR via Menu
+
+**Problem:** The git quick action button defaulted to "Commit, push & PR" which always created a PR, even when users often just want to commit and push.
+
+**Root cause:** `resolveQuickAction` returned `commit_push_pr` as the stacked action when working tree had changes, bundling PR creation into the primary button.
+
+**Fix:** Changed the quick action to "Commit & Push" (`commit_push`) by default. PR creation remains accessible via the dropdown options menu (Commit / Push / Create PR items). Updated tests to match.
+
+**Affected files:** `apps/web/src/components/GitActionsControl.logic.ts`, `apps/web/src/components/GitActionsControl.logic.test.ts`
+
+---
+
+## 2026-03-19 — Diff Panel Redesign: Inline Editor, File Tree, GitKraken Theme
+
+**Problem:** The diff panel lacked a review workflow, had generic styling, and required switching to an external editor to fix issues found during review.
+
+**Root cause:** The original diff panel was a read-only viewer with no review state tracking, no file tree, and default `pierre-dark` syntax theme.
+
+**Fix:** Major diff panel redesign with multiple features:
+- **Viewed workflow**: Per-file checkbox to mark files as reviewed (collapse in place), progress counter, reset button
+- **Custom syntax theme**: `clui-dark` shiki theme with VS Code Dark+ token colors (keywords `#559CD6`, strings `#CE9178`, types `#3FC8B0`, brackets `#FFD700`)
+- **GitKraken diff backgrounds**: Hardcoded dark mode colors (additions `#315037`, deletions `#392428`, emphasis `#592A2D`)
+- **File tree sidebar**: Collapsible hierarchical tree showing folder structure, change type badges (A/M/D/R), viewed status
+- **Keyboard navigation**: `j`/`k` to navigate files, `v` to toggle viewed, `e` to edit
+- **Word-level diff**: `lineDiffType: "word"` for inline change highlighting
+- **Review progress bar**: Thin green bar filling as files are marked viewed
+- **Inline editor**: CodeMirror 6 editor (lazy-loaded) for editing files directly in the diff panel with `Cmd+S` save
+- **`projects.readFile` RPC**: New end-to-end RPC method for fetching file contents with language inference
+
+**Affected files:** `apps/web/src/components/DiffPanel.tsx`, `apps/web/src/components/DiffFileTree.tsx`, `apps/web/src/components/DiffInlineEditor.tsx`, `apps/web/src/lib/diffThemeClui.ts`, `apps/web/src/lib/diffEditorTheme.ts`, `apps/web/src/lib/diffRendering.ts`, `apps/web/src/components/DiffWorkerPoolProvider.tsx`, `apps/web/src/index.css`, `packages/contracts/src/project.ts`, `packages/contracts/src/ws.ts`, `packages/contracts/src/ipc.ts`, `apps/server/src/wsServer.ts`, `apps/web/src/wsNativeApi.ts`, `apps/web/src/lib/projectReactQuery.ts`
+
+---
+
+## 2026-03-19 — Add `projects.readFile` RPC and TanStack Query hooks
+
+**Problem:** The DiffPanel inline editor needs to read file contents from the server to display original file content for editing, but no RPC method existed for reading workspace files.
+
+**Root cause:** Only `projects.writeFile` existed; no corresponding read method was implemented.
+
+**Fix:** Added `projects.readFile` RPC end-to-end: contract schemas (`ProjectReadFileInput`/`ProjectReadFileResult`), WS method tag, IPC type, server handler with path validation (reuses `resolveWorkspaceWritePath`), 1MB size limit, binary file detection, and language inference from file extension. Added client transport binding and `readFileQueryOptions` TanStack Query hook.
+
+**Affected files:** `packages/contracts/src/project.ts`, `packages/contracts/src/ws.ts`, `packages/contracts/src/ipc.ts`, `apps/server/src/wsServer.ts`, `apps/web/src/wsNativeApi.ts`, `apps/web/src/lib/projectReactQuery.ts`
+
+---
+
+## 2026-03-19 — Fix "Working" badge disappearing during long thinking/subagent operations
+
+**Problem:** The sidebar "Working" badge would disappear after ~90 seconds even though Claude Code was still actively working (e.g., during ultrathink, long thinking, or subagent execution). The thread would show no badge at all despite Claude being mid-turn.
+
+**Root cause:** The `sessionEventState.ts` idle timeout (`WORKING_IDLE_TIMEOUT_MS = 90_000`) unconditionally cleared `hookStatus` to `null` after 90 seconds of no terminal output. During long-running operations that produce no output (thinking, subagent processing), the timeout would fire and remove the badge. The output recovery heuristic could restore it, but only when new output arrived — which could be minutes later.
+
+**Fix:** Modified the idle timeout callback to check `turnInProgress` and `terminalStatus` before clearing. When a turn is still in progress and the terminal is active, the timer re-arms itself instead of clearing the badge. The badge only clears when the turn ends (completion/interrupt/dormant) or the terminal becomes inactive.
+
+**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`
+
+---
+
+## 2026-03-19 — Fix stale "Pending Approval" badge overriding real-time "Working" status
+
+**Problem:** The sidebar badge would show "Pending Approval" even after the user approved and Claude was actively working. The badge would eventually switch to "Working" but with a noticeable delay.
+
+**Root cause:** Two independent badge systems exist — activity-based (`derivePendingApprovals` from persisted server activities) and hook-based (`hookStatus` from real-time session events). In `resolveThreadStatusPill`, the activity-based check had higher priority than the hook-based check. When the user approved a permission, `hookStatus` transitioned to "working" immediately, but the `approval.resolved` activity could arrive late. During the gap, the stale activity-based "Pending Approval" overrode the real-time "Working" hookStatus.
+
+**Fix:** Reordered badge priority in both `resolveThreadStatusPill` (Sidebar.logic.ts) and `threadStatusPill` (threadStatus.ts) so real-time hook status (`claudeTerminalStatusPill`) is checked before activity-based pending approvals. When `hookStatus` is set (non-null), it's always the most authoritative signal. When `hookStatus` is null (idle at prompt), activity-based checks serve as the persistence fallback for reconnection scenarios.
+
+**Affected files:** `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/lib/threadStatus.ts`
+
+---
+
+## 2026-03-19 — Fix 5 additional badge state machine edge cases
+
+**Problems identified via comprehensive verification of the badge state machine:**
+
+1. **Stale hookStatus after reconnect**: On WebSocket reconnect, `sessionState.clearAll()` wiped the state machine internals (timers, turnInProgress, grace periods) but the Zustand store preserved stale `hookStatus` values, causing permanently wrong badges with no recovery path.
+
+2. **Dormant terminal sort pollution**: `handleHookStatus` only guarded against dormant/new terminals for "working" hooks, not for "pendingApproval", "needsInput", or "error". Stale hooks for dormant terminals would set `hookStatus` and incorrectly sort the thread to tier 0 (needs action).
+
+3. **False positive interrupt detection**: `data.includes("Interrupted")` matched any terminal output containing the word "Interrupted", including normal prose from Claude's responses. This could falsely clear the "Working" badge mid-turn.
+
+4. **Inconsistent badge labels**: Activity-based user input showed "Awaiting Input" while hook-based showed "Needs Input" for the same state, with different colors (indigo vs amber).
+
+5. **Missed unseen completion for background threads**: `latestTurn.completedAt` was only updated via full snapshot sync (deferred for background threads), so `hasUnseenCompletion` never triggered — the completion badge would vanish after `hookStatus` cleared with no fallback.
+
+**Fixes:**
+
+1. Clear all `hookStatus` values in the store immediately after `sessionState.clearAll()` on reconnect.
+2. Moved the dormant/new terminal guard to apply to all non-completed hooks (before: only "working").
+3. Narrowed interrupt detection to require the `⏎` character (Claude Code's specific interrupt output format).
+4. Unified label to "Needs Input" with amber color in both systems.
+5. Eagerly patch `latestTurn.completedAt` for background threads when the "completed" hook fires.
+
+**Affected files:** `apps/web/src/routes/__root.tsx`, `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`, `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.logic.test.ts`
+
+---
+
+## 2026-03-19 — Fix invisible text and dark highlighting in light mode terminal
+
+**Problem:** When light mode is selected in the app, xterm.js terminal text becomes invisible on ANSI-colored backgrounds (e.g. diff highlighting from Claude Code). Green/red backgrounds for added/removed lines are too dark, and dark foreground text disappears against them. Selection highlighting is also hard to see.
+
+**Root cause:** The light theme ANSI colors in `terminalTheme.ts` were very dark (e.g. green `#4d6b3a`, red `#8b3a3a`) — appropriate as foreground on white but unreadable when CLI tools use them as background colors. Claude Code's diff output uses ANSI background colors, so dark text on dark backgrounds = invisible. Selection background used a subtle green tint that was hard to distinguish.
+
+**Fix:** Brightened all ANSI colors in both light themes (muted-earth, classic-pastel). Normal colors moved from ~30% to ~45% lightness, bright variants from ~35% to ~55% lightness. Changed selection background from green-tinted to blue-tinted with higher opacity for better visibility. Added a hint in the Appearance settings section telling users to run `/theme` inside Claude Code to match the app's resolved theme.
+
+**Affected files:** `apps/web/src/lib/terminalTheme.ts`, `apps/web/src/routes/_chat.settings.tsx`
+
+---
+
+## 2026-03-19 — Add close button and Escape key to DiffPanel
+
+**Problem:** The diff panel could only be closed by clicking the diff toggle button in the toolbar, which was unintuitive. No close affordance existed within the panel itself.
+
+**Fix:** Added an X close button to the DiffPanel header (after the stacked/split toggle group) and an Escape keydown handler on the panel root. Pressing Escape while any element within the diff panel is focused will close it. The root div uses `tabIndex={-1}` so clicking anywhere in the panel makes it focusable for keyboard events.
+
+**Affected files:** `apps/web/src/components/DiffPanel.tsx`
+
+---
+
 ## 2026-03-19 — Fix thread terminal drawer stealing focus from Claude Code terminal
 
 **Problem:** When switching to a thread that has the thread terminal drawer open, focus lands in the drawer terminal instead of the Claude Code terminal. Users expect focus to always go to the Claude Code terminal on thread switch.

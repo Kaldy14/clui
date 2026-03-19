@@ -197,7 +197,7 @@ export function resolveQuickAction(
   }
 
   if (hasChanges) {
-    return { label: "Commit, push & PR", disabled: false, kind: "run_action", action: "commit_push_pr" };
+    return { label: "Commit & Push", disabled: false, kind: "run_action", action: "commit_push" };
   }
 
   if (!gitStatus.hasUpstream) {

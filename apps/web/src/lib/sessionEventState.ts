@@ -90,6 +90,14 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
         workingIdleLastReset.delete(rawThreadId);
         const current = deps.getThreadHookStatus(rawThreadId);
         if (current === "working") {
+          // If a turn is still in progress and the terminal is active,
+          // Claude is likely doing long-running work (thinking, subagents)
+          // with no output. Re-arm the timer instead of clearing the badge.
+          const terminalStatus = deps.getThreadTerminalStatus(rawThreadId);
+          if (turnInProgress.get(rawThreadId) && terminalStatus === "active") {
+            resetWorkingIdleTimer(rawThreadId, true);
+            return;
+          }
           deps.setHookStatus(rawThreadId, null);
         }
       }, WORKING_IDLE_TIMEOUT_MS),
@@ -118,12 +126,14 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       return { applied: true, hookStatus: "completed" };
     }
 
-    if (hookStatus === "working") {
-      const terminalStatus = deps.getThreadTerminalStatus(rawThreadId);
-      if (terminalStatus === "dormant" || terminalStatus === "new") {
-        return { applied: false };
-      }
+    // Reject any non-completed hook for dormant/new terminals — these are
+    // stale events that would pollute hookStatus and sort order.
+    const terminalStatus = deps.getThreadTerminalStatus(rawThreadId);
+    if (terminalStatus === "dormant" || terminalStatus === "new") {
+      return { applied: false };
+    }
 
+    if (hookStatus === "working") {
       // Reject stale PostToolUse "working" that arrives out-of-order after
       // PermissionRequest already set "pendingApproval" or "needsInput".
       // Both hooks fire near-simultaneously via async curl, so arrival
@@ -223,7 +233,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       (hookStatus === "working" ||
         hookStatus === "pendingApproval" ||
         hookStatus === "needsInput") &&
-      data.includes("Interrupted")
+      data.includes("⏎") && data.includes("Interrupted")
     ) {
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);

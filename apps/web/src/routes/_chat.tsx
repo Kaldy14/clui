@@ -13,6 +13,7 @@ import { projectTerminalThreadId } from "../types";
 import { isMacPlatform } from "../lib/utils";
 import { setEvictionGuard } from "../lib/claudeTerminalCache";
 import {
+  isDiffToggleShortcut,
   isProjectTerminalToggleShortcut,
   isSpeechToggleShortcut,
   isTerminalToggleShortcut,
@@ -21,6 +22,7 @@ import {
   isThreadSearchShortcut,
   resolveShortcutCommand,
 } from "../keybindings";
+import { stripDiffSearchParams } from "../diffRouteSearch";
 import { useSpeechStore } from "../speechStore";
 import { projectScriptIdFromCommand } from "../projectScripts";
 import { runProjectScriptInTerminal } from "../components/TerminalToolbar";
@@ -128,6 +130,22 @@ function ChatRouteLayout() {
         if (routeThreadId) {
           const isOpen = terminalStateByThreadId[routeThreadId]?.terminalOpen ?? false;
           setTerminalOpen(routeThreadId, !isOpen);
+        }
+        return;
+      }
+
+      // Cmd+D: Toggle diff panel
+      if (isDiffToggleShortcut(event, keybindings)) {
+        event.preventDefault();
+        if (routeThreadId) {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: routeThreadId },
+            search: (previous: Record<string, unknown>) => {
+              const rest = stripDiffSearchParams(previous);
+              return previous.diff === "1" ? rest : { ...rest, diff: "1" };
+            },
+          });
         }
         return;
       }

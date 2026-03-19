@@ -10,7 +10,6 @@ export interface ThreadStatusPill {
     | "Connecting"
     | "Completed"
     | "Pending Approval"
-    | "Awaiting Input"
     | "Needs Input"
     | "Plan Ready"
     | "Running"
@@ -122,6 +121,24 @@ export function resolveThreadStatusPill(input: {
 }): ThreadStatusPill | null {
   const { hasPendingApprovals, hasPendingUserInput, thread } = input;
 
+  if (thread.session?.status === "connecting") {
+    return {
+      label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  // Real-time hook status is the most authoritative signal when set.
+  // Check it before activity-based pending approvals so that stale
+  // "approval.requested" activities (whose "approval.resolved" event
+  // hasn't arrived yet) don't override a live "Working" badge.
+  // When hookStatus is null (idle at prompt), falls through to
+  // activity-based checks which serve as the persistence fallback.
+  const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  if (terminalPill) return terminalPill;
+
   if (hasPendingApprovals) {
     return {
       label: "Pending Approval",
@@ -133,9 +150,9 @@ export function resolveThreadStatusPill(input: {
 
   if (hasPendingUserInput) {
     return {
-      label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      label: "Needs Input",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
     };
   }
@@ -143,15 +160,6 @@ export function resolveThreadStatusPill(input: {
   if (thread.session?.status === "running") {
     return {
       label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  if (thread.session?.status === "connecting") {
-    return {
-      label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
@@ -171,13 +179,6 @@ export function resolveThreadStatusPill(input: {
       pulse: false,
     };
   }
-
-  // Claude terminal status (hook-derived rich status or basic active/dormant).
-  // Checked before hasUnseenCompletion so real-time hook status ("working",
-  // "needsInput", etc.) takes priority over a stale completion marker from
-  // a previous turn that hasn't been cleared yet.
-  const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
-  if (terminalPill) return terminalPill;
 
   if (hasUnseenCompletion(thread)) {
     return {

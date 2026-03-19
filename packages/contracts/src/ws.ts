@@ -42,7 +42,7 @@ import {
   ClaudeResizeInput,
 } from "./claude-terminal";
 import { KeybindingRule } from "./keybindings";
-import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import { ProjectSearchEntriesInput, ProjectWriteFileInput, ProjectReadFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import {
   McpGetStatusInput,
@@ -60,6 +60,7 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsReadFile: "projects.readFile",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -146,6 +147,7 @@ const WebSocketRequestBody = Schema.Union([
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.projectsReadFile, ProjectReadFileInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

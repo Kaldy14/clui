@@ -343,12 +343,12 @@ describe("when: working tree has local changes", () => {
     const quick = resolveQuickAction(status({ hasWorkingTreeChanges: true }), false);
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
+      action: "commit_push",
+      label: "Commit & Push",
     });
   });
 
-  it("resolveQuickAction returns commit, push & PR when open PR exists", () => {
+  it("resolveQuickAction returns commit & push when open PR exists", () => {
     const quick = resolveQuickAction(
       status({
         hasWorkingTreeChanges: true,
@@ -365,8 +365,8 @@ describe("when: working tree has local changes", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
+      action: "commit_push",
+      label: "Commit & Push",
     });
   });
 
@@ -402,7 +402,7 @@ describe("when: working tree has local changes", () => {
 });
 
 describe("when: on default branch without open PR", () => {
-  it("resolveQuickAction returns commit, push & PR when local changes exist", () => {
+  it("resolveQuickAction returns commit & push when local changes exist", () => {
     const quick = resolveQuickAction(
       status({ branch: "main", hasWorkingTreeChanges: true }),
       false,
@@ -410,8 +410,8 @@ describe("when: on default branch without open PR", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
+      action: "commit_push",
+      label: "Commit & Push",
       disabled: false,
     });
   });
@@ -432,15 +432,15 @@ describe("when: on default branch without open PR", () => {
 });
 
 describe("when: working tree has local changes and branch is behind upstream", () => {
-  it("resolveQuickAction still prefers commit, push & PR", () => {
+  it("resolveQuickAction still prefers commit & push", () => {
     const quick = resolveQuickAction(
       status({ hasWorkingTreeChanges: true, behindCount: 1 }),
       false,
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
+      action: "commit_push",
+      label: "Commit & Push",
     });
   });
 

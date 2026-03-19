@@ -86,14 +86,14 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Pending Approval", pulse: false });
   });
 
-  it("shows awaiting input when plan mode is blocked on user answers", () => {
+  it("shows needs input when plan mode is blocked on user answers", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
         hasPendingApprovals: false,
         hasPendingUserInput: true,
       }),
-    ).toMatchObject({ label: "Awaiting Input", pulse: false });
+    ).toMatchObject({ label: "Needs Input", pulse: false });
   });
 
   it("falls back to working when the thread is actively running without blockers", () => {

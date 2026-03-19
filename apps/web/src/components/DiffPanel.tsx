@@ -1,6 +1,6 @@
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@clui/contracts";
 import {
@@ -8,13 +8,17 @@ import {
   ChevronRightIcon,
   Columns2Icon,
   FolderTreeIcon,
+  PencilIcon,
   RotateCcw,
   Rows3Icon,
   Square,
   SquareCheckBig,
+  XIcon,
 } from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -22,7 +26,11 @@ import {
   useState,
 } from "react";
 import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
-import { checkpointDiffQueryOptions, workingTreeDiffQueryOptions } from "~/lib/providerReactQuery";
+import {
+  checkpointDiffQueryOptions,
+  workingTreeDiffQueryOptions,
+} from "~/lib/providerReactQuery";
+import { readFileQueryOptions } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "../terminal-links";
@@ -35,6 +43,8 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
 import DiffFileTree from "./DiffFileTree";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
+
+const DiffInlineEditor = lazy(() => import("./DiffInlineEditor"));
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -196,6 +206,81 @@ interface DiffPanelProps {
   mode?: "inline" | "sheet" | "sidebar";
 }
 
+function EditableFileView({
+  filePath,
+  cwd,
+  onSave,
+  onCancel,
+}: {
+  filePath: string;
+  cwd: string;
+  onSave: (filePath: string, content: string) => void;
+  onCancel: (filePath: string) => void;
+  isSaving: boolean;
+}) {
+  const fileQuery = useQuery(readFileQueryOptions(cwd, filePath));
+  const queryClient = useQueryClient();
+  const writeMutation = useMutation({
+    mutationFn: async (content: string) => {
+      const api = readNativeApi();
+      if (!api) throw new Error("API not available");
+      return api.projects.writeFile({ cwd, relativePath: filePath, contents: content });
+    },
+    onSuccess: () => {
+      // Invalidate diff queries so the diff view refreshes
+      void queryClient.invalidateQueries({ queryKey: ["orchestration"] });
+      void queryClient.invalidateQueries({ queryKey: ["workingTreeDiff"] });
+      void queryClient.invalidateQueries({ queryKey: ["projects", "readFile", cwd, filePath] });
+      onSave(filePath, "");
+    },
+  });
+
+  if (fileQuery.isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
+        Loading file...
+      </div>
+    );
+  }
+
+  if (fileQuery.error) {
+    return (
+      <div className="px-3 py-4 text-xs text-red-400">
+        Failed to load file: {fileQuery.error instanceof Error ? fileQuery.error.message : "Unknown error"}
+        <span className="ml-1 text-muted-foreground/50">(cwd: {cwd})</span>
+        <button
+          type="button"
+          className="ml-2 text-muted-foreground underline hover:text-foreground"
+          onClick={() => onCancel(filePath)}
+        >
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  if (!fileQuery.data) return null;
+
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
+          Loading editor...
+        </div>
+      }
+    >
+      <DiffInlineEditor
+        filePath={filePath}
+        initialContent={fileQuery.data.contents}
+        language={fileQuery.data.language}
+        onSave={(content) => writeMutation.mutate(content)}
+        onCancel={() => onCancel(filePath)}
+        isSaving={writeMutation.isPending}
+      />
+    </Suspense>
+  );
+}
+
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
@@ -221,6 +306,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
+  const projectCwd = activeProject?.cwd ?? activeCwd;
   const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeCwd ?? null));
   const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -369,6 +455,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setViewedFiles(new Set());
   }, []);
 
+  const [editingFiles, setEditingFiles] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setEditingFiles(new Set());
+  }, [selectedPatch]);
+
+  const startEditing = useCallback((filePath: string) => {
+    setEditingFiles((prev) => new Set(prev).add(filePath));
+  }, []);
+
+  const stopEditing = useCallback((filePath: string) => {
+    setEditingFiles((prev) => {
+      const next = new Set(prev);
+      next.delete(filePath);
+      return next;
+    });
+  }, []);
+
   // Files keep their original alphabetical order — viewed files just collapse in place
   const sortedRenderableFiles = renderableFiles;
 
@@ -433,12 +537,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           toggleFileViewed(filePath);
           return prev;
         });
+      } else if (event.key === "e") {
+        event.preventDefault();
+        setFocusedFileIndex((prev) => {
+          if (prev === null || !sortedRenderableFiles[prev]) return prev;
+          const filePath = resolveFileDiffPath(sortedRenderableFiles[prev]);
+          if (editingFiles.has(filePath)) {
+            stopEditing(filePath);
+          } else {
+            startEditing(filePath);
+          }
+          return prev;
+        });
       }
     };
 
     viewport.addEventListener("keydown", onKeyDown);
     return () => viewport.removeEventListener("keydown", onKeyDown);
-  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed]);
+  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed, editingFiles, startEditing, stopEditing]);
 
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
@@ -493,6 +609,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       },
     });
   };
+  const closeDiff = useCallback(() => {
+    if (!routeThreadId) return;
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: routeThreadId },
+      search: (previous) => stripDiffSearchParams(previous),
+    });
+  }, [navigate, routeThreadId]);
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
     if (!element) {
@@ -697,6 +821,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <Columns2Icon className="size-3" />
         </Toggle>
       </ToggleGroup>
+      <div className="h-3.5 w-px bg-border/50 dark:bg-border/30 shrink-0" />
+      <button
+        type="button"
+        className="shrink-0 rounded-md border border-border/70 p-1.5 text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
+        onClick={closeDiff}
+        title="Close diff panel (Esc)"
+      >
+        <XIcon className="size-3" />
+      </button>
     </>
   );
   const headerRowClassName = cn(
@@ -707,11 +840,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   return (
     <div
       className={cn(
-        "flex h-full min-w-0 flex-col bg-background",
+        "flex h-full min-w-0 flex-col bg-background outline-none",
         mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",
       )}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeDiff();
+        }
+      }}
     >
       {shouldUseDragRegion ? (
         <div className={headerRowClassName}>{headerRow}</div>
@@ -866,8 +1006,33 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                             </span>
                           )}
                         </div>
+                        {projectCwd && !isViewed && (
+                          <button
+                            type="button"
+                            className={cn(
+                              "shrink-0 rounded p-1 transition-colors",
+                              editingFiles.has(filePath)
+                                ? "bg-blue-500/20 text-blue-400"
+                                : "text-muted-foreground/60 hover:bg-accent hover:text-foreground",
+                            )}
+                            onClick={() =>
+                              editingFiles.has(filePath) ? stopEditing(filePath) : startEditing(filePath)
+                            }
+                            title={editingFiles.has(filePath) ? "Close editor" : "Edit file (e)"}
+                          >
+                            <PencilIcon className="size-3.5" />
+                          </button>
+                        )}
                       </div>
-                      {!isViewed && (
+                      {!isViewed && editingFiles.has(filePath) && projectCwd ? (
+                        <EditableFileView
+                          filePath={filePath}
+                          cwd={projectCwd}
+                          onSave={stopEditing}
+                          onCancel={stopEditing}
+                          isSaving={false}
+                        />
+                      ) : !isViewed ? (
                         <div className="animate-[diffExpand_250ms_ease-out] overflow-clip">
                           <FileDiff
                             fileDiff={fileDiff}
@@ -881,7 +1046,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                             }}
                           />
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   );
                 })}

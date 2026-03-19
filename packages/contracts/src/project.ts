@@ -37,3 +37,16 @@ export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+export const ProjectReadFileInput = Schema.Struct({
+  cwd: Schema.String,
+  relativePath: Schema.String.check(Schema.isMaxLength(512)),
+});
+export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
+
+export const ProjectReadFileResult = Schema.Struct({
+  relativePath: Schema.String,
+  contents: Schema.String,
+  language: Schema.String,
+});
+export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
