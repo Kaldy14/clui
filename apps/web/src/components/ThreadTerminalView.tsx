@@ -541,9 +541,16 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       const savedTop = vp.scrollTop;
       terminal.write(data, () => {
         if (disposed) return;
-        // Re-query in case the DOM was reparented between enqueue and render
-        const currentVp = getViewport();
-        if (currentVp) currentVp.scrollTop = savedTop;
+        // xterm.js's render (which sets scrollTop = ydisp * charHeight via
+        // _innerRefresh) is scheduled as a rAF during write processing —
+        // BEFORE this callback fires. Scheduling our restore as a rAF here
+        // guarantees it runs AFTER xterm's render rAF in the same frame
+        // (rAFs execute in registration order).
+        requestAnimationFrame(() => {
+          if (disposed) return;
+          const currentVp = getViewport();
+          if (currentVp) currentVp.scrollTop = savedTop;
+        });
       });
       if (!hasNewOutputFlag) {
         hasNewOutputFlag = true;
@@ -745,12 +752,12 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       const vp = getViewport();
       const savedTop = vp?.scrollTop;
       fitAddon.fit();
-      if (vp) {
-        if (atBottom) {
-          terminal.scrollToBottom();
-        } else if (savedTop !== undefined) {
-          vp.scrollTop = savedTop;
-        }
+      // fit() → terminal.resize() schedules xterm's render rAF which sets
+      // scrollTop via _innerRefresh. Our rAF runs after it (registered later).
+      if (vp && !atBottom && savedTop !== undefined) {
+        requestAnimationFrame(() => {
+          if (!disposed) vp.scrollTop = savedTop;
+        });
       }
     };
     window.addEventListener("resize", onWindowResize);
@@ -842,12 +849,12 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
         const vp = getViewport();
         const savedTop = vp?.scrollTop;
         fitAddon.fit();
-        if (vp) {
-          if (atBottom) {
-            terminal.scrollToBottom();
-          } else if (savedTop !== undefined) {
-            vp.scrollTop = savedTop;
-          }
+        // fit() inside a rAF schedules xterm's render for the NEXT frame.
+        // Our nested rAF also runs next frame, but after xterm's (registered later).
+        if (vp && !atBottom && savedTop !== undefined) {
+          requestAnimationFrame(() => {
+            if (!disposed) vp.scrollTop = savedTop;
+          });
         }
       });
     });

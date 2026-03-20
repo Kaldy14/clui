@@ -4,6 +4,18 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-20 — Fix terminal scroll jump (round 2: race with xterm render pipeline)
+
+**Problem:** Previous scroll-jump fix still allowed jumps. Scrolling up even 1px from the bottom while Claude Code output arrived caused the viewport to jump away.
+
+**Root cause:** xterm.js v5 decouples parsing from rendering. The `write(data, callback)` callback fires after parsing but *before* the render rAF. xterm's render calls `_innerRefresh` which sets `scrollTop = ydisp * charHeight`, overwriting the scroll restoration done in the callback. Same race existed in resize handlers where the sync restore after `fit()` was overwritten by xterm's deferred render.
+
+**Fix:** Schedule `scrollTop` restoration inside a `requestAnimationFrame` from within the write callback and after `fit()` calls. xterm's render rAF is registered first (during write processing / fit), so our rAF executes after xterm's in the same frame — guaranteeing our restoration is the last write to `scrollTop`.
+
+**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
+
+---
+
 ## 2026-03-20 — Fix speech-to-text: no audio captured, "ultrathink" in UI, silent write failures
 
 **Problem:** Speech-to-text was completely broken — pressing the shortcut showed "ultrathink" in the recording animation, audio was never captured, and transcribed text never reached the terminal.
