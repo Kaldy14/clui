@@ -56,7 +56,7 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some("en")),
   ),
   voicePrefix: Schema.String.check(Schema.isMaxLength(256)).pipe(
-    Schema.withConstructorDefault(() => Option.some("ultrathink")),
+    Schema.withConstructorDefault(() => Option.some("")),
   ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;

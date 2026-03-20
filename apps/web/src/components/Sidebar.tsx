@@ -60,16 +60,11 @@ import { toastManager } from "./ui/toast";
 import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
-  getDesktopUpdateBannerButtonLabel,
-  getDesktopUpdateBannerTitle,
-  getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldOpenReleasesPage,
   shouldShowDesktopUpdateBanner,
-  shouldHighlightDesktopUpdateError,
-  shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
@@ -1070,11 +1065,6 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     };
   }, []);
 
-  const showDesktopUpdateButton = isElectron && shouldShowDesktopUpdateButton(desktopUpdateState);
-
-  const desktopUpdateTooltip = desktopUpdateState
-    ? getDesktopUpdateButtonTooltip(desktopUpdateState)
-    : "Update available";
 
   const desktopUpdateButtonDisabled = isDesktopUpdateButtonDisabled(desktopUpdateState);
   const desktopUpdateButtonAction = desktopUpdateState
@@ -1082,29 +1072,12 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     : "none";
   const showDesktopUpdateBanner =
     isElectron && shouldShowDesktopUpdateBanner(desktopUpdateState);
-  const desktopUpdateBannerTitle = desktopUpdateState
-    ? getDesktopUpdateBannerTitle(desktopUpdateState)
-    : null;
-  const desktopUpdateBannerButtonLabel = desktopUpdateState
-    ? getDesktopUpdateBannerButtonLabel(desktopUpdateState)
-    : null;
   const showArm64IntelBuildWarning =
     isElectron && shouldShowArm64IntelBuildWarning(desktopUpdateState);
   const arm64IntelBuildWarningDescription =
     desktopUpdateState && showArm64IntelBuildWarning
       ? getArm64IntelBuildWarningDescription(desktopUpdateState)
       : null;
-  const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonDisabled
-    ? "cursor-not-allowed opacity-60"
-    : "hover:bg-accent hover:text-foreground";
-  const desktopUpdateButtonClasses =
-    desktopUpdateState?.status === "downloaded"
-      ? "text-emerald-500"
-      : desktopUpdateState?.status === "downloading"
-        ? "text-sky-400"
-        : shouldHighlightDesktopUpdateError(desktopUpdateState)
-          ? "text-rose-500 animate-pulse"
-          : "text-amber-500 animate-pulse";
   const newThreadShortcutLabel = useMemo(
     () =>
       shortcutLabelForCommand(keybindings, "chat.newLocal") ??
@@ -1215,25 +1188,6 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         <>
           <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
             {wordmark}
-            {showDesktopUpdateButton && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={desktopUpdateTooltip}
-                      aria-disabled={desktopUpdateButtonDisabled || undefined}
-                      disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 ml-auto mt-1.5 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
-                      onClick={handleDesktopUpdateButtonClick}
-                    >
-                      <RocketIcon className="size-3.5" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="bottom">{desktopUpdateTooltip}</TooltipPopup>
-              </Tooltip>
-            )}
           </SidebarHeader>
         </>
       ) : (
@@ -1769,52 +1723,59 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         </SidebarGroup>
       </SidebarContent>
 
-      {showDesktopUpdateBanner && !showArm64IntelBuildWarning && !updateBannerDismissed && desktopUpdateBannerTitle ? (
-        <div className="px-2 pb-1">
-          <div
-            className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs ${desktopUpdateState?.status === "error" ? "bg-destructive/8 text-destructive" : "bg-muted/40 text-muted-foreground"}`}
-          >
-            {desktopUpdateState?.status === "downloaded" ? (
-              <RocketIcon className="size-3 shrink-0" />
-            ) : (
-              <DownloadIcon className="size-3 shrink-0" />
-            )}
-            <span className="min-w-0 truncate">{desktopUpdateBannerTitle}</span>
-            {desktopUpdateState?.status === "downloading" &&
-            typeof desktopUpdateState.downloadPercent === "number" ? (
-              <div className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-muted/40">
-                <div
-                  className="h-full rounded-full bg-info transition-all duration-300"
-                  style={{ width: `${Math.floor(desktopUpdateState.downloadPercent)}%` }}
-                />
-              </div>
-            ) : null}
-            {desktopUpdateBannerButtonLabel ? (
-              <Button
-                size="xs"
-                variant="ghost"
-                className="ml-auto h-5 shrink-0 px-1.5 text-[10px]"
-                disabled={desktopUpdateButtonDisabled}
-                onClick={handleDesktopUpdateButtonClick}
-              >
-                {desktopUpdateBannerButtonLabel}
-              </Button>
-            ) : null}
-            <button
-              type="button"
-              aria-label="Dismiss update banner"
-              className="inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 transition-colors hover:text-foreground"
-              onClick={() => setUpdateBannerDismissed(true)}
-            >
-              <XIcon className="size-3" />
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       <SidebarSeparator />
       <SidebarFooter className="p-2">
         <SidebarMenu>
+          {showDesktopUpdateBanner && !showArm64IntelBuildWarning && !updateBannerDismissed ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="sm"
+                className={`gap-2 px-2 py-1 ${
+                  desktopUpdateButtonDisabled
+                    ? "cursor-not-allowed opacity-60"
+                    : "hover:bg-accent hover:text-foreground"
+                } ${
+                  desktopUpdateState?.status === "error"
+                    ? "text-destructive"
+                    : desktopUpdateState?.status === "downloaded"
+                      ? "text-emerald-500"
+                      : "text-amber-500"
+                }`}
+                disabled={desktopUpdateButtonDisabled}
+                onClick={handleDesktopUpdateButtonClick}
+              >
+                {desktopUpdateState?.status === "downloading" ? (
+                  <>
+                    <DownloadIcon className="size-3 shrink-0" />
+                    <span className="min-w-0 truncate text-xs">
+                      Downloading{typeof desktopUpdateState.downloadPercent === "number" ? ` ${Math.floor(desktopUpdateState.downloadPercent)}%` : "…"}
+                    </span>
+                  </>
+                ) : desktopUpdateState?.status === "downloaded" ? (
+                  <>
+                    <RocketIcon className="size-3 shrink-0" />
+                    <span className="min-w-0 truncate text-xs">Restart to update</span>
+                  </>
+                ) : (
+                  <>
+                    <DownloadIcon className="size-3 shrink-0" />
+                    <span className="min-w-0 truncate text-xs">Update available</span>
+                  </>
+                )}
+                <button
+                  type="button"
+                  aria-label="Dismiss"
+                  className="ml-auto inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 transition-colors hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setUpdateBannerDismissed(true);
+                  }}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
           <SidebarMenuItem>
             {isOnSettings ? (
               <SidebarMenuButton

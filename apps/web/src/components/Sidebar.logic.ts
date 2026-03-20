@@ -78,8 +78,12 @@ function threadSortTier(
   hasPendingUserInput: boolean,
 ): number {
   // Tier 0: Needs user action — most urgent
-  if (hasPendingApprovals) return 0;
-  if (hasPendingUserInput) return 0;
+  // Activity-based flags only count for non-active terminals; for active
+  // terminals hookStatus (below) is the authoritative real-time source.
+  if (thread.terminalStatus !== "active") {
+    if (hasPendingApprovals) return 0;
+    if (hasPendingUserInput) return 0;
+  }
   if (thread.hookStatus === "pendingApproval" || thread.hookStatus === "needsInput") return 0;
   if (thread.hookStatus === "error") return 0;
 
@@ -134,27 +138,33 @@ export function resolveThreadStatusPill(input: {
   // Check it before activity-based pending approvals so that stale
   // "approval.requested" activities (whose "approval.resolved" event
   // hasn't arrived yet) don't override a live "Working" badge.
-  // When hookStatus is null (idle at prompt), falls through to
-  // activity-based checks which serve as the persistence fallback.
   const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
   if (terminalPill) return terminalPill;
 
-  if (hasPendingApprovals) {
-    return {
-      label: "Pending Approval",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
-  }
+  // Activity-based badges are only shown when the terminal is NOT active.
+  // For active terminals, hookStatus (checked above) is the authoritative
+  // real-time source.  When hookStatus is null the terminal is idle at the
+  // prompt — any unresolved "approval.requested" activities are stale
+  // leftovers (e.g. from rejected tools whose approval.resolved was never
+  // emitted) and must not re-trigger the badge.
+  if (thread.terminalStatus !== "active") {
+    if (hasPendingApprovals) {
+      return {
+        label: "Pending Approval",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    }
 
-  if (hasPendingUserInput) {
-    return {
-      label: "Needs Input",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
+    if (hasPendingUserInput) {
+      return {
+        label: "Needs Input",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    }
   }
 
   if (thread.session?.status === "running") {

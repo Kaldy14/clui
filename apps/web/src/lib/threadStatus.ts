@@ -59,27 +59,30 @@ export function threadStatusPill(
   }
 
   // Real-time hook status is the most authoritative signal when set.
-  // Check before activity-based pending approvals so stale activities
-  // don't override a live "Working" or "Completed" badge.
   const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
   if (pill) return pill;
 
-  if (hasPendingApprovals) {
-    return {
-      label: "Pending Approval",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
-  }
+  // Activity-based badges are only shown when the terminal is NOT active.
+  // For active terminals, hookStatus (checked above) is the authoritative
+  // real-time source — stale unresolved activities must not re-trigger badges.
+  if (thread.terminalStatus !== "active") {
+    if (hasPendingApprovals) {
+      return {
+        label: "Pending Approval",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    }
 
-  if (hasPendingUserInput) {
-    return {
-      label: "Needs Input",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
+    if (hasPendingUserInput) {
+      return {
+        label: "Needs Input",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    }
   }
 
   if (thread.session?.status === "running") {

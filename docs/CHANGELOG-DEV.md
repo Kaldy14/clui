@@ -4,6 +4,42 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-20 — Fix speech-to-text: no audio captured, "ultrathink" in UI, silent write failures
+
+**Problem:** Speech-to-text was completely broken — pressing the shortcut showed "ultrathink" in the recording animation, audio was never captured, and transcribed text never reached the terminal.
+
+**Root cause:** Three independent bugs: (1) `AudioContext` created without `resume()` in `useAudioCapture.ts` — browser autoplay policy (Chrome 71+) left it in `"suspended"` state, so `ScriptProcessorNode.onaudioprocess` never fired and zero audio was captured. (2) Default `voicePrefix` in `appSettings.ts` was `"ultrathink"`, which displayed in the recording bar and was prepended to all transcriptions. (3) `claude.write()` call in `useSpeechToText.ts` was fire-and-forget with no `.catch()` — if the write failed, the transcription was silently lost. Additionally, the `WorkerOutMessage` type in `whisperManager.ts` was missing the `id` field on the `ready` variant (mismatching the worker), and the auto-load in `SpeechControl.tsx` had no `.catch()` for worker failures.
+
+**Fix:** Added `await audioCtx.resume()` after AudioContext creation. Changed voicePrefix default to empty string. Added `.catch()` error handling to `claude.write()` matching the codebase pattern. Fixed worker message type mismatch. Added `.catch()` to auto-load.
+
+**Affected files:** `apps/web/src/hooks/useAudioCapture.ts`, `apps/web/src/hooks/useSpeechToText.ts`, `apps/web/src/appSettings.ts`, `apps/web/src/lib/whisperManager.ts`, `apps/web/src/components/SpeechControl.tsx`
+
+---
+
+## 2026-03-20 — Fix "Pending Approval" badge returning after reset
+
+**Problem:** Threads that finished work kept showing a "Pending Approval" badge. Using "Reset status badge" cleared it momentarily, but it returned on the next server sync.
+
+**Root cause:** Two issues combined: (1) Server tracked only one pending approval requestId per thread (`Map<string, string>`). When a user rejected a tool (no `post-tool-use` fired) and Claude proposed another, the old requestId was overwritten and its `approval.requested` activity was never resolved — creating permanently orphaned activities. (2) Client `syncServerReadModel` unconditionally overwrites `activities` from the server (unlike `hookStatus` which preserves client state), so locally-cleared activities were restored on the next sync. `resolveThreadStatusPill` then fell through to activity-based "Pending Approval" even though the real-time hookStatus system said the thread was idle.
+
+**Fix:** Client: Gate activity-based badges (`hasPendingApprovals`, `hasPendingUserInput`) behind `terminalStatus !== "active"` in both `resolveThreadStatusPill` and `threadSortTier`. For active terminals, hookStatus is the authoritative real-time source — null means idle at prompt, not pending approval. Server: Changed `pendingApprovalRequestIdByThread` from `Map<string, string>` to `Map<string, Set<string>>` so multiple pending approvals are tracked. `stop` and `user-prompt-submit` now resolve ALL pending approvals, not just the last one.
+
+**Affected files:** `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/lib/threadStatus.ts`, `apps/server/src/wsServer.ts`
+
+---
+
+## 2026-03-20 — Move update button to sidebar footer, make it slim
+
+**Problem:** The desktop update button sat in the sidebar header, overflowing and looking ugly. A separate banner below the content area duplicated update info with too much visual weight.
+
+**Root cause:** Two separate update UI elements (header icon button + content-area banner) competed for space, and the banner was too large with multiple sub-elements.
+
+**Fix:** Removed the header rocket icon button entirely. Replaced the old banner with a slim `SidebarMenuButton` row inside `SidebarFooter` (above Settings) that just says "Update available", "Downloading X%", or "Restart to update" depending on state. Dismiss X button retained. Cleaned up unused variables and imports.
+
+**Affected files:** `apps/web/src/components/Sidebar.tsx`
+
+---
+
 ## 2026-03-19 — Add "Reset status badge" to thread context menu
 
 **Problem:** Thread status badges (e.g. "Pending Approval", "Working") can get stuck in a stale state when hook events arrive out of order or are missed entirely, with no way for the user to clear them.

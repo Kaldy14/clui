@@ -1,5 +1,5 @@
 type WorkerOutMessage =
-  | { type: "ready" }
+  | { type: "ready"; id: string }
   | { type: "result"; text: string; id: string }
   | { type: "error"; message: string; id: string }
   | {

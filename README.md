@@ -57,7 +57,11 @@ See [CLAUDE.md](./CLAUDE.md) for architecture details and development commands.
 
 ## Future
 
-Post-MVP, Clui aims to support multiple CLI agents — Codex CLI, GitHub Copilot CLI, Aider, etc. The terminal-first architecture makes this straightforward since every CLI tool works in a terminal.
+Post-MVP, Clui aims to support multiple CLI agents — Codex CLI, GitHub Copilot CLI, etc. The terminal-first architecture makes this straightforward since every CLI tool works in a terminal.
+
+## Disclaimer
+
+Clui is an independent, free, open-source project built for fun and personal use. It is not affiliated with, endorsed by, or sponsored by Anthropic, OpenAI, or any of the AI/CLI tool providers it wraps. All product names and trademarks are the property of their respective owners.
 
 ## License
 

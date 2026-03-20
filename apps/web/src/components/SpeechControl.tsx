@@ -31,6 +31,8 @@ export function SpeechControl({ threadId }: { threadId: string }) {
       // Model files are in the Cache API — load silently (instant from cache)
       void whisperManager.ensureModel(tier).then(() => {
         useSpeechStore.getState().setModelDownloaded(true);
+      }).catch(() => {
+        // Model load failed — user will see download popover next time
       });
     });
   }, [modelDownloaded]);

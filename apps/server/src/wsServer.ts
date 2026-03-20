@@ -472,7 +472,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   // Track pending approval requestIds per thread so we can dispatch matching
   // approval.resolved activities when post-tool-use or stop hooks fire.
-  const pendingApprovalRequestIdByThread = new Map<string, string>();
+  // Uses a Set to handle multiple pending approvals (e.g. when a user rejects
+  // a tool — no post-tool-use fires — and Claude proposes another).
+  const pendingApprovalRequestIdsByThread = new Map<string, Set<string>>();
 
   const dispatchApprovalActivity = (
     threadId: string,
@@ -539,12 +541,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           if (hookPath === "/hooks/user-prompt-submit") {
             events = buildUserPromptSubmitEvents(threadId);
 
-            // A new prompt clears any lingering pending approval (user may
+            // A new prompt clears any lingering pending approvals (user may
             // have interrupted or the approval was granted via the terminal).
-            const pendingRequestId = pendingApprovalRequestIdByThread.get(threadId);
-            if (pendingRequestId) {
-              pendingApprovalRequestIdByThread.delete(threadId);
-              dispatchApprovalActivity(threadId, "approval.resolved", pendingRequestId);
+            const pendingIds = pendingApprovalRequestIdsByThread.get(threadId);
+            if (pendingIds?.size) {
+              for (const id of pendingIds) {
+                dispatchApprovalActivity(threadId, "approval.resolved", id);
+              }
+              pendingApprovalRequestIdsByThread.delete(threadId);
             }
 
             // Capture baseline checkpoint for diff comparison
@@ -601,26 +605,37 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             );
             if (isPendingApproval) {
               const requestId = crypto.randomUUID();
-              pendingApprovalRequestIdByThread.set(threadId, requestId);
+              let pending = pendingApprovalRequestIdsByThread.get(threadId);
+              if (!pending) {
+                pending = new Set();
+                pendingApprovalRequestIdsByThread.set(threadId, pending);
+              }
+              pending.add(requestId);
               dispatchApprovalActivity(threadId, "approval.requested", requestId);
             }
           } else if (hookPath === "/hooks/post-tool-use") {
             events = buildPostToolUseEvents(threadId);
 
-            // Resolve the pending approval activity so the badge clears.
-            const pendingRequestId = pendingApprovalRequestIdByThread.get(threadId);
-            if (pendingRequestId) {
-              pendingApprovalRequestIdByThread.delete(threadId);
-              dispatchApprovalActivity(threadId, "approval.resolved", pendingRequestId);
+            // Resolve the most recent pending approval activity so the badge clears.
+            const pendingIds = pendingApprovalRequestIdsByThread.get(threadId);
+            if (pendingIds?.size) {
+              // Pop the most recently added (the tool that just ran).
+              const lastId = [...pendingIds].pop()!;
+              pendingIds.delete(lastId);
+              if (pendingIds.size === 0) pendingApprovalRequestIdsByThread.delete(threadId);
+              dispatchApprovalActivity(threadId, "approval.resolved", lastId);
             }
           } else if (hookPath === "/hooks/stop") {
             events = buildStopEvents(threadId);
 
-            // On stop, resolve any lingering pending approval.
-            const pendingRequestId = pendingApprovalRequestIdByThread.get(threadId);
-            if (pendingRequestId) {
-              pendingApprovalRequestIdByThread.delete(threadId);
-              dispatchApprovalActivity(threadId, "approval.resolved", pendingRequestId);
+            // On stop, resolve ALL lingering pending approvals (covers
+            // rejected tools whose post-tool-use never fired).
+            const pendingIds = pendingApprovalRequestIdsByThread.get(threadId);
+            if (pendingIds?.size) {
+              for (const id of pendingIds) {
+                dispatchApprovalActivity(threadId, "approval.resolved", id);
+              }
+              pendingApprovalRequestIdsByThread.delete(threadId);
             }
 
             // Capture checkpoint and compute diff for the DiffPanel

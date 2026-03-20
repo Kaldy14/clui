@@ -102,7 +102,9 @@ export function useSpeechToText(threadId: string): UseSpeechToTextReturn {
         }
         const prefix = settings.voicePrefix?.trim();
         const data = prefix ? `${prefix} ${trimmed}\n` : `${trimmed}\n`;
-        readNativeApi()?.claude.write({ threadId, data });
+        await readNativeApi()?.claude.write({ threadId, data }).catch((err) => {
+          setError(err instanceof Error ? err.message : "Failed to send transcription to terminal");
+        });
         setStatus("idle");
         setActiveThreadId(null);
       } catch (err) {

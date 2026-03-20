@@ -115,6 +115,12 @@ export function useAudioCapture(): UseAudioCaptureReturn {
 
       // AudioContext will run at the system's native sample rate (44.1k or 48k)
       const audioCtx = new AudioContext();
+      // Browser autoplay policy (Chrome 71+) can create AudioContext in
+      // "suspended" state even after getUserMedia. If not resumed,
+      // ScriptProcessorNode.onaudioprocess will never fire → zero audio.
+      if (audioCtx.state === "suspended") {
+        await audioCtx.resume();
+      }
       audioContextRef.current = audioCtx;
 
       const source = audioCtx.createMediaStreamSource(stream);
