@@ -7,6 +7,7 @@ import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keyb
 import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { isMacPlatform } from "../lib/utils";
+import { setupProjectScript } from "../projectScripts";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -15,6 +16,7 @@ import type { EnvMode } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { TerminalSearchBar } from "./TerminalSearchBar";
+import { runProjectScriptInTerminal } from "./TerminalToolbar";
 import { useBranchToolbar } from "./useBranchToolbar";
 
 // ── Worktree branch prefix (per-project, localStorage) ───────────────
@@ -91,6 +93,12 @@ function NewThreadView({
         });
         branchToolbar.setThreadBranch(branchArg, result.worktree.path);
         startCwd = result.worktree.path;
+
+        // Run the setup script (runOnWorktreeCreate) if one is configured
+        const setupScript = setupProjectScript(project.scripts ?? []);
+        if (setupScript) {
+          runProjectScriptInTerminal(setupScript, threadId, project, result.worktree.path);
+        }
       }
       if (!startCwd) return;
       // cols/rows are initial defaults — ActiveTerminalView sends a corrective
@@ -510,6 +518,8 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     scrollLockedRef.current = false;
     setShowNewOutput(false);
     let hasNewOutputFlag = false;
+    /** Line number to restore on visibility/focus changes. Set when scroll-locked. */
+    let scrollLockLine: number | null = null;
     const isViewportAtBottom = (): boolean => {
       return terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     };
@@ -525,6 +535,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
         // User is at (or very near) the bottom — clear scroll lock, let xterm auto-scroll
         if (scrollLockedRef.current) {
           scrollLockedRef.current = false;
+          scrollLockLine = null;
           hasNewOutputFlag = false;
           setShowNewOutput(false);
         }
@@ -534,6 +545,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       // User has scrolled up — preserve their viewport position
       scrollLockedRef.current = true;
       const savedLine = terminal.buffer.active.viewportY;
+      scrollLockLine = savedLine;
       terminal.write(data, () => {
         if (disposed) return;
         // Restore scroll position if xterm.js moved it during write processing.
@@ -864,6 +876,31 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     });
     resizeObserver.observe(el);
 
+    // ── Defend scroll position on visibility/focus changes ──────────
+    // When the user switches apps or clicks back into the terminal, xterm.js
+    // v6's SmoothScrollableElement can re-sync its scroll position (e.g. via
+    // setScrollDimensions clamping or layout recalcs), causing an unexpected
+    // jump. We re-assert the tracked scrollLockLine when the tab returns.
+    const onVisibilityChange = () => {
+      if (disposed || document.hidden) return;
+      // Tab just became visible — restore if we were scroll-locked
+      if (scrollLockLine !== null && terminal.buffer.active.viewportY !== scrollLockLine) {
+        terminal.scrollToLine(scrollLockLine);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    // Use xterm's onScroll event to keep scrollLockLine in sync with the
+    // actual viewport position — covers wheel, scrollbar drag, keyboard scroll.
+    const scrollDisposable = terminal.onScroll(() => {
+      if (disposed) return;
+      if (isViewportAtBottom()) {
+        scrollLockLine = null;
+      } else if (scrollLockedRef.current) {
+        scrollLockLine = terminal.buffer.active.viewportY;
+      }
+    });
+
     // Watch for theme changes
     const themeObserver = new MutationObserver(() => {
       claudeCache.refreshTheme();
@@ -880,12 +917,14 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onScrollLockDetect);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("resize", onWindowResize);
       resizeObserver.disconnect();
       themeObserver.disconnect();
       unsubscribe();
       inputDisposable.dispose();
       resizeDisposable.dispose();
+      scrollDisposable.dispose();
       // Detach but keep in cache for instant reattachment
       claudeCache.detach(threadId);
     };

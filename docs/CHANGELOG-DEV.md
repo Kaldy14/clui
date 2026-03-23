@@ -4,16 +4,29 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-23 — Fix runOnWorktreeCreate action never executing
+
+**Problem:** Custom actions with "Run automatically on worktree creation" enabled never ran when a worktree was created.
+
+**Root cause:** `setupProjectScript()` was defined and tested in `projectScripts.ts` but never imported or called in the worktree creation flow. `ThreadTerminalView.tsx`'s `handleStart` created the worktree and started the Claude session without checking for setup scripts.
+
+**Fix:** After worktree creation in `handleStart`, call `setupProjectScript()` to find the configured setup script and `runProjectScriptInTerminal()` to execute it in the new worktree.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx` — import and call `setupProjectScript` + `runProjectScriptInTerminal` after worktree creation
+
+---
+
 ## 2026-03-23 — Fix terminal scroll jump regression (xterm.js v6 viewport change)
 
 **Problem:** When scrolling through Claude Code session history, new output from Claude would kick the user to the top of the terminal, losing their scroll position. This was a regression of a previously working fix (commit e312b82).
 
 **Root cause:** xterm.js v6 replaced the native `.xterm-viewport` scroll container with VS Code's `SmoothScrollableElement` (a virtual scrollbar). The `.xterm-viewport` div still exists in the DOM but its `scrollTop` is always 0 and `scrollHeight === clientHeight`. Our scroll preservation code queried `.xterm-viewport` for position — `isViewportAtBottom()` always returned `true`, so `scrollAwareWrite` never entered the preservation branch. The "New output" indicator also never showed.
 
-**Fix:** Replaced all `.xterm-viewport` DOM manipulation with xterm.js public API: `terminal.buffer.active.viewportY` (line-based scroll position), `terminal.buffer.active.baseY` (bottom of scrollback), and `terminal.scrollToLine(line)` for restoration. This is version-agnostic and immune to internal DOM structure changes.
+**Fix:** Replaced all `.xterm-viewport` DOM manipulation with xterm.js public API: `terminal.buffer.active.viewportY` (line-based scroll position), `terminal.buffer.active.baseY` (bottom of scrollback), and `terminal.scrollToLine(line)` for restoration. This is version-agnostic and immune to internal DOM structure changes. Also added defensive `visibilitychange` listener and `terminal.onScroll` tracking to re-assert scroll position when switching apps or clicking back into the terminal.
 
 **Affected files:**
-- `apps/web/src/components/ThreadTerminalView.tsx` — `isViewportAtBottom`, `scrollAwareWrite`, `onWindowResize`, `ResizeObserver` handler
+- `apps/web/src/components/ThreadTerminalView.tsx` — `isViewportAtBottom`, `scrollAwareWrite`, `onWindowResize`, `ResizeObserver` handler, `visibilitychange`/`onScroll` scroll defense
 
 ---
 
