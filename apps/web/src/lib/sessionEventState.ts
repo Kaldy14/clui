@@ -38,6 +38,8 @@ export interface SessionEventState {
   _turnInProgress: Map<string, boolean>;
   /** Exposed for testing */
   _pendingApprovalAt: Map<string, number>;
+  /** Exposed for testing — true once a real hook (PostToolUse/PermissionRequest) confirms the turn. */
+  _turnConfirmed: Map<string, boolean>;
 }
 
 /**
@@ -77,6 +79,11 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   // Records when "pendingApproval" was set, so handleOutput can transition
   // to "working" when output arrives after a short delay (user approved).
   const pendingApprovalAt = new Map<string, number>();
+  // True once a real hook (PostToolUse → "working", PermissionRequest →
+  // "pendingApproval"/"needsInput") fires — confirms the agent loop started.
+  // handleTurnStart alone does NOT confirm, since the user can press Esc
+  // before the agent loop begins, leaving no Stop hook or "⏎ Interrupted".
+  const turnConfirmed = new Map<string, boolean>();
   // Tail of the previous output chunk per thread, used to detect the
   // interrupt banner ("⏎ Interrupted") when it spans two PTY chunks.
   const prevOutputTail = new Map<string, string>();
@@ -100,13 +107,23 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
         workingIdleLastReset.delete(rawThreadId);
         const current = deps.getThreadHookStatus(rawThreadId);
         if (current === "working") {
-          // If a turn is still in progress and the terminal is active,
-          // Claude is likely doing long-running work (thinking, subagents)
-          // with no output. Re-arm the timer instead of clearing the badge.
           const terminalStatus = deps.getThreadTerminalStatus(rawThreadId);
           if (turnInProgress.get(rawThreadId) && terminalStatus === "active") {
-            resetWorkingIdleTimer(rawThreadId, true);
-            return;
+            // Only re-arm if a real hook (PostToolUse, PermissionRequest)
+            // confirmed the agent loop started. Without confirmation the
+            // turn was likely cancelled before Claude began processing
+            // (e.g. user pressed Esc right after sending a message), so
+            // neither the Stop hook nor "⏎ Interrupted" ever fires.
+            if (turnConfirmed.get(rawThreadId)) {
+              resetWorkingIdleTimer(rawThreadId, true);
+              return;
+            }
+            // Unconfirmed turn — clear turnInProgress so output recovery
+            // doesn't immediately re-set the "Working" badge.
+            turnInProgress.delete(rawThreadId);
+            completedAt.set(rawThreadId, now());
+            pendingApprovalAt.delete(rawThreadId);
+            turnConfirmed.delete(rawThreadId);
           }
           deps.setHookStatus(rawThreadId, null);
         }
@@ -131,6 +148,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);
       pendingApprovalAt.delete(rawThreadId);
+      turnConfirmed.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, "completed");
       return { applied: true, hookStatus: "completed" };
@@ -166,6 +184,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       terminalStartedAt.delete(rawThreadId);
       pendingApprovalAt.delete(rawThreadId);
       turnInProgress.set(rawThreadId, true);
+      turnConfirmed.set(rawThreadId, true);
       deps.setHookStatus(rawThreadId, hookStatus);
       resetWorkingIdleTimer(rawThreadId, true);
       return { applied: true, hookStatus: "working" };
@@ -178,6 +197,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     }
     terminalStartedAt.delete(rawThreadId);
     turnInProgress.set(rawThreadId, true);
+    turnConfirmed.set(rawThreadId, true);
     clearWorkingIdleTimer(rawThreadId);
     if (hookStatus === "pendingApproval" || hookStatus === "needsInput") {
       pendingApprovalAt.set(rawThreadId, now());
@@ -194,6 +214,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     terminalStartedAt.delete(rawThreadId);
     pendingApprovalAt.delete(rawThreadId);
     turnInProgress.set(rawThreadId, true);
+    turnConfirmed.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     deps.setHookStatus(rawThreadId, "working");
     resetWorkingIdleTimer(rawThreadId, true);
@@ -253,6 +274,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
         completedAt.set(rawThreadId, now());
         turnInProgress.delete(rawThreadId);
         pendingApprovalAt.delete(rawThreadId);
+        turnConfirmed.delete(rawThreadId);
         prevOutputTail.delete(rawThreadId);
         clearWorkingIdleTimer(rawThreadId);
         deps.setHookStatus(rawThreadId, null);
@@ -264,6 +286,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     if (hookStatus === "working" && API_ERROR_RE.test(data)) {
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);
+      turnConfirmed.delete(rawThreadId);
       prevOutputTail.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, "error");
@@ -283,6 +306,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
     pendingApprovalAt.delete(rawThreadId);
+    turnConfirmed.delete(rawThreadId);
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
@@ -293,6 +317,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
     pendingApprovalAt.delete(rawThreadId);
+    turnConfirmed.delete(rawThreadId);
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     deps.setHookStatus(rawThreadId, null);
@@ -302,6 +327,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     completedAt.delete(rawThreadId);
     turnInProgress.delete(rawThreadId);
     pendingApprovalAt.delete(rawThreadId);
+    turnConfirmed.delete(rawThreadId);
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
@@ -311,6 +337,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     completedAt.clear();
     turnInProgress.clear();
     pendingApprovalAt.clear();
+    turnConfirmed.clear();
     prevOutputTail.clear();
     for (const timer of workingIdleTimers.values()) clearTimeout(timer);
     workingIdleTimers.clear();
@@ -333,6 +360,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     _workingIdleLastReset: workingIdleLastReset,
     _turnInProgress: turnInProgress,
     _pendingApprovalAt: pendingApprovalAt,
+    _turnConfirmed: turnConfirmed,
   };
 }
 

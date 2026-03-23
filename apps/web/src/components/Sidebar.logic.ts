@@ -54,7 +54,9 @@ export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null
  *   Tier 2 — ACTIVE WORK   (Working / Running)
  *   Tier 3 — IDLE          (everything else)
  *
- * Within each tier threads sort by `updatedAt` desc, with ID as tiebreaker.
+ * Within each tier threads sort by `lastInteractedAt` desc (user interaction
+ * only — not bumped by hook events, completions, or background activity),
+ * with ID as tiebreaker.
  *
  * Key property: merely *viewing* a thread never changes its tier — only
  * real activity (new turn, message, hook status) can promote a thread.
@@ -69,7 +71,7 @@ export interface ThreadSortContext {
 
 type ThreadSortInput = Pick<
   Thread,
-  "id" | "updatedAt" | "hookStatus" | "terminalStatus" | "session" | "latestTurn" | "lastVisitedAt"
+  "id" | "updatedAt" | "lastInteractedAt" | "hookStatus" | "terminalStatus" | "session" | "latestTurn" | "lastVisitedAt"
 >;
 
 function threadSortTier(
@@ -112,7 +114,7 @@ export function createThreadSortComparator(ctx: ThreadSortContext) {
     );
     if (tierA !== tierB) return tierA - tierB;
 
-    const byDate = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    const byDate = new Date(b.lastInteractedAt).getTime() - new Date(a.lastInteractedAt).getTime();
     if (byDate !== 0) return byDate;
     return b.id.localeCompare(a.id);
   };

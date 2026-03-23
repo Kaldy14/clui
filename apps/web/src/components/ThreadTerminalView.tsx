@@ -563,6 +563,13 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       switch (event.type) {
         case "output":
           scrollAwareWrite(event.data);
+          // Track the server offset so that on detach→reattach the scrollback
+          // delta fetch only returns truly new content. Without this,
+          // lastServerOffset stays at the initial-fetch value and every
+          // reattach re-writes all output that arrived via live events.
+          if (event.offset > entry.lastServerOffset) {
+            entry.lastServerOffset = event.offset;
+          }
           break;
         case "error":
           scrollAwareWrite(`\r\n[error] ${event.message}\r\n`);

@@ -432,6 +432,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
+            lastInteractedAt: event.payload.createdAt,
             deletedAt: null,
           });
           return;
@@ -559,7 +560,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             latestTurnId: newTurnId,
-            ...(isNewTurn ? { updatedAt: event.occurredAt } : {}),
+            ...(isNewTurn ? { updatedAt: event.occurredAt, lastInteractedAt: event.occurredAt } : {}),
           });
           return;
         }

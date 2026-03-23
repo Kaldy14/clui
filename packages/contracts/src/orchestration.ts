@@ -325,6 +325,8 @@ export const OrchestrationThread = Schema.Struct({
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** Only bumped when the user actively interacts (new turn starts). Used for sidebar sort. */
+  lastInteractedAt: IsoDateTime.pipe(Schema.withDecodingDefault(() => "")),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(Schema.withDecodingDefault(() => [])),

@@ -365,22 +365,54 @@ describe("createSessionEventState", () => {
       expect(state._workingIdleTimers.has("t1")).toBe(false);
     });
 
-    it("re-arms idle timer when turn is in progress and terminal is active", () => {
+    it("re-arms idle timer when turn is confirmed and terminal is active", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       ctx.hookStatusByThread.set("t1", "working");
+      // handleHookStatus("working") simulates PostToolUse → confirms the turn
       state.handleHookStatus("t1", "working");
 
       expect(state._workingIdleTimers.has("t1")).toBe(true);
+      expect(state._turnConfirmed.get("t1")).toBe(true);
 
-      // First timeout fires — turn is still in progress, terminal active → re-arm
+      // First timeout fires — turn confirmed + active → re-arm
       vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
       expect(ctx.hookStatusByThread.get("t1")).toBe("working");
       expect(state._workingIdleTimers.has("t1")).toBe(true); // re-armed
 
-      // Second timeout fires — still in progress → re-arm again
+      // Second timeout fires — still confirmed → re-arm again
       vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
       expect(ctx.hookStatusByThread.get("t1")).toBe("working");
       expect(state._workingIdleTimers.has("t1")).toBe(true);
+    });
+
+    it("clears hookStatus after idle timeout for unconfirmed turn (quick Esc cancel)", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      // handleTurnStart simulates UserPromptSubmit — does NOT confirm the turn
+      state.handleTurnStart("t1");
+
+      expect(ctx.hookStatusByThread.get("t1")).toBe("working");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+      expect(state._turnConfirmed.has("t1")).toBe(false);
+
+      // Idle timer fires — unconfirmed turn + active → clear instead of re-arm
+      vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", null);
+      expect(state._turnInProgress.has("t1")).toBe(false);
+      expect(state._workingIdleTimers.has("t1")).toBe(false);
+    });
+
+    it("prevents output recovery after unconfirmed turn idle timeout", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleTurnStart("t1");
+
+      // Idle timer clears the unconfirmed turn
+      vi.advanceTimersByTime(WORKING_IDLE_TIMEOUT_MS);
+      expect(ctx.hookStatusByThread.get("t1")).toBeNull();
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // Subsequent output should NOT recover to "working" since turnInProgress was cleared
+      state.handleOutput("t1", "keystroke echo after cancel");
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });
 
     it("clears hookStatus after idle timeout when turnInProgress is false", () => {
@@ -440,13 +472,15 @@ describe("createSessionEventState", () => {
       expect(state._workingIdleTimers.has("t1")).toBe(true); // re-armed
     });
 
-    it("sets turnInProgress on 'working' hook and clears on 'completed'", () => {
+    it("sets turnInProgress and turnConfirmed on 'working' hook, clears on 'completed'", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleHookStatus("t1", "working");
       expect(state._turnInProgress.get("t1")).toBe(true);
+      expect(state._turnConfirmed.get("t1")).toBe(true);
 
       state.handleHookStatus("t1", "completed");
       expect(state._turnInProgress.has("t1")).toBe(false);
+      expect(state._turnConfirmed.has("t1")).toBe(false);
     });
 
     it("sets turnInProgress on 'needsInput' hook", () => {
@@ -534,10 +568,11 @@ describe("createSessionEventState", () => {
       expect(result).toEqual({ applied: true, hookStatus: "pendingApproval" });
     });
 
-    it("sets turnInProgress", () => {
+    it("sets turnInProgress but not turnConfirmed", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleTurnStart("t1");
       expect(state._turnInProgress.get("t1")).toBe(true);
+      expect(state._turnConfirmed.has("t1")).toBe(false);
     });
   });
 

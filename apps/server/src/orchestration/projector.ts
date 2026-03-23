@@ -265,6 +265,7 @@ export function projectEvent(
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
+            lastInteractedAt: payload.createdAt,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -449,13 +450,13 @@ export function projectEvent(
                         : null,
                   }
                 : thread.latestTurn,
-            // Only bump updatedAt when a genuinely new turn begins — not on
-            // session lifecycle events (terminal resume, reconnect) which
-            // shouldn't affect sidebar sort order.
+            // Only bump updatedAt/lastInteractedAt when a genuinely new turn
+            // begins — not on session lifecycle events (terminal resume,
+            // reconnect) which shouldn't affect sidebar sort order.
             ...(session.status === "running" &&
             session.activeTurnId !== null &&
             thread.latestTurn?.turnId !== session.activeTurnId
-              ? { updatedAt: event.occurredAt }
+              ? { updatedAt: event.occurredAt, lastInteractedAt: event.occurredAt }
               : {}),
           }),
         };

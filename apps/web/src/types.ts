@@ -113,6 +113,8 @@ export interface Thread {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Only bumped when the user actively interacts (new turn starts). Used for sidebar sort. */
+  lastInteractedAt: string;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
   branch: string | null;

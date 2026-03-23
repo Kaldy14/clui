@@ -34,6 +34,8 @@ export interface TerminalSessionState {
   exitCode: number | null;
   exitSignal: number | null;
   updatedAt: string;
+  /** Only bumped by user actions (open, write, clear, restart). Used for LRU eviction. */
+  lastInteractedAt: string;
   cols: number;
   rows: number;
   process: PtyProcess | null;

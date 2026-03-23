@@ -332,6 +332,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         const history = await this.readHistory(input.threadId, input.terminalId);
         const cols = input.cols ?? DEFAULT_OPEN_COLS;
         const rows = input.rows ?? DEFAULT_OPEN_ROWS;
+        const nowIso = new Date().toISOString();
         const session: TerminalSessionState = {
           threadId: input.threadId,
           terminalId: input.terminalId,
@@ -341,7 +342,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           history,
           exitCode: null,
           exitSignal: null,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
+          lastInteractedAt: nowIso,
           cols,
           rows,
           process: null,
@@ -409,6 +411,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       );
     }
     session.process.write(input.data);
+    session.lastInteractedAt = new Date().toISOString();
   }
 
   async resize(raw: TerminalResizeInput): Promise<void> {
@@ -451,6 +454,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       if (!session) {
         const cols = input.cols ?? DEFAULT_OPEN_COLS;
         const rows = input.rows ?? DEFAULT_OPEN_ROWS;
+        const nowIso = new Date().toISOString();
         session = {
           threadId: input.threadId,
           terminalId: input.terminalId,
@@ -460,7 +464,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           history: "",
           exitCode: null,
           exitSignal: null,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
+          lastInteractedAt: nowIso,
           cols,
           rows,
           process: null,
@@ -765,7 +770,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
     inactiveSessions.sort(
       (left, right) =>
-        left.updatedAt.localeCompare(right.updatedAt) ||
+        left.lastInteractedAt.localeCompare(right.lastInteractedAt) ||
         left.threadId.localeCompare(right.threadId) ||
         left.terminalId.localeCompare(right.terminalId),
     );

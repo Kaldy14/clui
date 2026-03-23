@@ -4,6 +4,54 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-23 — Replace sidebar sort key with `lastInteractedAt`
+
+**Problem:** Sidebar thread sorting was unreliable — threads jumped around whenever Claude produced output, completed turns, appended activities, or any hook event fired. The `updatedAt` field used as the sort key was bumped by 11 different event types in the projector, making sort order unpredictable.
+
+**Root cause:** `updatedAt` serves as a general "data modified" timestamp, bumped by every orchestration event (messages, activities, session changes, completions, reverts, meta updates). Using it for sidebar sort meant any background Claude activity reshuffled the list.
+
+**Fix:** Added a dedicated `lastInteractedAt` field to `OrchestrationThread` that is ONLY updated in two places: (1) thread creation, and (2) when a new turn begins in `thread.session-set` (user submitted a prompt). The sidebar sort comparator now uses `lastInteractedAt` instead of `updatedAt`. Also added `lastInteractedAt` to `TerminalManager.TerminalSessionState` (bumped only on user actions: open, write, restart) and switched inactive terminal eviction to use it instead of `updatedAt`.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts` — added `lastInteractedAt` to `OrchestrationThread`
+- `apps/server/src/orchestration/projector.ts` — set on created + new turn
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` — set on created + new turn in persistence
+- `apps/server/src/persistence/Migrations/019_LastInteractedAt.ts` — DB migration
+- `apps/server/src/persistence/Services/ProjectionThreads.ts` — schema
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts` — SQL queries
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` — snapshot assembly
+- `apps/server/src/terminal/Services/Manager.ts` — added `lastInteractedAt` to `TerminalSessionState`
+- `apps/server/src/terminal/Layers/Manager.ts` — user-only bumps + eviction sort
+- `apps/web/src/types.ts` — frontend type
+- `apps/web/src/store.ts` — mapping
+- `apps/web/src/components/Sidebar.logic.ts` — sort comparator
+
+---
+
+## 2026-03-23 — Fix stuck "Working" badge after quick Esc cancel
+
+**Problem:** When the user sent a message and immediately pressed Esc to cancel before Claude's agent loop started, the "Working" badge in the sidebar stayed stuck permanently.
+
+**Root cause:** `handleTurnStart` (fired by UserPromptSubmit hook) set `hookStatus = "working"` and `turnInProgress = true`. When the user cancelled before the agent loop began, neither the Stop hook nor the "⏎ Interrupted" terminal banner fired, so nothing cleared those flags. The 90-second idle timer re-armed indefinitely because `turnInProgress && terminal === "active"`, and the output recovery heuristic re-set "working" on any terminal output (keystroke echo) because `turnInProgress` was still true.
+
+**Fix:** Added `turnConfirmed` tracking — a flag set only when a real hook (PostToolUse → "working", PermissionRequest → "pendingApproval"/"needsInput") fires, confirming the agent loop actually started. `handleTurnStart` alone does NOT confirm. When the idle timer fires for an unconfirmed turn, it clears `hookStatus`, `turnInProgress`, and sets `completedAt` (grace period) instead of re-arming, preventing the output recovery from re-setting the badge.
+
+**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`
+
+---
+
+## 2026-03-23 — Fix terminal content duplication when switching back to active thread
+
+**Problem:** Every time the user clicked on a working (active) thread in the sidebar, the entire terminal content was duplicated — the same conversation appeared multiple times in the terminal output.
+
+**Root cause:** `ActiveTerminalView` tracks `entry.lastServerOffset` to request delta-only scrollback on reattach. However, `lastServerOffset` was only set from the initial scrollback fetch response — live output events written to the terminal never updated it. When the user switched away and back, `getScrollback({ sinceOffset })` used the stale initial offset, returning all output that had arrived via live events (already visible in the terminal). This delta was written on top of existing content, causing duplication.
+
+**Fix:** Update `entry.lastServerOffset` as live output events are processed in `writeEvent()`, so that on detach→reattach the scrollback delta fetch only returns truly new content.
+
+**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
+
+---
+
 ## 2026-03-20 — Fix terminal scroll jump (round 2: race with xterm render pipeline)
 
 **Problem:** Previous scroll-jump fix still allowed jumps. Scrolling up even 1px from the bottom while Claude Code output arrived caused the viewport to jump away.
