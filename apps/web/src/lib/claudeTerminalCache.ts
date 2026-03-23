@@ -85,6 +85,7 @@ export function createTerminal(): CachedTerminal {
     macOptionIsMeta: true,
     fastScrollSensitivity: 5,
     smoothScrollDuration: 0,
+    scrollOnUserInput: false,
     drawBoldTextInBrightColors: true,
     rescaleOverlappingGlyphs: true,
     minimumContrastRatio: 1,

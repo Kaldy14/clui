@@ -620,7 +620,7 @@ describe("createSessionEventState", () => {
   });
 
   describe("pendingApproval output transition", () => {
-    it("transitions pendingApproval to working when output arrives after delay", () => {
+    it("does NOT transition pendingApproval to working on output (waits for PostToolUse)", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleHookStatus("t1", "pendingApproval");
       vi.mocked(ctx.deps.setHookStatus).mockClear();
@@ -630,10 +630,14 @@ describe("createSessionEventState", () => {
       state.handleOutput("t1", "prompt rendering");
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
 
-      // Output after delay — should transition
-      vi.advanceTimersByTime(PENDING_APPROVAL_OUTPUT_DELAY_MS);
-      state.handleOutput("t1", "tool execution output");
-      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+      // Output after delay — should still NOT transition (PTY redraws are not approval)
+      vi.advanceTimersByTime(PENDING_APPROVAL_OUTPUT_DELAY_MS + 1);
+      state.handleOutput("t1", "cursor redraw output");
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
+
+      // Only PostToolUse "working" hook should transition
+      const result = state.handleHookStatus("t1", "working");
+      expect(result).toEqual({ applied: true, hookStatus: "working" });
     });
 
     it("does not transition if interrupted before delay", () => {

@@ -4,6 +4,41 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-23 — Fix scroll position lost via alt buffer isUserScrolling corruption
+
+**Problem:** User still gets kicked to the bottom of an active Claude Code session when scrolled up to read history, despite multiple prior scroll lock fixes.
+
+**Root cause:** Two compounding issues in the interaction between our scroll lock mechanism and xterm.js v6 internals:
+
+1. **Alt buffer corrupts `BufferService.isUserScrolling`:** When Claude Code enters alternate screen buffer (TUI mode), `BufferService.scroll()` fires `onScroll` events with `ydisp=0`. Our `onScroll` handler tried to restore `scrollLockLine` (e.g., line 50 from the normal buffer) by calling `terminal.scrollToLine(50)`, which internally calls `BufferService.scrollLines(50)`. Since alt buffer has `ybase=0`, the check `disp + ydisp >= ybase` (`50 + 0 >= 0`) evaluates true, setting `isUserScrolling = false`. When the normal buffer is later restored, every `BufferService.scroll()` call sees `!isUserScrolling` and forces `ydisp = ybase` — kicking the user to the bottom.
+
+2. **`scrollOnUserInput` default is `true`:** xterm.js defaults to scrolling to the bottom whenever the user types any key while scrolled up (via `CoreService.triggerDataEvent` → `onRequestScrollToBottom`). This bypasses our scroll lock entirely and also corrupts `isUserScrolling`.
+
+**Fix:**
+- Added `scrollOnUserInput: false` to terminal creation options to prevent xterm.js from auto-scrolling on keystroke
+- Added alt buffer guards (`terminal.buffer.active.type === "alternate"`) to all scroll-position-sensitive code paths: `scrollAwareWrite`, `terminal.onScroll` handler, `visibilitychange` handler, window resize handler, and `ResizeObserver` handler
+- In alt buffer mode, writes go directly to `terminal.write()` without scroll protection (alt buffer has no scrollback, so scroll lock is meaningless and attempting it corrupts `isUserScrolling`)
+
+**Affected files:**
+- `apps/web/src/lib/claudeTerminalCache.ts` — added `scrollOnUserInput: false` to Terminal options
+- `apps/web/src/components/ThreadTerminalView.tsx` — alt buffer guards on all scroll restoration paths
+
+---
+
+## 2026-03-23 — Fix badge stuck on "Working" when thread needs approval
+
+**Problem:** When Claude Code asks for permission approval or user input, the sidebar badge briefly shows the correct status ("Pending Approval" / "Needs Input") but then reverts to "Working" within ~1 second.
+
+**Root cause:** `handleOutput` in `sessionEventState.ts` had an output-based heuristic that transitioned `pendingApproval → working` when any PTY output arrived ≥1s after the status was set. The intent was to detect when the user approved a prompt (approval → tool executes → output). But Claude Code produces PTY output (cursor redraws, spinner animations, prompt rendering) while still waiting for approval, which falsely triggered the transition.
+
+**Fix:** Removed the output-based `pendingApproval → working` transition entirely. The `PostToolUse` hook already provides the authoritative signal that the user approved — it fires with `hookStatus: "working"` after the tool completes, and the existing protection window at lines 172-176 correctly handles the race with stale PostToolUse events.
+
+**Affected files:**
+- `apps/web/src/lib/sessionEventState.ts` — removed output-based pendingApproval→working transition
+- `apps/web/src/lib/sessionEventState.test.ts` — updated tests to verify output no longer transitions pendingApproval
+
+---
+
 ## 2026-03-23 — Fix duplicate Claude Code UI on thread switching (round 2)
 
 **Problem:** Every time the user switched away from a thread and back, the entire Claude Code startup banner and terminal content was duplicated — stacking 3 banners after 3 switches.

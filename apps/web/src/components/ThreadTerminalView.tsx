@@ -530,7 +530,24 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
      *  Uses terminal.buffer.active.viewportY (line-based position) instead of
      *  DOM scrollTop — xterm.js v6 uses VS Code's SmoothScrollableElement so
      *  the .xterm-viewport div no longer controls scroll. */
+    /** True when the active buffer is the alternate screen (TUI mode).
+     *  In alt buffer there is no scrollback — scrollLockLine refers to a
+     *  normal-buffer position and must not be applied. More critically,
+     *  calling scrollToLine(scrollLockLine) in alt buffer goes through
+     *  BufferService.scrollLines(disp) where disp+ydisp >= ybase (0),
+     *  which sets the internal isUserScrolling flag to false. When the
+     *  normal buffer is later restored, every subsequent scroll() call
+     *  forces ydisp = ybase — kicking the user to the bottom. */
+    const isAltBuffer = () => terminal.buffer.active.type === "alternate";
+
     const scrollAwareWrite = (data: string) => {
+      // Alt buffer has no scrollback — write directly. Protecting alt buffer
+      // writes would corrupt xterm.js's internal isUserScrolling flag (see
+      // isAltBuffer comment above).
+      if (isAltBuffer()) {
+        terminal.write(data);
+        return;
+      }
       // Check both API position AND the wheel-event-driven scrollLockedRef.
       // The ref closes a timing gap: if a wheel-up event was processed between
       // output events in the same macrotask, scrollLockedRef is already true
@@ -546,7 +563,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       const savedLine = scrollLockLine ?? terminal.buffer.active.viewportY;
       scrollLockLine = savedLine;
       terminal.write(data, () => {
-        if (disposed) return;
+        if (disposed || isAltBuffer()) return;
         // Restore scroll position if xterm.js moved it during write processing.
         // The buffer's ydisp is updated synchronously during write, so by
         // callback time we can check if it drifted and correct it.
@@ -556,7 +573,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
         // Also schedule a rAF restore in case xterm's render debouncer has a
         // pending queueSync that might override our position after this callback.
         requestAnimationFrame(() => {
-          if (disposed) return;
+          if (disposed || isAltBuffer()) return;
           if (terminal.buffer.active.viewportY !== savedLine) {
             terminal.scrollToLine(savedLine);
           }
@@ -765,12 +782,12 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
 
     // Watch for window resize
     const onWindowResize = () => {
-      const atBottom = isViewportAtBottom();
+      const atBottom = isViewportAtBottom() || isAltBuffer();
       const savedLine = terminal.buffer.active.viewportY;
       fitAddon.fit();
       if (!atBottom) {
         requestAnimationFrame(() => {
-          if (!disposed && terminal.buffer.active.viewportY !== savedLine) {
+          if (!disposed && !isAltBuffer() && terminal.buffer.active.viewportY !== savedLine) {
             terminal.scrollToLine(savedLine);
           }
         });
@@ -863,12 +880,12 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (resizeRafId !== null) return;
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = null;
-        const atBottom = isViewportAtBottom();
+        const atBottom = isViewportAtBottom() || isAltBuffer();
         const savedLine = terminal.buffer.active.viewportY;
         fitAddon.fit();
         if (!atBottom) {
           requestAnimationFrame(() => {
-            if (!disposed && terminal.buffer.active.viewportY !== savedLine) {
+            if (!disposed && !isAltBuffer() && terminal.buffer.active.viewportY !== savedLine) {
               terminal.scrollToLine(savedLine);
             }
           });
@@ -883,7 +900,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     // setScrollDimensions clamping or layout recalcs), causing an unexpected
     // jump. We re-assert the tracked scrollLockLine when the tab returns.
     const onVisibilityChange = () => {
-      if (disposed || document.hidden) return;
+      if (disposed || document.hidden || isAltBuffer()) return;
       // Tab just became visible — restore if we were scroll-locked
       if (scrollLockLine !== null && terminal.buffer.active.viewportY !== scrollLockLine) {
         terminal.scrollToLine(scrollLockLine);
@@ -900,6 +917,11 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     let isRestoringScroll = false;
     const scrollDisposable = terminal.onScroll(() => {
       if (disposed || isRestoringScroll) return;
+      // Skip alt buffer — scrollLockLine refers to normal buffer position.
+      // Calling scrollToLine in alt buffer corrupts BufferService.isUserScrolling
+      // (see isAltBuffer comment), which causes the normal buffer to lose its
+      // scroll position on the next buffer switch.
+      if (isAltBuffer()) return;
       const currentLine = terminal.buffer.active.viewportY;
       if (scrollLockLine !== null) {
         if (isViewportAtBottom() && !scrollLockedRef.current) {

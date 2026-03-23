@@ -229,21 +229,6 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       resetWorkingIdleTimer(rawThreadId);
     }
 
-    // Transition pendingApproval → working when output arrives after a short
-    // delay.  When the user approves a permission prompt, Claude starts
-    // executing the tool and produces output — but PostToolUse only fires
-    // after the tool finishes.  This bridges the gap so the badge shows
-    // "Working" instead of stale "Pending Approval" during tool execution.
-    if (hookStatus === "pendingApproval" && terminalStatus === "active") {
-      const approvalTs = pendingApprovalAt.get(rawThreadId);
-      if (approvalTs != null && now() - approvalTs >= PENDING_APPROVAL_OUTPUT_DELAY_MS) {
-        pendingApprovalAt.delete(rawThreadId);
-        deps.setHookStatus(rawThreadId, "working");
-        resetWorkingIdleTimer(rawThreadId, true);
-        return; // Skip other output checks — we just transitioned
-      }
-    }
-
     // Recover "Working" badge when output arrives on an active terminal with no
     // hookStatus — but ONLY if we know a turn is in progress (we saw a real
     // hook like UserPromptSubmit or PostToolUse).  Without this guard, any PTY
