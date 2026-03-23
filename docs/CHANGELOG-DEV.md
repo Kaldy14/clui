@@ -4,6 +4,36 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-23 — Use remote tracking ref as worktree base branch
+
+**Problem:** When creating a new worktree-based thread from the "main" branch, the worktree was based on the local `main` ref, which can be many commits behind `origin/main` if the user never checks out and pulls main locally.
+
+**Root cause:** `GitCore.createWorktree` passed the local branch name directly to `git worktree add -b <new> <path> main`, using the local ref as the starting point.
+
+**Fix:** When `newBranch` is specified (creating a new branch from a base), resolve the base to its remote tracking ref (e.g. `origin/main`) if one exists. Falls back to the local ref when no remote is configured or the remote branch doesn't exist.
+
+**Affected files:**
+- `apps/server/src/git/Layers/GitCore.ts` — `createWorktree` now checks for remote tracking ref before selecting start point
+
+---
+
+## 2026-03-23 — Harden scroll preservation against timing races and buffer switches
+
+**Problem:** User still gets kicked to the bottom of an active Claude Code session when scrolling up to read history. Output arriving in the same macrotask as the wheel event bypasses scroll preservation.
+
+**Root cause:** Multiple compounding issues: (1) `onScrollLockDetect` deferred its check via `requestAnimationFrame`, creating a timing window where output could arrive before `scrollLockedRef` was set; (2) `scrollAwareWrite` only checked `isViewportAtBottom()` but not the wheel-driven `scrollLockedRef` flag, missing the case where the flag was set but `viewportY` hadn't updated yet; (3) `terminal.onScroll` handler was passive — it tracked `scrollLockLine` but didn't actively restore on unexpected drift; (4) xterm.js v6.0.0 is missing the `syncScrollPosition` fix from PR #5390, causing scroll teleport on alt↔normal buffer switches.
+
+**Fix:**
+- Removed `requestAnimationFrame` from `onScrollLockDetect` — by the time the bubble-phase handler fires, SmoothScrollableElement has already processed the wheel synchronously
+- `scrollAwareWrite` now checks `scrollLockedRef.current` as secondary guard alongside `isViewportAtBottom()`
+- Uses `scrollLockLine` (persisted from wheel handler) as restore target, surviving even if `viewportY` drifted
+- `terminal.onScroll` handler now actively restores `scrollLockLine` on any unexpected drift (with re-entrancy guard), covering buffer switches and internal xterm.js events
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx` — `onScrollLockDetect`, `scrollAwareWrite`, `terminal.onScroll` handler
+
+---
+
 ## 2026-03-23 — Fix runOnWorktreeCreate action never executing
 
 **Problem:** Custom actions with "Run automatically on worktree creation" enabled never ran when a worktree was created.

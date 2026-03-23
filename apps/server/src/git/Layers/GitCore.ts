@@ -1108,8 +1108,30 @@ const makeGitCore = Effect.gen(function* () {
       const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
       const worktreePath =
         input.path ?? path.join(homeDir, ".clui", "worktrees", repoName, sanitizedBranch);
+
+      // When creating a new branch from a base, prefer the remote tracking ref
+      // so the worktree starts from the latest remote state (e.g. origin/main
+      // instead of local main which may be many commits behind).
+      let startPoint = input.branch;
+      if (input.newBranch) {
+        const remoteName = yield* resolvePrimaryRemoteName(input.cwd).pipe(
+          Effect.orElseSucceed(() => null as string | null),
+        );
+        if (remoteName) {
+          const hasRemoteRef = yield* executeGit(
+            "GitCore.createWorktree.remoteRefExists",
+            input.cwd,
+            ["show-ref", "--verify", "--quiet", `refs/remotes/${remoteName}/${input.branch}`],
+            { allowNonZeroExit: true },
+          ).pipe(Effect.map((r) => r.code === 0));
+          if (hasRemoteRef) {
+            startPoint = `${remoteName}/${input.branch}`;
+          }
+        }
+      }
+
       const args = input.newBranch
-        ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
+        ? ["worktree", "add", "-b", input.newBranch, worktreePath, startPoint]
         : ["worktree", "add", worktreePath, input.branch];
 
       yield* executeGit("GitCore.createWorktree", input.cwd, args, {
