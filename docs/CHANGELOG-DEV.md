@@ -4,6 +4,18 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-23 — Fix duplicate Claude Code UI on thread switching (round 2)
+
+**Problem:** Every time the user switched away from a thread and back, the entire Claude Code startup banner and terminal content was duplicated — stacking 3 banners after 3 switches.
+
+**Root cause:** The Effect Layer for `getScrollback` in `ClaudeSessionManager.ts` dropped the `sinceOffset` parameter — the function signature only captured `threadId` and never forwarded the second argument to the runtime. This meant the server always returned full scrollback instead of a delta. The client correctly sent `sinceOffset` and expected a delta back (with `reset: false`), so it appended the full scrollback to the terminal that already contained the same content.
+
+**Fix:** Forward `sinceOffset` in the Effect Layer: `getScrollback: (threadId, sinceOffset) => Effect.sync(() => runtime.getScrollback(threadId, sinceOffset))`.
+
+**Affected files:** `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+
+---
+
 ## 2026-03-23 — Use remote tracking ref as worktree base branch
 
 **Problem:** When creating a new worktree-based thread from the "main" branch, the worktree was based on the local `main` ref, which can be many commits behind `origin/main` if the user never checks out and pulls main locally.

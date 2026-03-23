@@ -555,8 +555,8 @@ export const ClaudeSessionManagerLive = Layer.effect(
           catch: (cause) =>
             new ClaudeSessionError({ message: "Failed to hibernate claude session", cause }),
         }),
-      getScrollback: (threadId) =>
-        Effect.sync(() => runtime.getScrollback(threadId)),
+      getScrollback: (threadId, sinceOffset) =>
+        Effect.sync(() => runtime.getScrollback(threadId, sinceOffset)),
       writeToSession: (threadId, data) =>
         Effect.try({
           try: () => runtime.writeToSession(threadId, data),
