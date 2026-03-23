@@ -503,23 +503,23 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     terminal.options.disableStdin = false;
 
     // ── Scroll lock: preserve viewport when user is reading history ──
+    // xterm.js v6 replaced the native `.xterm-viewport` scroll container with
+    // VS Code's SmoothScrollableElement. The `.xterm-viewport` div still exists
+    // but its scrollTop is always 0 — scroll is now managed internally by xterm.
+    // We use xterm's public buffer API (viewportY / baseY) instead of DOM queries.
     scrollLockedRef.current = false;
     setShowNewOutput(false);
     let hasNewOutputFlag = false;
-    const getViewport = (): HTMLElement | null =>
-      terminal.element?.querySelector(".xterm-viewport") as HTMLElement | null;
     const isViewportAtBottom = (): boolean => {
-      const vp = getViewport();
-      if (!vp) return true;
-      return vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 5;
+      return terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     };
     /** Write to terminal, preserving scroll position if user has scrolled up.
      *  Checks viewport position on every write instead of relying solely on
      *  the wheel-event-driven scrollLockedRef — this catches scrollbar-drag,
-     *  keyboard scroll, and sub-row offsets that wheel detection misses.
-     *  Uses terminal.write(data, callback) so the scroll restoration runs
-     *  AFTER xterm.js has fully processed and rendered the data, avoiding a
-     *  race with xterm's async _innerRefresh that overwrites scrollTop. */
+     *  keyboard scroll, and programmatic scrolls.
+     *  Uses terminal.buffer.active.viewportY (line-based position) instead of
+     *  DOM scrollTop — xterm.js v6 uses VS Code's SmoothScrollableElement so
+     *  the .xterm-viewport div no longer controls scroll. */
     const scrollAwareWrite = (data: string) => {
       if (isViewportAtBottom()) {
         // User is at (or very near) the bottom — clear scroll lock, let xterm auto-scroll
@@ -533,23 +533,22 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       }
       // User has scrolled up — preserve their viewport position
       scrollLockedRef.current = true;
-      const vp = getViewport();
-      if (!vp) {
-        terminal.write(data);
-        return;
-      }
-      const savedTop = vp.scrollTop;
+      const savedLine = terminal.buffer.active.viewportY;
       terminal.write(data, () => {
         if (disposed) return;
-        // xterm.js's render (which sets scrollTop = ydisp * charHeight via
-        // _innerRefresh) is scheduled as a rAF during write processing —
-        // BEFORE this callback fires. Scheduling our restore as a rAF here
-        // guarantees it runs AFTER xterm's render rAF in the same frame
-        // (rAFs execute in registration order).
+        // Restore scroll position if xterm.js moved it during write processing.
+        // The buffer's ydisp is updated synchronously during write, so by
+        // callback time we can check if it drifted and correct it.
+        if (terminal.buffer.active.viewportY !== savedLine) {
+          terminal.scrollToLine(savedLine);
+        }
+        // Also schedule a rAF restore in case xterm's render debouncer has a
+        // pending queueSync that might override our position after this callback.
         requestAnimationFrame(() => {
           if (disposed) return;
-          const currentVp = getViewport();
-          if (currentVp) currentVp.scrollTop = savedTop;
+          if (terminal.buffer.active.viewportY !== savedLine) {
+            terminal.scrollToLine(savedLine);
+          }
         });
       });
       if (!hasNewOutputFlag) {
@@ -756,14 +755,13 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     // Watch for window resize
     const onWindowResize = () => {
       const atBottom = isViewportAtBottom();
-      const vp = getViewport();
-      const savedTop = vp?.scrollTop;
+      const savedLine = terminal.buffer.active.viewportY;
       fitAddon.fit();
-      // fit() → terminal.resize() schedules xterm's render rAF which sets
-      // scrollTop via _innerRefresh. Our rAF runs after it (registered later).
-      if (vp && !atBottom && savedTop !== undefined) {
+      if (!atBottom) {
         requestAnimationFrame(() => {
-          if (!disposed) vp.scrollTop = savedTop;
+          if (!disposed && terminal.buffer.active.viewportY !== savedLine) {
+            terminal.scrollToLine(savedLine);
+          }
         });
       }
     };
@@ -853,14 +851,13 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = null;
         const atBottom = isViewportAtBottom();
-        const vp = getViewport();
-        const savedTop = vp?.scrollTop;
+        const savedLine = terminal.buffer.active.viewportY;
         fitAddon.fit();
-        // fit() inside a rAF schedules xterm's render for the NEXT frame.
-        // Our nested rAF also runs next frame, but after xterm's (registered later).
-        if (vp && !atBottom && savedTop !== undefined) {
+        if (!atBottom) {
           requestAnimationFrame(() => {
-            if (!disposed) vp.scrollTop = savedTop;
+            if (!disposed && terminal.buffer.active.viewportY !== savedLine) {
+              terminal.scrollToLine(savedLine);
+            }
           });
         }
       });

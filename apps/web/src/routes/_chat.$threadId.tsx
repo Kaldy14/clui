@@ -1,6 +1,6 @@
 import { ThreadId } from "@clui/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
+import { Suspense, lazy, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -120,6 +120,18 @@ function ThreadTerminalDrawerContainer({ threadId }: { threadId: ThreadId }) {
   const setActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const closeTerminal = useTerminalStateStore((s) => s.closeTerminal);
 
+  // Track explicit open transitions (closed→open) to auto-focus only on user
+  // action, not on mount from persisted state. key={threadId} on the component
+  // resets this state when navigating between threads.
+  const [focusRequestId, setFocusRequestId] = useState(0);
+  const prevTerminalOpenRef = useRef(terminalState.terminalOpen);
+  useEffect(() => {
+    if (terminalState.terminalOpen && !prevTerminalOpenRef.current) {
+      setFocusRequestId((prev) => prev + 1);
+    }
+    prevTerminalOpenRef.current = terminalState.terminalOpen;
+  }, [terminalState.terminalOpen]);
+
   const cwd = thread?.worktreePath ?? project?.cwd;
   if (!terminalState.terminalOpen || !cwd) return null;
 
@@ -133,7 +145,7 @@ function ThreadTerminalDrawerContainer({ threadId }: { threadId: ThreadId }) {
         activeTerminalId={terminalState.activeTerminalId}
         terminalGroups={terminalState.terminalGroups}
         activeTerminalGroupId={terminalState.activeTerminalGroupId}
-        focusRequestId={0}
+        focusRequestId={focusRequestId}
         onSplitTerminal={() => splitTerminal(threadId, newTerminalId())}
         onNewTerminal={() => newTerminal(threadId, newTerminalId())}
         onActiveTerminalChange={(id) => setActiveTerminal(threadId, id)}
@@ -221,7 +233,7 @@ function ChatThreadRouteView() {
             <div className="min-h-0 flex-1">
               <ThreadTerminalView threadId={threadId} />
             </div>
-            <ThreadTerminalDrawerContainer threadId={threadId} />
+            <ThreadTerminalDrawerContainer key={threadId} threadId={threadId} />
           </div>
         </SidebarInset>
         <DiffPanelInlineSidebar diffOpen={diffOpen} onCloseDiff={closeDiff} onOpenDiff={openDiff} />
@@ -237,7 +249,7 @@ function ChatThreadRouteView() {
           <div className="min-h-0 flex-1">
             <ThreadTerminalView threadId={threadId} />
           </div>
-          <ThreadTerminalDrawerContainer threadId={threadId} />
+          <ThreadTerminalDrawerContainer key={threadId} threadId={threadId} />
         </div>
       </SidebarInset>
       <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>

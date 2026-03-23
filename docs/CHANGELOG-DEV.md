@@ -4,6 +4,33 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-23 — Fix terminal scroll jump regression (xterm.js v6 viewport change)
+
+**Problem:** When scrolling through Claude Code session history, new output from Claude would kick the user to the top of the terminal, losing their scroll position. This was a regression of a previously working fix (commit e312b82).
+
+**Root cause:** xterm.js v6 replaced the native `.xterm-viewport` scroll container with VS Code's `SmoothScrollableElement` (a virtual scrollbar). The `.xterm-viewport` div still exists in the DOM but its `scrollTop` is always 0 and `scrollHeight === clientHeight`. Our scroll preservation code queried `.xterm-viewport` for position — `isViewportAtBottom()` always returned `true`, so `scrollAwareWrite` never entered the preservation branch. The "New output" indicator also never showed.
+
+**Fix:** Replaced all `.xterm-viewport` DOM manipulation with xterm.js public API: `terminal.buffer.active.viewportY` (line-based scroll position), `terminal.buffer.active.baseY` (bottom of scrollback), and `terminal.scrollToLine(line)` for restoration. This is version-agnostic and immune to internal DOM structure changes.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx` — `isViewportAtBottom`, `scrollAwareWrite`, `onWindowResize`, `ResizeObserver` handler
+
+---
+
+## 2026-03-23 — Fix thread terminal stealing focus from Claude Code
+
+**Problem:** When a thread had an open thread terminal (persisted state), navigating to it or starting a Claude Code session would focus the thread terminal instead of Claude Code. Focus should default to Claude Code; the thread terminal should only auto-focus when explicitly opened by the user (e.g., Cmd+J toggle).
+
+**Root cause:** `ThreadTerminalDrawer`'s `TerminalViewport` had `autoFocus={true}` hardcoded, causing it to steal focus on every mount — including mounts from persisted state or thread navigation. `focusRequestId` was hardcoded to `0` and never signaled explicit user opens.
+
+**Fix:** Track closed→open transitions in `ThreadTerminalDrawerContainer` via a `focusRequestId` counter that increments only when `terminalOpen` transitions from `false` to `true` on the same thread. Added `key={threadId}` to reset focus state on thread navigation. Changed `autoFocus={true}` to `autoFocus={focusRequestId > 0}` so the thread terminal only auto-focuses when explicitly opened by user action.
+
+**Affected files:**
+- `apps/web/src/routes/_chat.$threadId.tsx` — focus tracking logic, key={threadId}
+- `apps/web/src/components/ThreadTerminalDrawer.tsx` — conditional autoFocus
+
+---
+
 ## 2026-03-23 — Replace sidebar sort key with `lastInteractedAt`
 
 **Problem:** Sidebar thread sorting was unreliable — threads jumped around whenever Claude produced output, completed turns, appended activities, or any hook event fired. The `updatedAt` field used as the sort key was bumped by 11 different event types in the projector, making sort order unpredictable.
