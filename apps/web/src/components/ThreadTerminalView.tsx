@@ -483,7 +483,6 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showNewOutput, setShowNewOutput] = useState(false);
-  const scrollLockedRef = useRef(false);
   const searchAddonRef = useRef<claudeCache.CachedTerminal["searchAddon"] | null>(null);
 
   useEffect(() => {
@@ -510,68 +509,60 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     searchAddonRef.current = entry.searchAddon;
     terminal.options.disableStdin = false;
 
-    // ── Scroll lock: preserve viewport when user is reading history ──
-    // xterm.js v6 replaced the native `.xterm-viewport` scroll container with
-    // VS Code's SmoothScrollableElement. The `.xterm-viewport` div still exists
-    // but its scrollTop is always 0 — scroll is now managed internally by xterm.
-    // We use xterm's public buffer API (viewportY / baseY) instead of DOM queries.
-    scrollLockedRef.current = false;
+    // ── Scroll preservation ──────────────────────────────────────────────
+    // Strategy: rely on xterm.js's native scroll preservation via the
+    // internal `BufferService.isUserScrolling` flag. When the user scrolls
+    // up, xterm.js sets this flag and keeps ydisp stable on new content.
+    // We add a defense-in-depth write callback that restores position if
+    // xterm's native handling is insufficient (edge cases during buffer
+    // switches, reflows, etc.).
+    //
+    // Previous approach used an aggressive terminal.onScroll handler that
+    // actively restored a saved line on every ydisp change. This fought
+    // user scrolling because onScroll fires before the bubble-phase wheel
+    // handler could update the lock state — causing oscillation/freezing.
+    //
+    // Key invariants maintained to keep isUserScrolling correct:
+    // - scrollOnUserInput: false prevents xterm from auto-scrolling on keypress
+    // - Alt buffer writes bypass scroll protection (scrollToLine in alt buffer
+    //   corrupts isUserScrolling via BufferService.scrollLines where
+    //   disp+ydisp >= ybase(0), setting isUserScrolling=false)
     setShowNewOutput(false);
     let hasNewOutputFlag = false;
-    /** Line number to restore on visibility/focus changes. Set when scroll-locked. */
-    let scrollLockLine: number | null = null;
+
     const isViewportAtBottom = (): boolean => {
       return terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     };
-    /** Write to terminal, preserving scroll position if user has scrolled up.
-     *  Checks viewport position on every write instead of relying solely on
-     *  the wheel-event-driven scrollLockedRef — this catches scrollbar-drag,
-     *  keyboard scroll, and programmatic scrolls.
-     *  Uses terminal.buffer.active.viewportY (line-based position) instead of
-     *  DOM scrollTop — xterm.js v6 uses VS Code's SmoothScrollableElement so
-     *  the .xterm-viewport div no longer controls scroll. */
-    /** True when the active buffer is the alternate screen (TUI mode).
-     *  In alt buffer there is no scrollback — scrollLockLine refers to a
-     *  normal-buffer position and must not be applied. More critically,
-     *  calling scrollToLine(scrollLockLine) in alt buffer goes through
-     *  BufferService.scrollLines(disp) where disp+ydisp >= ybase (0),
-     *  which sets the internal isUserScrolling flag to false. When the
-     *  normal buffer is later restored, every subsequent scroll() call
-     *  forces ydisp = ybase — kicking the user to the bottom. */
     const isAltBuffer = () => terminal.buffer.active.type === "alternate";
 
     const scrollAwareWrite = (data: string) => {
       // Alt buffer has no scrollback — write directly. Protecting alt buffer
-      // writes would corrupt xterm.js's internal isUserScrolling flag (see
-      // isAltBuffer comment above).
+      // writes would corrupt xterm.js's internal isUserScrolling flag.
       if (isAltBuffer()) {
         terminal.write(data);
         return;
       }
-      // Check both API position AND the wheel-event-driven scrollLockedRef.
-      // The ref closes a timing gap: if a wheel-up event was processed between
-      // output events in the same macrotask, scrollLockedRef is already true
-      // even though viewportY may not reflect the scroll yet.
-      if (isViewportAtBottom() && !scrollLockedRef.current) {
+      if (isViewportAtBottom()) {
         terminal.write(data);
+        // Clear stale "New output" indicator if we're following the tail
+        if (hasNewOutputFlag) {
+          hasNewOutputFlag = false;
+          setShowNewOutput(false);
+        }
         return;
       }
-      // User has scrolled up (or scroll lock is active) — preserve position.
-      // Use scrollLockLine (set by wheel/onScroll handlers) as restore target
-      // when available — it survives even if viewportY already drifted to bottom.
-      scrollLockedRef.current = true;
-      const savedLine = scrollLockLine ?? terminal.buffer.active.viewportY;
-      scrollLockLine = savedLine;
+      // User is scrolled up — save position and restore after write.
+      // xterm.js natively preserves ydisp via isUserScrolling, but the
+      // callback provides defense-in-depth for edge cases (buffer switch
+      // during write, Viewport._sync re-sync, etc.).
+      const savedLine = terminal.buffer.active.viewportY;
       terminal.write(data, () => {
         if (disposed || isAltBuffer()) return;
-        // Restore scroll position if xterm.js moved it during write processing.
-        // The buffer's ydisp is updated synchronously during write, so by
-        // callback time we can check if it drifted and correct it.
         if (terminal.buffer.active.viewportY !== savedLine) {
           terminal.scrollToLine(savedLine);
         }
-        // Also schedule a rAF restore in case xterm's render debouncer has a
-        // pending queueSync that might override our position after this callback.
+        // Double-rAF: xterm's render debouncer may override position after
+        // this callback via a queued Viewport._sync from queueSync().
         requestAnimationFrame(() => {
           if (disposed || isAltBuffer()) return;
           if (terminal.buffer.active.viewportY !== savedLine) {
@@ -848,30 +839,16 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     };
     el.addEventListener("wheel", onAltBufferWheel, { capture: true, passive: false });
 
-    // ── Scroll lock detection via wheel events ──
-    // No rAF delay — by the time this bubble-phase handler fires, the
-    // SmoothScrollableElement (child) has already processed the wheel event
-    // synchronously and updated ydisp. Checking immediately closes the
-    // timing window where output could arrive before scrollLockedRef is set.
-    const onScrollLockDetect = (e: WheelEvent) => {
+    // ── "New output" indicator management via wheel events ──
+    // When user scrolls down to the bottom, clear the indicator.
+    const onWheelClearIndicator = (e: WheelEvent) => {
       if (disposed) return;
-      if (e.deltaY < 0) {
-        // User is scrolling up to read history
-        if (!isViewportAtBottom()) {
-          scrollLockedRef.current = true;
-          scrollLockLine = terminal.buffer.active.viewportY;
-        }
-      } else if (e.deltaY > 0) {
-        // User scrolled down — check if they reached the bottom
-        if (isViewportAtBottom()) {
-          scrollLockedRef.current = false;
-          scrollLockLine = null;
-          hasNewOutputFlag = false;
-          setShowNewOutput(false);
-        }
+      if (e.deltaY > 0 && hasNewOutputFlag && isViewportAtBottom()) {
+        hasNewOutputFlag = false;
+        setShowNewOutput(false);
       }
     };
-    el.addEventListener("wheel", onScrollLockDetect, { passive: true });
+    el.addEventListener("wheel", onWheelClearIndicator, { passive: true });
 
     // Watch for container resize (sidebar collapse/expand, split changes)
     // Throttled via rAF to avoid excessive reflows during sidebar drag
@@ -898,45 +875,31 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     // When the user switches apps or clicks back into the terminal, xterm.js
     // v6's SmoothScrollableElement can re-sync its scroll position (e.g. via
     // setScrollDimensions clamping or layout recalcs), causing an unexpected
-    // jump. We re-assert the tracked scrollLockLine when the tab returns.
+    // jump. We save position when hiding and restore when visible.
+    let savedLineBeforeHide: number | null = null;
     const onVisibilityChange = () => {
-      if (disposed || document.hidden || isAltBuffer()) return;
-      // Tab just became visible — restore if we were scroll-locked
-      if (scrollLockLine !== null && terminal.buffer.active.viewportY !== scrollLockLine) {
-        terminal.scrollToLine(scrollLockLine);
+      if (disposed) return;
+      if (document.hidden) {
+        // Tab hidden — snapshot current position
+        savedLineBeforeHide = isAltBuffer() ? null : terminal.buffer.active.viewportY;
+      } else if (savedLineBeforeHide !== null && !isAltBuffer()) {
+        // Tab visible — restore if drifted while hidden
+        if (!isViewportAtBottom() && terminal.buffer.active.viewportY !== savedLineBeforeHide) {
+          terminal.scrollToLine(savedLineBeforeHide);
+        }
+        savedLineBeforeHide = null;
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    // Use xterm's onScroll event to actively defend the scroll-locked position.
-    // This fires on every ydisp change — user scroll, programmatic scroll,
-    // buffer switch, etc. If we detect an unexpected drift away from our
-    // locked line, we immediately restore. This covers edge cases like
-    // buffer switches (missing syncScrollPosition fix from xterm.js PR #5390),
-    // SmoothScrollableElement re-syncs, and other internal xterm.js events.
-    let isRestoringScroll = false;
+    // ── Clear "New output" when viewport reaches the bottom ──────────
+    // This covers scrollbar drags, programmatic scrolls, and any path
+    // that wasn't a wheel event (which has its own clearing above).
     const scrollDisposable = terminal.onScroll(() => {
-      if (disposed || isRestoringScroll) return;
-      // Skip alt buffer — scrollLockLine refers to normal buffer position.
-      // Calling scrollToLine in alt buffer corrupts BufferService.isUserScrolling
-      // (see isAltBuffer comment), which causes the normal buffer to lose its
-      // scroll position on the next buffer switch.
-      if (isAltBuffer()) return;
-      const currentLine = terminal.buffer.active.viewportY;
-      if (scrollLockLine !== null) {
-        if (isViewportAtBottom() && !scrollLockedRef.current) {
-          // User scrolled to bottom via scrollbar/wheel — release lock
-          scrollLockLine = null;
-        } else if (currentLine !== scrollLockLine) {
-          // Unexpected drift — restore position. Guard against re-entrancy
-          // since scrollToLine fires another onScroll.
-          isRestoringScroll = true;
-          terminal.scrollToLine(scrollLockLine);
-          isRestoringScroll = false;
-        }
-      } else if (!isViewportAtBottom() && scrollLockedRef.current) {
-        // Wheel handler set the lock but scrollLockLine wasn't set yet
-        scrollLockLine = currentLine;
+      if (disposed) return;
+      if (hasNewOutputFlag && isViewportAtBottom()) {
+        hasNewOutputFlag = false;
+        setShowNewOutput(false);
       }
     });
 
@@ -955,7 +918,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       cancelAnimationFrame(initialFitRafId);
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
-      el.removeEventListener("wheel", onScrollLockDetect);
+      el.removeEventListener("wheel", onWheelClearIndicator);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("resize", onWindowResize);
       resizeObserver.disconnect();
@@ -977,7 +940,6 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
   }, [threadId]);
 
   const handleScrollToBottom = useCallback(() => {
-    scrollLockedRef.current = false;
     setShowNewOutput(false);
     const cached = claudeCache.get(threadId);
     if (cached) {

@@ -4,24 +4,29 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
-## 2026-03-23 — Fix scroll position lost via alt buffer isUserScrolling corruption
+## 2026-03-23 — Fix scroll corruption: alt buffer isUserScrolling + onScroll fighting
 
-**Problem:** User still gets kicked to the bottom of an active Claude Code session when scrolled up to read history, despite multiple prior scroll lock fixes.
+**Problem:** User gets kicked to the bottom of an active Claude Code session when scrolled up. After initial fix attempt, scroll became completely broken — couldn't scroll at all (oscillating bouncing), and "New output" badge showed even at the bottom.
 
-**Root cause:** Two compounding issues in the interaction between our scroll lock mechanism and xterm.js v6 internals:
+**Root cause:** Three compounding issues:
 
-1. **Alt buffer corrupts `BufferService.isUserScrolling`:** When Claude Code enters alternate screen buffer (TUI mode), `BufferService.scroll()` fires `onScroll` events with `ydisp=0`. Our `onScroll` handler tried to restore `scrollLockLine` (e.g., line 50 from the normal buffer) by calling `terminal.scrollToLine(50)`, which internally calls `BufferService.scrollLines(50)`. Since alt buffer has `ybase=0`, the check `disp + ydisp >= ybase` (`50 + 0 >= 0`) evaluates true, setting `isUserScrolling = false`. When the normal buffer is later restored, every `BufferService.scroll()` call sees `!isUserScrolling` and forces `ydisp = ybase` — kicking the user to the bottom.
+1. **Alt buffer corrupts `BufferService.isUserScrolling`:** Our `onScroll` handler called `scrollToLine(50)` in alt buffer (where `ybase=0`), which went through `BufferService.scrollLines(50)` → `disp+ydisp >= ybase` → `isUserScrolling = false`. On normal buffer restore, `scroll()` forced `ydisp = ybase`.
 
-2. **`scrollOnUserInput` default is `true`:** xterm.js defaults to scrolling to the bottom whenever the user types any key while scrolled up (via `CoreService.triggerDataEvent` → `onRequestScrollToBottom`). This bypasses our scroll lock entirely and also corrupts `isUserScrolling`.
+2. **`scrollOnUserInput` default `true`:** Any keystroke while scrolled up triggered `scrollToBottom()`, corrupting `isUserScrolling`.
+
+3. **`onScroll` handler fought user scrolling:** `terminal.onScroll` fires synchronously during SmoothScrollableElement's wheel processing (target phase), BEFORE our bubble-phase wheel handler could update `scrollLockLine`. Every scroll was detected as "drift" and restored to a stale position, causing oscillation. Stale `scrollLockedRef` also prevented "New output" from clearing at bottom.
 
 **Fix:**
-- Added `scrollOnUserInput: false` to terminal creation options to prevent xterm.js from auto-scrolling on keystroke
-- Added alt buffer guards (`terminal.buffer.active.type === "alternate"`) to all scroll-position-sensitive code paths: `scrollAwareWrite`, `terminal.onScroll` handler, `visibilitychange` handler, window resize handler, and `ResizeObserver` handler
-- In alt buffer mode, writes go directly to `terminal.write()` without scroll protection (alt buffer has no scrollback, so scroll lock is meaningless and attempting it corrupts `isUserScrolling`)
+- `scrollOnUserInput: false` in terminal options
+- **Removed the aggressive `onScroll` position-restoration handler.** xterm.js's native `isUserScrolling` in `BufferService.scroll()` preserves position. The `scrollAwareWrite` callback provides defense-in-depth. The active restoration was redundant and harmful.
+- **Removed `scrollLockedRef` and `scrollLockLine`** — replaced with direct `isViewportAtBottom()` checks per write. With `smoothScrollDuration: 0`, scroll events are synchronous so the timing gap these refs closed no longer exists.
+- Alt buffer writes bypass scroll protection entirely
+- Simplified `onScroll` handler to only clear "New output" indicator
+- Visibility handler uses local save/restore instead of shared `scrollLockLine`
 
 **Affected files:**
-- `apps/web/src/lib/claudeTerminalCache.ts` — added `scrollOnUserInput: false` to Terminal options
-- `apps/web/src/components/ThreadTerminalView.tsx` — alt buffer guards on all scroll restoration paths
+- `apps/web/src/lib/claudeTerminalCache.ts` — `scrollOnUserInput: false`
+- `apps/web/src/components/ThreadTerminalView.tsx` — rewritten scroll preservation
 
 ---
 
