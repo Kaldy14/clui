@@ -510,23 +510,14 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     terminal.options.disableStdin = false;
 
     // ── Scroll preservation ──────────────────────────────────────────────
-    // Strategy: rely on xterm.js's native scroll preservation via the
-    // internal `BufferService.isUserScrolling` flag. When the user scrolls
-    // up, xterm.js sets this flag and keeps ydisp stable on new content.
-    // We add a defense-in-depth write callback that restores position if
-    // xterm's native handling is insufficient (edge cases during buffer
-    // switches, reflows, etc.).
+    // xterm.js v6 natively preserves scroll position via the internal
+    // `BufferService.isUserScrolling` flag. When the user scrolls up,
+    // xterm sets this flag and keeps ydisp stable as new content arrives.
+    // We trust this mechanism entirely — no manual save/restore.
     //
-    // Previous approach used an aggressive terminal.onScroll handler that
-    // actively restored a saved line on every ydisp change. This fought
-    // user scrolling because onScroll fires before the bubble-phase wheel
-    // handler could update the lock state — causing oscillation/freezing.
-    //
-    // Key invariants maintained to keep isUserScrolling correct:
-    // - scrollOnUserInput: false prevents xterm from auto-scrolling on keypress
-    // - Alt buffer writes bypass scroll protection (scrollToLine in alt buffer
-    //   corrupts isUserScrolling via BufferService.scrollLines where
-    //   disp+ydisp >= ybase(0), setting isUserScrolling=false)
+    // Key invariant: scrollOnUserInput: false (set in claudeTerminalCache)
+    // prevents xterm from auto-scrolling on keypress, which is correct
+    // because the PTY echoes input back as output.
     setShowNewOutput(false);
     let hasNewOutputFlag = false;
 
@@ -535,52 +526,21 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     };
     const isAltBuffer = () => terminal.buffer.active.type === "alternate";
 
-    const scrollAwareWrite = (data: string) => {
-      // Alt buffer has no scrollback — write directly. Protecting alt buffer
-      // writes would corrupt xterm.js's internal isUserScrolling flag.
-      if (isAltBuffer()) {
-        terminal.write(data);
-        return;
-      }
-      if (isViewportAtBottom()) {
-        terminal.write(data);
-        // Clear stale "New output" indicator if we're following the tail
-        if (hasNewOutputFlag) {
-          hasNewOutputFlag = false;
-          setShowNewOutput(false);
-        }
-        return;
-      }
-      // User is scrolled up — save position and restore after write.
-      // xterm.js natively preserves ydisp via isUserScrolling, but the
-      // callback provides defense-in-depth for edge cases (buffer switch
-      // during write, Viewport._sync re-sync, etc.).
-      const savedLine = terminal.buffer.active.viewportY;
-      terminal.write(data, () => {
-        if (disposed || isAltBuffer()) return;
-        if (terminal.buffer.active.viewportY !== savedLine) {
-          terminal.scrollToLine(savedLine);
-        }
-        // Double-rAF: xterm's render debouncer may override position after
-        // this callback via a queued Viewport._sync from queueSync().
-        requestAnimationFrame(() => {
-          if (disposed || isAltBuffer()) return;
-          if (terminal.buffer.active.viewportY !== savedLine) {
-            terminal.scrollToLine(savedLine);
-          }
-        });
-      });
-      if (!hasNewOutputFlag) {
-        hasNewOutputFlag = true;
-        setShowNewOutput(true);
-      }
-    };
-
     const writeEvent = (event: ClaudeSessionEvent) => {
       if (event.threadId !== threadId) return;
       switch (event.type) {
         case "output":
-          scrollAwareWrite(event.data);
+          terminal.write(event.data);
+          // Show "New output" indicator when user is scrolled up
+          if (!isAltBuffer() && !isViewportAtBottom() && !hasNewOutputFlag) {
+            hasNewOutputFlag = true;
+            setShowNewOutput(true);
+          }
+          // Clear indicator if we're following the tail
+          if (hasNewOutputFlag && isViewportAtBottom()) {
+            hasNewOutputFlag = false;
+            setShowNewOutput(false);
+          }
           // Track the server offset so that on detach→reattach the scrollback
           // delta fetch only returns truly new content. Without this,
           // lastServerOffset stays at the initial-fetch value and every
@@ -590,7 +550,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
           }
           break;
         case "error":
-          scrollAwareWrite(`\r\n[error] ${event.message}\r\n`);
+          terminal.write(`\r\n[error] ${event.message}\r\n`);
           break;
         case "exited":
         case "started":
@@ -771,18 +731,10 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       flushIfReady();
     });
 
-    // Watch for window resize
+    // Watch for window resize — just re-fit, xterm.js preserves scroll
+    // position natively via isUserScrolling during dimension changes.
     const onWindowResize = () => {
-      const atBottom = isViewportAtBottom() || isAltBuffer();
-      const savedLine = terminal.buffer.active.viewportY;
       fitAddon.fit();
-      if (!atBottom) {
-        requestAnimationFrame(() => {
-          if (!disposed && !isAltBuffer() && terminal.buffer.active.viewportY !== savedLine) {
-            terminal.scrollToLine(savedLine);
-          }
-        });
-      }
     };
     window.addEventListener("resize", onWindowResize);
 
@@ -851,46 +803,17 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     el.addEventListener("wheel", onWheelClearIndicator, { passive: true });
 
     // Watch for container resize (sidebar collapse/expand, split changes)
-    // Throttled via rAF to avoid excessive reflows during sidebar drag
+    // Throttled via rAF to avoid excessive reflows during sidebar drag.
+    // Just re-fit — xterm.js preserves scroll position natively.
     let resizeRafId: number | null = null;
     const resizeObserver = new ResizeObserver(() => {
       if (resizeRafId !== null) return;
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = null;
-        const atBottom = isViewportAtBottom() || isAltBuffer();
-        const savedLine = terminal.buffer.active.viewportY;
         fitAddon.fit();
-        if (!atBottom) {
-          requestAnimationFrame(() => {
-            if (!disposed && !isAltBuffer() && terminal.buffer.active.viewportY !== savedLine) {
-              terminal.scrollToLine(savedLine);
-            }
-          });
-        }
       });
     });
     resizeObserver.observe(el);
-
-    // ── Defend scroll position on visibility/focus changes ──────────
-    // When the user switches apps or clicks back into the terminal, xterm.js
-    // v6's SmoothScrollableElement can re-sync its scroll position (e.g. via
-    // setScrollDimensions clamping or layout recalcs), causing an unexpected
-    // jump. We save position when hiding and restore when visible.
-    let savedLineBeforeHide: number | null = null;
-    const onVisibilityChange = () => {
-      if (disposed) return;
-      if (document.hidden) {
-        // Tab hidden — snapshot current position
-        savedLineBeforeHide = isAltBuffer() ? null : terminal.buffer.active.viewportY;
-      } else if (savedLineBeforeHide !== null && !isAltBuffer()) {
-        // Tab visible — restore if drifted while hidden
-        if (!isViewportAtBottom() && terminal.buffer.active.viewportY !== savedLineBeforeHide) {
-          terminal.scrollToLine(savedLineBeforeHide);
-        }
-        savedLineBeforeHide = null;
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
 
     // ── Clear "New output" when viewport reaches the bottom ──────────
     // This covers scrollbar drags, programmatic scrolls, and any path
@@ -919,7 +842,6 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onWheelClearIndicator);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("resize", onWindowResize);
       resizeObserver.disconnect();
       themeObserver.disconnect();

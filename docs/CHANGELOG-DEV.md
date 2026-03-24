@@ -4,6 +4,27 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-24 — Remove manual scroll management, trust xterm.js native mechanism
+
+**Problem:** Terminal scroll position jumps when viewing session history while Claude is working. Two bugs: (1) viewport snaps to bottom unexpectedly, (2) scrolling 10px up causes a jump back to the previous position.
+
+**Root cause:** `scrollAwareWrite()` layered manual save/restore on top of xterm.js v6's built-in `isUserScrolling` mechanism. The two systems fought each other:
+- Race condition: `savedLine` captured at write-time was restored asynchronously (callback + rAF), so user scrolling between save and restore caused jump-back glitches.
+- `scrollToLine()` calls went through `BufferService.scrollLines()` which could clear `isUserScrolling=false` when near the bottom, causing the native mechanism to auto-scroll to bottom on subsequent writes.
+- Compounding workarounds (double-rAF, visibility handler, resize save/restore) each addressed symptoms of the core conflict.
+
+**Fix:** Removed all manual scroll position management. xterm.js v6 natively preserves viewport position via the `isUserScrolling` flag — the same mechanism used by VS Code's terminal and every other xterm.js consumer. Specifically:
+1. Removed `scrollAwareWrite()` — output events now use plain `terminal.write()`
+2. Removed double-rAF position restore in write callbacks
+3. Removed visibility change handler (`onVisibilityChange`)
+4. Simplified window resize and ResizeObserver handlers to just call `fitAddon.fit()` without save/restore
+5. Kept: alt-buffer wheel→arrow conversion (genuinely needed), "New output" indicator, `scrollOnUserInput: false`
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx` — ActiveTerminalView scroll handling
+
+---
+
 ## 2026-03-24 — Fix badge not showing during background agent execution
 
 **Problem:** When Claude Code spawns background agents and the main turn ends (Stop hook fires), the thread badge shows "Completed" even though subagents are still running. PostToolUse events from subagents were rejected during the 8-second `COMPLETED_GRACE_MS` window, and terminal output couldn't recover the "Working" badge because the recovery path only handled `hookStatus === null`, not `hookStatus === "completed"`.
