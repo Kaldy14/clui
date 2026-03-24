@@ -511,9 +511,14 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
 
     // ── Scroll preservation ──────────────────────────────────────────────
     // xterm.js v6 natively preserves scroll position via the internal
-    // `BufferService.isUserScrolling` flag. When the user scrolls up,
-    // xterm sets this flag and keeps ydisp stable as new content arrives.
-    // We trust this mechanism entirely — no manual save/restore.
+    // `BufferService.isUserScrolling` flag, but Viewport._sync() can lose
+    // the position: setScrollDimensions clamps scrollTop internally while
+    // _suppressOnScrollHandler prevents _latestYDisp from updating, so
+    // subsequent syncs never correct it. We add a targeted write callback
+    // that detects and corrects large jumps (> 1 screenful) — this catches
+    // "jump to top/bottom" bugs without causing the old "jump back N lines"
+    // glitch (user scrolling between save and callback is always < 1
+    // screenful in the few ms of write processing).
     //
     // Key invariant: scrollOnUserInput: false (set in claudeTerminalCache)
     // prevents xterm from auto-scrolling on keypress, which is correct
@@ -526,21 +531,41 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     };
     const isAltBuffer = () => terminal.buffer.active.type === "alternate";
 
+    const scrollGuardedWrite = (data: string) => {
+      if (isAltBuffer()) {
+        terminal.write(data);
+        return;
+      }
+      if (isViewportAtBottom()) {
+        terminal.write(data);
+        if (hasNewOutputFlag) {
+          hasNewOutputFlag = false;
+          setShowNewOutput(false);
+        }
+        return;
+      }
+      // User is scrolled up — write normally but verify position afterward.
+      // xterm.js's isUserScrolling handles most cases; the callback is a
+      // safety net for Viewport._sync edge cases (dimension clamping).
+      const savedLine = terminal.buffer.active.viewportY;
+      terminal.write(data, () => {
+        if (disposed || isAltBuffer()) return;
+        const drift = Math.abs(terminal.buffer.active.viewportY - savedLine);
+        if (drift > terminal.rows) {
+          terminal.scrollToLine(savedLine);
+        }
+      });
+      if (!hasNewOutputFlag) {
+        hasNewOutputFlag = true;
+        setShowNewOutput(true);
+      }
+    };
+
     const writeEvent = (event: ClaudeSessionEvent) => {
       if (event.threadId !== threadId) return;
       switch (event.type) {
         case "output":
-          terminal.write(event.data);
-          // Show "New output" indicator when user is scrolled up
-          if (!isAltBuffer() && !isViewportAtBottom() && !hasNewOutputFlag) {
-            hasNewOutputFlag = true;
-            setShowNewOutput(true);
-          }
-          // Clear indicator if we're following the tail
-          if (hasNewOutputFlag && isViewportAtBottom()) {
-            hasNewOutputFlag = false;
-            setShowNewOutput(false);
-          }
+          scrollGuardedWrite(event.data);
           // Track the server offset so that on detach→reattach the scrollback
           // delta fetch only returns truly new content. Without this,
           // lastServerOffset stays at the initial-fetch value and every
@@ -550,7 +575,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
           }
           break;
         case "error":
-          terminal.write(`\r\n[error] ${event.message}\r\n`);
+          scrollGuardedWrite(`\r\n[error] ${event.message}\r\n`);
           break;
         case "exited":
         case "started":
