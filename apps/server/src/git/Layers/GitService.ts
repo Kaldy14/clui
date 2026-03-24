@@ -43,15 +43,21 @@ const collectOutput = Effect.fn(function* <E>(
   input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, E>,
   maxOutputBytes: number,
+  outputMode: "error" | "truncate" = "error",
 ): Effect.fn.Return<string, GitCommandError> {
   const decoder = new TextDecoder();
   let bytes = 0;
   let text = "";
+  let truncated = false;
 
   yield* Stream.runForEach(stream, (chunk) =>
     Effect.gen(function* () {
       bytes += chunk.byteLength;
       if (bytes > maxOutputBytes) {
+        if (outputMode === "truncate") {
+          truncated = true;
+          return;
+        }
         return yield* new GitCommandError({
           operation: input.operation,
           command: quoteGitCommand(input.args),
@@ -64,6 +70,7 @@ const collectOutput = Effect.fn(function* <E>(
   ).pipe(Effect.mapError(toGitCommandError(input, "output stream failed.")));
 
   text += decoder.decode();
+  if (truncated) text += "\n[truncated]";
   return text;
 });
 
@@ -77,6 +84,7 @@ const makeGitService = Effect.gen(function* () {
     } as const;
     const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    const outputMode = input.outputMode ?? "error";
 
     const commandEffect = Effect.gen(function* () {
       const child = yield* commandSpawner
@@ -90,8 +98,8 @@ const makeGitService = Effect.gen(function* () {
 
       const [stdout, stderr, exitCode] = yield* Effect.all(
         [
-          collectOutput(commandInput, child.stdout, maxOutputBytes),
-          collectOutput(commandInput, child.stderr, maxOutputBytes),
+          collectOutput(commandInput, child.stdout, maxOutputBytes, outputMode),
+          collectOutput(commandInput, child.stderr, maxOutputBytes, outputMode),
           child.exitCode.pipe(
             Effect.map((value) => Number(value)),
             Effect.mapError(toGitCommandError(commandInput, "failed to report exit code.")),

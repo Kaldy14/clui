@@ -22,6 +22,20 @@ let worker: Worker | null = null;
 let loadedModelTier: string | null = null;
 let modelReady = false;
 
+/** Idle timeout — terminate the worker if unused for this long. */
+const WHISPER_IDLE_TIMEOUT_MS = 5 * 60 * 1_000; // 5 minutes
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function resetIdleTimer(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    // Only terminate if no pending work
+    if (pendingTranscribes.size === 0 && !pendingLoad) {
+      dispose();
+    }
+  }, WHISPER_IDLE_TIMEOUT_MS);
+}
+
 /**
  * Check if a model's files are already present in the browser Cache API
  * (populated by @huggingface/transformers on prior downloads).
@@ -75,6 +89,7 @@ function getOrCreateWorker(): Worker {
       modelReady = true;
       pendingLoad?.resolve();
       pendingLoad = null;
+      resetIdleTimer();
       return;
     }
 
@@ -94,6 +109,7 @@ function getOrCreateWorker(): Worker {
         pendingTranscribes.delete(msg.id);
         pending.resolve(msg.text);
       }
+      resetIdleTimer();
       return;
     }
 
@@ -188,6 +204,10 @@ function getLoadedModel(): string | null {
 }
 
 function dispose(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
   if (worker) {
     worker.terminate();
     worker = null;

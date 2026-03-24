@@ -13,6 +13,7 @@ import {
   Rows3Icon,
   Square,
   SquareCheckBig,
+  UnfoldVerticalIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -48,6 +49,28 @@ const DiffInlineEditor = lazy(() => import("./DiffInlineEditor"));
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
+
+const DIFF_PREF_RENDER_MODE_KEY = "diff_render_mode";
+const DIFF_PREF_FILE_TREE_KEY = "diff_show_file_tree";
+const DIFF_PREF_EXPAND_UNCHANGED_KEY = "diff_expand_unchanged";
+
+function readDiffPref<T>(key: string, fallback: T, validate: (v: unknown) => v is T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const parsed = JSON.parse(raw);
+    return validate(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writeDiffPref(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch { /* quota exceeded — ignore */ }
+}
+const isDiffRenderMode = (v: unknown): v is DiffRenderMode => v === "stacked" || v === "split";
+const isBoolean = (v: unknown): v is boolean => typeof v === "boolean";
 
 const DIFF_CSS_LIGHT = `
 [data-diffs-header],
@@ -308,9 +331,36 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
-  const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
-  const [showFileTree, setShowFileTree] = useState(true);
+  const [diffRenderMode, setDiffRenderModeRaw] = useState<DiffRenderMode>(() =>
+    readDiffPref(DIFF_PREF_RENDER_MODE_KEY, "stacked" as DiffRenderMode, isDiffRenderMode),
+  );
+  const setDiffRenderMode = useCallback((mode: DiffRenderMode) => {
+    setDiffRenderModeRaw(mode);
+    writeDiffPref(DIFF_PREF_RENDER_MODE_KEY, mode);
+  }, []);
+  const [showFileTree, setShowFileTreeRaw] = useState(() =>
+    readDiffPref(DIFF_PREF_FILE_TREE_KEY, true, isBoolean),
+  );
+  const setShowFileTree = useCallback((fn: boolean | ((prev: boolean) => boolean)) => {
+    setShowFileTreeRaw((prev) => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      writeDiffPref(DIFF_PREF_FILE_TREE_KEY, next);
+      return next;
+    });
+  }, []);
+  const [expandUnchanged, setExpandUnchangedRaw] = useState(() =>
+    readDiffPref(DIFF_PREF_EXPAND_UNCHANGED_KEY, false, isBoolean),
+  );
+  const setExpandUnchanged = useCallback((fn: boolean | ((prev: boolean) => boolean)) => {
+    setExpandUnchangedRaw((prev) => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      writeDiffPref(DIFF_PREF_EXPAND_UNCHANGED_KEY, next);
+      return next;
+    });
+  }, []);
   const patchViewportRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelWide, setPanelWide] = useState(false);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
@@ -453,6 +503,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
+
+  const aggregateStats = useMemo(() => {
+    let additions = 0;
+    let deletions = 0;
+    for (const fileDiff of renderableFiles) {
+      const stats = getFileDiffStats(fileDiff);
+      additions += stats.additions;
+      deletions += stats.deletions;
+    }
+    return { additions, deletions, fileCount: renderableFiles.length };
+  }, [renderableFiles]);
 
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
 
@@ -705,6 +766,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [orderedTurnDiffSummaries, selectedTurnId, updateTurnStripScrollState]);
 
   useEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setPanelWide(width >= 600);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const element = turnStripRef.current;
     if (!element) return;
 
@@ -808,6 +880,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       {renderableFiles.length > 0 && (
         <div className="flex shrink-0 items-center gap-1.5 [-webkit-app-region:no-drag]">
           <span className="text-[11px] tabular-nums text-muted-foreground">
+            {aggregateStats.fileCount} {aggregateStats.fileCount === 1 ? "file" : "files"}
+            {aggregateStats.additions > 0 && (
+              <span className="text-green-600 dark:text-green-400"> +{aggregateStats.additions}</span>
+            )}
+            {aggregateStats.deletions > 0 && (
+              <span className="text-red-500 dark:text-red-400"> -{aggregateStats.deletions}</span>
+            )}
+          </span>
+          <span className="text-[9px] text-muted-foreground/50">·</span>
+          <span className="text-[11px] tabular-nums text-muted-foreground">
             {viewedFiles.size}/{renderableFiles.length} viewed
           </span>
           {viewedFiles.size > 0 && (
@@ -835,6 +917,19 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         title="Toggle file tree"
       >
         <FolderTreeIcon className="size-3" />
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "shrink-0 rounded-md border p-1.5 transition-colors [-webkit-app-region:no-drag]",
+          expandUnchanged
+            ? "border-border bg-accent text-foreground"
+            : "border-border/70 text-muted-foreground hover:border-border hover:text-foreground",
+        )}
+        onClick={() => setExpandUnchanged((prev) => !prev)}
+        title="Expand full file context"
+      >
+        <UnfoldVerticalIcon className="size-3" />
       </button>
       <ToggleGroup
         className="shrink-0 [-webkit-app-region:no-drag]"
@@ -873,6 +968,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   return (
     <div
+      ref={panelRef}
       className={cn(
         "flex h-full min-w-0 flex-col bg-background outline-none",
         mode === "inline"
@@ -923,7 +1019,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               />
             </div>
           )}
-          {showFileTree && renderableFiles.length > 0 && (
+          {/* Narrow layout: file tree above diff */}
+          {showFileTree && !panelWide && renderableFiles.length > 0 && (
             <div className="shrink-0 overflow-auto border-b border-border/60 dark:bg-[#1e2228]" style={{ maxHeight: "40%" }}>
               <DiffFileTree
                 files={renderableFiles}
@@ -935,6 +1032,20 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               />
             </div>
           )}
+          <div className="flex min-h-0 flex-1">
+            {/* Wide layout: file tree as left sidebar */}
+            {showFileTree && panelWide && renderableFiles.length > 0 && (
+              <div className="w-[220px] shrink-0 overflow-auto border-r border-border/60 dark:bg-[#1e2228]">
+                <DiffFileTree
+                  files={renderableFiles}
+                  viewedFiles={viewedFiles}
+                  onFileClick={scrollToFile}
+                  onToggleViewed={toggleFileViewed}
+                  resolveFilePath={resolveFileDiffPath}
+                  getFileStats={getFileDiffStats}
+                />
+              </div>
+            )}
           <div
             ref={patchViewportRef}
             className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
@@ -1090,6 +1201,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                               theme: resolveDiffThemeName(resolvedTheme),
                               themeType: resolvedTheme as DiffThemeType,
                               disableFileHeader: true,
+                              expandUnchanged,
                               unsafeCSS: resolvedTheme === "dark" ? DIFF_CSS_DARK : DIFF_CSS_LIGHT,
                             }}
                           />
@@ -1109,6 +1221,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 </div>
               </div>
             )}
+          </div>
           </div>
         </>
       )}

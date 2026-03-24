@@ -19,6 +19,8 @@ export interface ExecuteGitInput {
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
+  /** When "truncate", output exceeding maxOutputBytes is silently dropped instead of causing an error. */
+  readonly outputMode?: "error" | "truncate";
 }
 
 export interface ExecuteGitResult {

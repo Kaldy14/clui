@@ -40,7 +40,7 @@ export interface CachedTerminal {
  * Max number of xterm.js instances kept in the cache. Beyond this limit,
  * the oldest *detached* terminals are disposed to free memory and GPU contexts.
  */
-const MAX_CACHED_TERMINALS = 50;
+const MAX_CACHED_TERMINALS = 30;
 
 const cache = new Map<string, CachedTerminal>();
 
@@ -79,7 +79,7 @@ export function createTerminal(): CachedTerminal {
     cursorInactiveStyle: "none",
     lineHeight: 1.2,
     fontSize,
-    scrollback: 250_000,
+    scrollback: 200_000,
     fontFamily,
     theme: terminalThemeFromApp(),
     macOptionIsMeta: true,
@@ -331,7 +331,7 @@ export function clearIdleTerminals(): number {
 // ── Idle sweep ─────────────────────────────────────────────────────────
 
 /** Detached terminals untouched for this long are automatically disposed. */
-const IDLE_TTL_MS = 2 * 60 * 60 * 1_000; // 2 hours
+const IDLE_TTL_MS = 90 * 60 * 1_000; // 1 hour 30 minutes
 const IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1_000; // check every 5 minutes
 
 function sweepIdleTerminals(): void {

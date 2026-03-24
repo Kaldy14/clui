@@ -15,7 +15,7 @@ import {
 import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
 import { ServerConfig } from "../../config";
 
-const DEFAULT_HISTORY_LINE_LIMIT = 250_000;
+const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
 
@@ -288,6 +288,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       }
 
       const scrollback = entry.scrollbackBuffer.materialize();
+      entry.scrollbackBuffer.clear();
       this.stopProcess(entry);
       entry.status = "dormant";
 

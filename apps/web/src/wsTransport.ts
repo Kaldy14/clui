@@ -180,19 +180,19 @@ export class WsTransport {
 
     // If not connected, wait for connection
     const waitForOpen = () => {
+      const timeout = setTimeout(() => clearInterval(check), REQUEST_TIMEOUT_MS);
       const check = setInterval(() => {
         if (this.disposed) {
           clearInterval(check);
+          clearTimeout(timeout);
           return;
         }
         if (this.ws?.readyState === WebSocket.OPEN) {
           clearInterval(check);
+          clearTimeout(timeout);
           this.ws.send(JSON.stringify(message));
         }
       }, 50);
-
-      // Give up after timeout (the pending request will time out on its own)
-      setTimeout(() => clearInterval(check), REQUEST_TIMEOUT_MS);
     };
     waitForOpen();
   }

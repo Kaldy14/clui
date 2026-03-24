@@ -112,6 +112,7 @@ export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
     },
     enabled: (input.enabled ?? true) && !!input.threadId && decodedRequest._tag === "Some",
     staleTime: Infinity,
+    gcTime: 30_000, // free diff data 30s after the component unmounts
     retry: (failureCount, error) => {
       if (isCheckpointTemporarilyUnavailable(error)) {
         return failureCount < 12;
@@ -140,6 +141,7 @@ export function workingTreeDiffQueryOptions(input: {
     },
     enabled: (input.enabled ?? true) && !!input.threadId,
     staleTime: 30_000, // Refetch after 30s since working tree changes frequently
+    gcTime: 60_000, // free diff data 60s after the component unmounts
     retry: 2,
   });
 }

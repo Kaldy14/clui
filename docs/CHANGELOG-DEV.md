@@ -4,6 +4,58 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-24 — Memory and performance improvements
+
+**Problem:** App consumes excessive memory with multiple terminals open (~6 GB virtual). Deep audit revealed several memory leaks and unbounded caches beyond scrollback sizing.
+
+**Changes:**
+
+1. **Reduce terminal scrollback ceiling (250K → 200K)** — Slight reduction; xterm.js allocates lazily so this is a cap, not an upfront cost.
+2. **Reduce terminal cache cap (50 → 30)** — Still generous for normal workflows.
+3. **Reduce idle sweep TTL (2h → 1h 30m)** — Faster cleanup of abandoned detached terminals.
+4. **Reduce server scrollback ring buffer (250K → 200K)** — Match client ceiling.
+5. **Fix ScrollbackRingBuffer not cleared after hibernation** — `hibernateSession()` materialized the buffer but never cleared it, doubling server memory per hibernated session.
+6. **Add idle timeout to Whisper Worker** — The speech-to-text Web Worker (75-240 MB ONNX model) was never terminated after use. Now auto-terminates after 5 minutes of inactivity.
+7. **Add gcTime to diff queries** — Checkpoint diff (`staleTime: Infinity`) and working tree diff had no `gcTime`, holding potentially large patch strings in TanStack Query cache for the default 5 minutes. Now 30s/60s respectively.
+8. **Fix WsTransport stale setTimeout leak** — `send()` while disconnected created a polling interval + a 120s timeout. On success the timeout was never cleared. Now both are cleaned up.
+
+**Affected files:**
+- `apps/web/src/lib/claudeTerminalCache.ts` — scrollback ceiling, cache cap, idle TTL
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` — server history limit, clear buffer after hibernation
+- `apps/web/src/lib/whisperManager.ts` — idle timeout + auto-terminate
+- `apps/web/src/lib/providerReactQuery.ts` — gcTime on diff queries
+- `apps/web/src/wsTransport.ts` — fix stale setTimeout in send()
+
+---
+
+## 2026-03-24 — Diff panel improvements
+
+**Changes:**
+1. **Aggregate stats in header** — Shows total file count, additions, and deletions in the diff panel header bar next to the viewed counter.
+2. **Full-file context toggle** — New "expand unchanged" button (unfold icon) enables `expandUnchanged` on all `FileDiff` components, showing hunk separator controls to expand and view the full file with git changes highlighted.
+3. **File tree as left sidebar** — When the diff panel is wide enough (≥600px), the file tree moves from above the diff to a left sidebar, giving the diff content more vertical space. Falls back to the top position on narrow panels.
+4. **Persisted preferences** — `diffRenderMode` (stacked/split), `showFileTree`, and `expandUnchanged` are now saved to localStorage and survive page refreshes.
+
+**Affected files:**
+- `apps/web/src/components/DiffPanel.tsx` — all four changes
+
+---
+
+## 2026-03-24 — Fix commit failing on large staged diffs
+
+**Problem:** Creating a commit fails with "git diff --cached --patch --minimal output exceeded 1000000 bytes and was truncated" when staged changes produce a diff larger than 1MB.
+
+**Root cause:** `collectOutput` in `GitService.ts` throws a hard `GitCommandError` when output exceeds the 1MB default cap. `prepareCommitContext` runs the full diff with no size override, even though the patch is only used for AI commit message generation and truncated to 50K chars downstream.
+
+**Fix:** Added `outputMode: "truncate"` option to the git execution pipeline. In truncate mode, `collectOutput` silently drops chunks beyond the byte limit and appends `[truncated]` instead of throwing. `prepareCommitContext` now uses this mode for the staged patch.
+
+**Affected files:**
+- `apps/server/src/git/Services/GitService.ts` — added `outputMode` field to `ExecuteGitInput`
+- `apps/server/src/git/Layers/GitService.ts` — `collectOutput` supports truncate mode
+- `apps/server/src/git/Layers/GitCore.ts` — added `maxOutputBytes`/`outputMode` to `ExecuteGitOptions`, threaded through `executeGit`/`runGitStdout`, used in `prepareCommitContext`
+
+---
+
 ## 2026-03-24 — Fix VS Code IDE dropdown launching Cursor instead
 
 **Problem:** Selecting "VS Code" in the IDE dropdown opens Cursor.
