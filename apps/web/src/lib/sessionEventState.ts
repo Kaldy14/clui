@@ -59,6 +59,12 @@ export const WORKING_IDLE_TIMEOUT_MS = 90_000;
 export const IDLE_TIMER_RESET_THROTTLE_MS = 2_000;
 /** After pendingApproval is set, output arriving after this delay transitions to "working". */
 export const PENDING_APPROVAL_OUTPUT_DELAY_MS = 1_000;
+/**
+ * Short stale window after Stop: concurrent curl from the same tool can't
+ * arrive later than this.  PostToolUse / output arriving *after* this window
+ * indicates background subagent activity and should recover "working".
+ */
+export const POST_COMPLETION_STALE_MS = 1_500;
 
 /** Regex matching the Claude Code interrupt banner ("⏎ Interrupted"), allowing ANSI codes between. */
 const INTERRUPT_RE = /⏎[^\n]{0,30}Interrupted/;
@@ -177,14 +183,24 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       }
 
       const doneTs = completedAt.get(rawThreadId);
-      if (doneTs && now() - doneTs < COMPLETED_GRACE_MS) {
+      if (doneTs && now() - doneTs < POST_COMPLETION_STALE_MS) {
+        // Within the short stale window — reject concurrent Stop+PostToolUse
+        // curl arrivals from the same tool.
         return { applied: false };
       }
+      const isPostCompletionRecovery = doneTs != null;
       completedAt.delete(rawThreadId);
       terminalStartedAt.delete(rawThreadId);
       pendingApprovalAt.delete(rawThreadId);
       turnInProgress.set(rawThreadId, true);
-      turnConfirmed.set(rawThreadId, true);
+      if (!isPostCompletionRecovery) {
+        // Normal PostToolUse during an active turn — confirm so the idle
+        // timer re-arms indefinitely (a Stop hook will eventually fire).
+        turnConfirmed.set(rawThreadId, true);
+      }
+      // Post-completion recovery (background subagent PostToolUse): don't
+      // set turnConfirmed so the idle timer can clear "working" after
+      // silence — no Stop hook fires for individual subagent completion.
       deps.setHookStatus(rawThreadId, hookStatus);
       resetWorkingIdleTimer(rawThreadId, true);
       return { applied: true, hookStatus: "working" };
@@ -227,6 +243,21 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     // Reset idle timer -- output means Claude is still working
     if (hookStatus === "working") {
       resetWorkingIdleTimer(rawThreadId);
+    }
+
+    // Recovery from "completed" state: background subagents may produce output
+    // after the main turn's Stop hook fires.  Once past the short stale window
+    // (concurrent curl race), treat output as evidence of ongoing work.
+    if (hookStatus === "completed" && terminalStatus === "active") {
+      const doneTs = completedAt.get(rawThreadId);
+      if (doneTs && now() - doneTs >= POST_COMPLETION_STALE_MS) {
+        completedAt.delete(rawThreadId);
+        turnInProgress.set(rawThreadId, true);
+        // Don't set turnConfirmed — the idle timer should be able to clear
+        // "working" after silence (no Stop hook fires for subagent completion).
+        deps.setHookStatus(rawThreadId, "working");
+        resetWorkingIdleTimer(rawThreadId, true);
+      }
     }
 
     // Recover "Working" badge when output arrives on an active terminal with no

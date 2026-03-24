@@ -5,6 +5,7 @@ import type { DormantReason } from "../types";
 import {
   COMPLETED_GRACE_MS,
   PENDING_APPROVAL_OUTPUT_DELAY_MS,
+  POST_COMPLETION_STALE_MS,
   STARTUP_GRACE_MS,
   WORKING_IDLE_TIMEOUT_MS,
   createSessionEventState,
@@ -83,17 +84,32 @@ describe("createSessionEventState", () => {
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });
 
-    it("suppresses 'working' recovery during completion grace period", () => {
+    it("suppresses 'working' recovery during post-completion stale window", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       // Complete the thread
       state.handleHookStatus("t1", "completed");
       vi.mocked(ctx.deps.setHookStatus).mockClear();
 
-      // Output arrives within completion grace
-      vi.advanceTimersByTime(3_000);
+      // Output arrives within stale window — likely from the completing turn
+      vi.advanceTimersByTime(1_000);
       state.handleOutput("t1", "some output");
 
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
+    });
+
+    it("recovers 'working' from 'completed' when output arrives after stale window", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "completed");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      // Output arrives past the stale window — background subagent activity
+      vi.advanceTimersByTime(POST_COMPLETION_STALE_MS + 100);
+      state.handleOutput("t1", "agent output");
+
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+      expect(state._turnInProgress.get("t1")).toBe(true);
+      // turnConfirmed NOT set — idle timer should be able to clear
+      expect(state._turnConfirmed.has("t1")).toBe(false);
     });
 
     it("does NOT delete completedAt on recovery", () => {
@@ -225,16 +241,31 @@ describe("createSessionEventState", () => {
       expect(state._terminalStartedAt.has("t1")).toBe(false);
     });
 
-    it("'working' is ignored within completion grace period", () => {
+    it("'working' is ignored within post-completion stale window", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleHookStatus("t1", "completed");
       vi.mocked(ctx.deps.setHookStatus).mockClear();
 
-      vi.advanceTimersByTime(3_000);
+      vi.advanceTimersByTime(1_000);
       const result = state.handleHookStatus("t1", "working");
 
       expect(result).toEqual({ applied: false });
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalled();
+    });
+
+    it("'working' is accepted after post-completion stale window (subagent activity)", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "completed");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      vi.advanceTimersByTime(POST_COMPLETION_STALE_MS + 100);
+      const result = state.handleHookStatus("t1", "working");
+
+      expect(result).toEqual({ applied: true, hookStatus: "working" });
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+      // Post-completion recovery: turnConfirmed NOT set so idle timer can clear
+      expect(state._turnConfirmed.has("t1")).toBe(false);
+      expect(state._turnInProgress.get("t1")).toBe(true);
     });
 
     it("'needsInput' clears terminalStartedAt", () => {
@@ -539,14 +570,14 @@ describe("createSessionEventState", () => {
   });
 
   describe("handleTurnStart", () => {
-    it("bypasses completed grace period", () => {
+    it("bypasses post-completion stale window", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       // Complete the thread
       state.handleHookStatus("t1", "completed");
       vi.mocked(ctx.deps.setHookStatus).mockClear();
 
-      // Within grace period — handleHookStatus("working") would be rejected
-      vi.advanceTimersByTime(3_000);
+      // Within stale window — handleHookStatus("working") would be rejected
+      vi.advanceTimersByTime(1_000);
       const result = state.handleHookStatus("t1", "working");
       expect(result).toEqual({ applied: false });
 

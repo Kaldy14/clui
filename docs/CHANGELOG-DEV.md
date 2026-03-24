@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-24 — Fix badge not showing during background agent execution
+
+**Problem:** When Claude Code spawns background agents and the main turn ends (Stop hook fires), the thread badge shows "Completed" even though subagents are still running. PostToolUse events from subagents were rejected during the 8-second `COMPLETED_GRACE_MS` window, and terminal output couldn't recover the "Working" badge because the recovery path only handled `hookStatus === null`, not `hookStatus === "completed"`.
+
+**Root cause:** The completed grace period (8s) was too conservative — it protected against concurrent Stop/PostToolUse curl races (~100ms) but also blocked legitimate subagent activity signals. Additionally, no output-based recovery existed for the "completed" state.
+
+**Fix:**
+1. Added `POST_COMPLETION_STALE_MS` (1.5s) — short stale window sufficient for concurrent curl race protection while allowing subagent PostToolUse through after 1.5s.
+2. Added output-based recovery from "completed" state — terminal output arriving after the stale window transitions hookStatus back to "working".
+3. Recovery paths don't set `turnConfirmed`, so the idle timer can clear "working" after 90s of silence when all subagents finish.
+
+**Affected files:**
+- `apps/web/src/lib/sessionEventState.ts` — new constant, PostToolUse stale window, output recovery from completed
+- `apps/web/src/lib/sessionEventState.test.ts` — updated existing grace period tests, added recovery tests
+
+---
+
 ## 2026-03-24 — Memory and performance improvements
 
 **Problem:** App consumes excessive memory with multiple terminals open (~6 GB virtual). Deep audit revealed several memory leaks and unbounded caches beyond scrollback sizing.
