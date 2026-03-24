@@ -4,6 +4,20 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-24 — Fix VS Code IDE dropdown launching Cursor instead
+
+**Problem:** Selecting "VS Code" in the IDE dropdown opens Cursor.
+
+**Root cause:** On macOS, Cursor installs a `code` CLI symlink at `/usr/local/bin/code` pointing to its own app bundle binary. Both `code` and `cursor` commands resolve to the same Cursor binary. The editor launch logic used the `code` command for VS Code, which got hijacked.
+
+**Fix:** On macOS, `resolveEditorLaunch` and `resolveAvailableEditors` now resolve directly to the app-bundle binary path (e.g. `/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code`) instead of relying on the ambiguous PATH command. Falls back to the short command name when the app bundle isn't found.
+
+**Affected files:**
+- `apps/server/src/open.ts` — added `MAC_APP_BINARY` map, updated `resolveEditorLaunch` and `resolveAvailableEditors`
+- `apps/server/src/open.test.ts` — updated tests for non-macOS generic path, added macOS bundle resolution test
+
+---
+
 ## 2026-03-23 — Fix scroll corruption: alt buffer isUserScrolling + onScroll fighting
 
 **Problem:** User gets kicked to the bottom of an active Claude Code session when scrolled up. After initial fix attempt, scroll became completely broken — couldn't scroll at all (oscillating bouncing), and "New output" badge showed even at the bottom.

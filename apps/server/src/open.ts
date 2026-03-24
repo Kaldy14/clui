@@ -13,6 +13,16 @@ import { extname, join } from "node:path";
 import { EDITORS, type EditorId } from "@clui/contracts";
 import { ServiceMap, Schema, Effect, Layer } from "effect";
 
+/**
+ * On macOS, CLI commands like `code` can be hijacked by other apps (e.g.
+ * Cursor installs a `code` symlink pointing to its own binary). To avoid
+ * launching the wrong editor, resolve directly to the app-bundle binary.
+ */
+const MAC_APP_BINARY: Partial<Record<EditorId, string>> = {
+  vscode: "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+  cursor: "/Applications/Cursor.app/Contents/Resources/app/bin/code",
+};
+
 // ==============================
 // Definitions
 // ==============================
@@ -169,7 +179,8 @@ export function resolveAvailableEditors(
 
   for (const editor of EDITORS) {
     const command = editor.command ?? fileManagerCommandForPlatform(platform);
-    if (isCommandAvailable(command, { platform, env })) {
+    const macBinary = platform === "darwin" ? MAC_APP_BINARY[editor.id] : undefined;
+    if (macBinary ? isCommandAvailable(macBinary) : isCommandAvailable(command, { platform, env })) {
       available.push(editor.id);
     }
   }
@@ -213,9 +224,14 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
   }
 
   if (editorDef.command) {
+    const command =
+      platform === "darwin" && MAC_APP_BINARY[editorDef.id] &&
+      isCommandAvailable(MAC_APP_BINARY[editorDef.id]!)
+        ? MAC_APP_BINARY[editorDef.id]!
+        : editorDef.command;
     return shouldUseGotoFlag(editorDef.id, input.cwd)
-      ? { command: editorDef.command, args: ["--goto", input.cwd] }
-      : { command: editorDef.command, args: [input.cwd] };
+      ? { command, args: ["--goto", input.cwd] }
+      : { command, args: [input.cwd] };
   }
 
   if (editorDef.id !== "file-manager") {

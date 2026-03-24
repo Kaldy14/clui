@@ -14,11 +14,11 @@ import { Effect } from "effect";
 import { assertSuccess } from "@effect/vitest/utils";
 
 describe("resolveEditorLaunch", () => {
-  it.effect("returns commands for command-based editors", () =>
+  it.effect("returns commands for command-based editors (non-macOS)", () =>
     Effect.gen(function* () {
       const cursorLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "cursor" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(cursorLaunch, {
         command: "cursor",
@@ -27,7 +27,7 @@ describe("resolveEditorLaunch", () => {
 
       const vscodeLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "vscode" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodeLaunch, {
         command: "code",
@@ -36,10 +36,28 @@ describe("resolveEditorLaunch", () => {
 
       const zedLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "zed" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(zedLaunch, {
         command: "zed",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("prefers macOS app bundle binary when available on darwin", () =>
+    Effect.gen(function* () {
+      const vscodeLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "vscode" },
+        "darwin",
+      );
+      // On macOS, if the app bundle binary exists, use it directly to avoid
+      // PATH hijacking (e.g. `code` symlinked to Cursor).
+      const vscodeAppBinary =
+        "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
+      const expectedCommand = fs.existsSync(vscodeAppBinary) ? vscodeAppBinary : "code";
+      assert.deepEqual(vscodeLaunch, {
+        command: expectedCommand,
         args: ["/tmp/workspace"],
       });
     }),
@@ -49,7 +67,7 @@ describe("resolveEditorLaunch", () => {
     Effect.gen(function* () {
       const lineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "cursor" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(lineOnly, {
         command: "cursor",
@@ -58,7 +76,7 @@ describe("resolveEditorLaunch", () => {
 
       const lineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "cursor" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(lineAndColumn, {
         command: "cursor",
@@ -67,7 +85,7 @@ describe("resolveEditorLaunch", () => {
 
       const vscodeLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "vscode" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodeLineAndColumn, {
         command: "code",
@@ -76,7 +94,7 @@ describe("resolveEditorLaunch", () => {
 
       const zedLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "zed" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(zedLineAndColumn, {
         command: "zed",
