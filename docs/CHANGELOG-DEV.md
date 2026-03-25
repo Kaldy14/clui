@@ -4,6 +4,20 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-25 — Fix thread not staying at top after user sends message
+
+**Problem:** After sending a message in a thread at position 3, it jumps to top (Working badge, Tier 2) but drops back to position 3 once the turn completes and the user reads it. The thread should remain at position 1 since the user interacted with it most recently.
+
+**Root cause:** `lastInteractedAt` (the within-tier sort key) was only bumped inside the `thread.session-set` orchestration event handler when a new `activeTurnId` was detected. However, the `thread.session.set` command is an internal command that is never dispatched in production — hook-driven status changes (`turnStart` → `setHookStatus("working")`) never touched `lastInteractedAt`.
+
+**Fix:** Bump `lastInteractedAt` in the client store when a `turnStart` event fires (user sent a message). This is the only null→"working" transition that represents genuine user interaction, avoiding false bumps from other badge transitions.
+
+**Affected files:**
+- `apps/web/src/store.ts` — Added `bumpLastInteractedAt` store action
+- `apps/web/src/routes/__root.tsx` — Call `bumpLastInteractedAt` on `turnStart` event
+
+---
+
 ## 2026-03-24 — Replace scroll management with targeted drift guard
 
 **Problem:** Three terminal scroll bugs: (1) viewport snaps to bottom unexpectedly, (2) scrolling ~10px up causes a jump back to previous position, (3) viewport jumps to top of session on every write when scrolled up.

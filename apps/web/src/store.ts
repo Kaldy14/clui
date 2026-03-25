@@ -582,6 +582,8 @@ interface AppStore extends AppState {
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
+  /** Bump lastInteractedAt to now. Called once on turnStart (user sent a message). */
+  bumpLastInteractedAt: (threadId: ThreadId) => void;
   /** Reset all status-related fields for a thread (hookStatus, activities, session status). */
   resetThreadStatus: (threadId: ThreadId) => void;
   setTerminalStatus: (threadId: ThreadId, terminalStatus: TerminalStatus) => void;
@@ -624,6 +626,15 @@ export const useStore = create<AppStore>((set) => ({
         if (thread.hookStatus === hookStatus) return thread;
         return { ...thread, hookStatus };
       });
+      return threads === state.threads ? state : { ...state, threads };
+    }),
+  bumpLastInteractedAt: (threadId) =>
+    set((state) => {
+      const now = new Date().toISOString();
+      const threads = updateThread(state.threads, threadId, (thread) => ({
+        ...thread,
+        lastInteractedAt: now,
+      }));
       return threads === state.threads ? state : { ...state, threads };
     }),
   resetThreadStatus: (threadId) =>

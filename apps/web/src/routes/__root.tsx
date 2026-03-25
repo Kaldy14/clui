@@ -395,6 +395,7 @@ function EventRouter() {
     const unsubClaudeSessionEvent = api.claude.onSessionEvent((event) => {
       if (event.type === "turnStart") {
         sessionState.handleTurnStart(event.threadId);
+        useStore.getState().bumpLastInteractedAt(ThreadId.makeUnsafe(event.threadId));
       }
       if (event.type === "hookStatus") {
         const result = sessionState.handleHookStatus(event.threadId, event.hookStatus);
