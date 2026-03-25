@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-25 — Diff panel: Cmd+F search, working tree toggle, resizable file tree, v+advance
+
+**Problem:** No way to search through diff content, no way to view actual git staged/unstaged changes (only checkpoint-based diffs), vertical file tree had fixed max height, and `v` (mark viewed) didn't auto-advance to next file.
+
+**Fix:**
+1. **Cmd+F search**: Opens a search bar that matches file names and raw patch content. Shows match count, navigates between matches with Enter/Shift+Enter or arrow buttons. Auto-scrolls to first match as you type.
+2. **Working tree toggle**: Added a "Working tree" chip in the turn strip. When active, shows real `git diff` (staged + unstaged) instead of checkpoint-based diffs. Clicking any turn chip switches back.
+3. **Resizable vertical file tree**: Changed from fixed `maxHeight: 40%` to a draggable resize handle with 240px default and `maxHeight: 60%`. Drag the bottom edge to resize.
+4. **`v` auto-advance**: After toggling a file as viewed, focus moves to the next file (same as `j`).
+
+**Affected files:**
+- `apps/web/src/components/DiffPanel.tsx`
+
+---
+
 ## 2026-03-25 — Diff panel keyboard shortcuts: auto-focus, broader scope, hint bar
 
 **Problem:** Diff panel keyboard shortcuts (j/k/v/e) only worked after clicking inside the viewport area. Clicking the header, file tree, or any other panel area lost focus and disabled shortcuts. Escape was handled separately on the panel div, while navigation shortcuts were scoped to the inner viewport.

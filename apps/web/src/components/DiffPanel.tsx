@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@clui/contracts";
 import {
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   Columns2Icon,
   FolderTreeIcon,
   PencilIcon,
@@ -13,6 +15,7 @@ import {
   Rows3Icon,
   Square,
   SquareCheckBig,
+  FolderGit2,
   UnfoldVerticalIcon,
   XIcon,
 } from "lucide-react";
@@ -358,6 +361,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       return next;
     });
   }, []);
+  const [showWorkingTree, setShowWorkingTree] = useState(false);
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelWide, setPanelWide] = useState(false);
@@ -462,7 +466,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const workingTreeDiffQuery = useQuery(
     workingTreeDiffQueryOptions({
       threadId: activeThreadId,
-      enabled: isGitRepo && !hasTurns,
+      enabled: isGitRepo && (!hasTurns || showWorkingTree),
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -471,9 +475,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const conversationCheckpointDiff = selectedTurn
     ? undefined
     : activeCheckpointDiffQuery.data?.diff;
-  const isLoadingCheckpointDiff = hasTurns
-    ? activeCheckpointDiffQuery.isLoading
-    : workingTreeDiffQuery.isLoading;
+  const isLoadingCheckpointDiff = showWorkingTree
+    ? workingTreeDiffQuery.isLoading
+    : hasTurns
+      ? activeCheckpointDiffQuery.isLoading
+      : workingTreeDiffQuery.isLoading;
   const checkpointDiffError =
     activeCheckpointDiffQuery.error instanceof Error
       ? activeCheckpointDiffQuery.error.message
@@ -483,9 +489,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           ? workingTreeDiffQuery.error.message
           : null;
 
-  const selectedPatch = hasTurns
-    ? (selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff)
-    : workingTreeDiffQuery.data?.diff;
+  const selectedPatch = showWorkingTree
+    ? workingTreeDiffQuery.data?.diff
+    : hasTurns
+      ? (selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff)
+      : workingTreeDiffQuery.data?.diff;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
@@ -570,10 +578,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const sortedRenderableFiles = renderableFiles;
 
   const [focusedFileIndex, setFocusedFileIndex] = useState<number | null>(null);
+  const [fileTreeHeight, setFileTreeHeight] = useState(240);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset focus when files change
+  // Reset focus and search when files change
   useEffect(() => {
     setFocusedFileIndex(null);
+    setSearchOpen(false);
+    setSearchQuery("");
   }, [selectedPatch]);
 
   const scrollToFileByIndex = useCallback(
@@ -591,6 +606,64 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     },
     [sortedRenderableFiles],
   );
+
+  const searchMatches = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const lower = searchQuery.toLowerCase();
+    const matches: number[] = [];
+    const matchedSet = new Set<number>();
+    for (let i = 0; i < sortedRenderableFiles.length; i++) {
+      const filePath = resolveFileDiffPath(sortedRenderableFiles[i]!);
+      if (filePath.toLowerCase().includes(lower)) {
+        matches.push(i);
+        matchedSet.add(i);
+      }
+    }
+    if (selectedPatch) {
+      const patchLower = selectedPatch.toLowerCase();
+      for (let i = 0; i < sortedRenderableFiles.length; i++) {
+        if (matchedSet.has(i)) continue;
+        const fileDiff = sortedRenderableFiles[i]!;
+        const filePath = resolveFileDiffPath(fileDiff);
+        const headerVariants = [`--- a/${filePath}`, `+++ b/${filePath}`];
+        const prevName = fileDiff.prevName;
+        if (prevName) headerVariants.push(`--- a/${prevName}`);
+        let headerIdx = -1;
+        for (const hv of headerVariants) {
+          headerIdx = patchLower.indexOf(hv.toLowerCase());
+          if (headerIdx !== -1) break;
+        }
+        if (headerIdx === -1) continue;
+        const nextDiff = patchLower.indexOf("\ndiff --git", headerIdx + 1);
+        const section = nextDiff === -1 ? patchLower.slice(headerIdx) : patchLower.slice(headerIdx, nextDiff);
+        if (section.includes(lower)) {
+          matches.push(i);
+        }
+      }
+      matches.sort((a, b) => a - b);
+    }
+    return matches;
+  }, [searchQuery, sortedRenderableFiles, selectedPatch]);
+
+  const goToSearchMatch = useCallback(
+    (index: number) => {
+      if (searchMatches.length === 0) return;
+      const wrapped = ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
+      setSearchMatchIndex(wrapped);
+      const fileIndex = searchMatches[wrapped]!;
+      setFocusedFileIndex(fileIndex);
+      requestAnimationFrame(() => scrollToFileByIndex(fileIndex));
+    },
+    [searchMatches, scrollToFileByIndex],
+  );
+
+  useEffect(() => {
+    if (!searchOpen || searchMatches.length === 0) return;
+    const firstMatch = searchMatches[0]!;
+    setSearchMatchIndex(0);
+    setFocusedFileIndex(firstMatch);
+    requestAnimationFrame(() => scrollToFileByIndex(firstMatch));
+  }, [searchMatches, searchOpen, scrollToFileByIndex]);
 
   const closeDiff = useCallback(() => {
     if (!routeThreadId) return;
@@ -620,9 +693,22 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         return;
       }
 
+      if ((event.metaKey || event.ctrlKey) && event.key === "f") {
+        event.preventDefault();
+        setSearchOpen(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
-        closeDiff();
+        if (searchOpen) {
+          setSearchOpen(false);
+          setSearchQuery("");
+          panelRef.current?.focus();
+        } else {
+          closeDiff();
+        }
         return;
       }
 
@@ -649,7 +735,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           if (prev === null || !sortedRenderableFiles[prev]) return prev;
           const filePath = resolveFileDiffPath(sortedRenderableFiles[prev]);
           toggleFileViewed(filePath);
-          return prev;
+          const next = Math.min(prev + 1, sortedRenderableFiles.length - 1);
+          requestAnimationFrame(() => scrollToFileByIndex(next));
+          return next;
         });
       } else if (event.key === "e") {
         event.preventDefault();
@@ -668,7 +756,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
     panel.addEventListener("keydown", onKeyDown);
     return () => panel.removeEventListener("keydown", onKeyDown);
-  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed, editingFiles, startEditing, stopEditing, closeDiff]);
+  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed, editingFiles, startEditing, stopEditing, closeDiff, searchOpen]);
 
   // Auto-focus the panel when it mounts so keyboard shortcuts work immediately
   useEffect(() => {
@@ -710,6 +798,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
 
   const selectTurn = (turnId: TurnId) => {
+    setShowWorkingTree(false);
     if (!activeThread) return;
     void navigate({
       to: "/$threadId",
@@ -721,6 +810,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     });
   };
   const selectWholeConversation = () => {
+    setShowWorkingTree(false);
     if (!activeThread) return;
     void navigate({
       to: "/$threadId",
@@ -850,12 +940,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             type="button"
             className="shrink-0 rounded-md"
             onClick={selectWholeConversation}
-            data-turn-chip-selected={selectedTurnId === null}
+            data-turn-chip-selected={!showWorkingTree && selectedTurnId === null}
           >
             <div
               className={cn(
                 "rounded-md border px-2 py-1 text-left transition-colors",
-                selectedTurnId === null
+                !showWorkingTree && selectedTurnId === null
                   ? "border-border bg-accent text-accent-foreground"
                   : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
               )}
@@ -870,12 +960,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               className="shrink-0 rounded-md"
               onClick={() => selectTurn(summary.turnId)}
               title={summary.turnId}
-              data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
+              data-turn-chip-selected={!showWorkingTree && summary.turnId === selectedTurn?.turnId}
             >
               <div
                 className={cn(
                   "rounded-md border px-2 py-1 text-left transition-colors",
-                  summary.turnId === selectedTurn?.turnId
+                  !showWorkingTree && summary.turnId === selectedTurn?.turnId
                     ? "border-border bg-accent text-accent-foreground"
                     : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
                 )}
@@ -894,6 +984,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               </div>
             </button>
           ))}
+          <button
+            type="button"
+            className="shrink-0 rounded-md"
+            onClick={() => setShowWorkingTree(true)}
+            data-turn-chip-selected={showWorkingTree}
+          >
+            <div
+              className={cn(
+                "flex items-center gap-1 rounded-md border px-2 py-1 text-left transition-colors",
+                showWorkingTree
+                  ? "border-border bg-accent text-accent-foreground"
+                  : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+              )}
+            >
+              <FolderGit2 className="size-3" />
+              <span className="text-[10px] leading-tight font-medium">Working tree</span>
+            </div>
+          </button>
         </div>
       </div>
       {renderableFiles.length > 0 && (
@@ -1032,16 +1140,104 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               />
             </div>
           )}
-          {/* Narrow layout: file tree above diff */}
+          {searchOpen && (
+            <div className="flex shrink-0 items-center gap-1.5 border-b border-border/60 bg-background px-3 py-1.5">
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+                placeholder="Search files and content…"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setSearchMatchIndex(0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSearchOpen(false);
+                    setSearchQuery("");
+                    panelRef.current?.focus();
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    goToSearchMatch(e.shiftKey ? searchMatchIndex - 1 : searchMatchIndex + 1);
+                  } else if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+                    e.preventDefault();
+                    e.currentTarget.select();
+                  }
+                }}
+              />
+              {searchQuery && (
+                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                  {searchMatches.length > 0
+                    ? `${searchMatchIndex + 1}/${searchMatches.length}`
+                    : "No matches"}
+                </span>
+              )}
+              <button
+                type="button"
+                className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                onClick={() => goToSearchMatch(searchMatchIndex - 1)}
+                disabled={searchMatches.length === 0}
+                title="Previous match (Shift+Enter)"
+              >
+                <ChevronUpIcon className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                onClick={() => goToSearchMatch(searchMatchIndex + 1)}
+                disabled={searchMatches.length === 0}
+                title="Next match (Enter)"
+              >
+                <ChevronDownIcon className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setSearchOpen(false);
+                  setSearchQuery("");
+                  panelRef.current?.focus();
+                }}
+                title="Close search (Esc)"
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            </div>
+          )}
+          {/* Narrow layout: file tree above diff — resizable via drag handle */}
           {showFileTree && !panelWide && renderableFiles.length > 0 && (
-            <div className="shrink-0 overflow-auto border-b border-border/60 dark:bg-[#1e2228]" style={{ maxHeight: "40%" }}>
-              <DiffFileTree
-                files={renderableFiles}
-                viewedFiles={viewedFiles}
-                onFileClick={scrollToFile}
-                onToggleViewed={toggleFileViewed}
-                resolveFilePath={resolveFileDiffPath}
-                getFileStats={getFileDiffStats}
+            <div className="relative shrink-0 border-b border-border/60 dark:bg-[#1e2228]" style={{ height: fileTreeHeight, maxHeight: "60%" }}>
+              <div className="h-full overflow-auto">
+                <DiffFileTree
+                  files={renderableFiles}
+                  viewedFiles={viewedFiles}
+                  onFileClick={scrollToFile}
+                  onToggleViewed={toggleFileViewed}
+                  resolveFilePath={resolveFileDiffPath}
+                  getFileStats={getFileDiffStats}
+                />
+              </div>
+              <div
+                className="absolute bottom-0 left-0 right-0 h-1 cursor-row-resize transition-colors hover:bg-blue-500/30 active:bg-blue-500/50"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const startY = e.clientY;
+                  const startH = fileTreeHeight;
+                  const onMove = (ev: MouseEvent) => setFileTreeHeight(Math.max(60, startH + ev.clientY - startY));
+                  const onUp = () => {
+                    document.removeEventListener("mousemove", onMove);
+                    document.removeEventListener("mouseup", onUp);
+                    document.body.style.cursor = "";
+                    document.body.style.userSelect = "";
+                  };
+                  document.body.style.cursor = "row-resize";
+                  document.body.style.userSelect = "none";
+                  document.addEventListener("mousemove", onMove);
+                  document.addEventListener("mouseup", onUp);
+                }}
               />
             </div>
           )}
@@ -1073,7 +1269,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
                 <p>
                   {isLoadingCheckpointDiff
-                    ? "Loading checkpoint diff..."
+                    ? (showWorkingTree ? "Loading working tree changes..." : "Loading checkpoint diff...")
                     : hasNoNetChanges
                       ? "No net changes in this selection."
                       : "No patch available for this selection."}
@@ -1243,6 +1439,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <span><kbd className="rounded border border-border/40 px-1 font-mono">j</kbd>/<kbd className="rounded border border-border/40 px-1 font-mono">k</kbd> navigate</span>
           <span><kbd className="rounded border border-border/40 px-1 font-mono">v</kbd> viewed</span>
           <span><kbd className="rounded border border-border/40 px-1 font-mono">e</kbd> edit</span>
+          <span><kbd className="rounded border border-border/40 px-1 font-mono">⌘F</kbd> search</span>
           <span><kbd className="rounded border border-border/40 px-1 font-mono">esc</kbd> close</span>
         </div>
       )}
