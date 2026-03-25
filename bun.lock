@@ -13,7 +13,7 @@
     },
     "apps/desktop": {
       "name": "@clui/desktop",
-      "version": "0.0.15",
+      "version": "0.0.16",
       "dependencies": {
         "effect": "catalog:",
         "electron": "40.6.0",
@@ -31,7 +31,7 @@
     },
     "apps/server": {
       "name": "@clui/server",
-      "version": "0.0.15",
+      "version": "0.0.16",
       "bin": {
         "clui": "./dist/index.mjs",
       },
@@ -60,7 +60,7 @@
     },
     "apps/web": {
       "name": "@clui/web",
-      "version": "0.0.15",
+      "version": "0.0.16",
       "dependencies": {
         "@base-ui/react": "^1.2.0",
         "@clui/contracts": "workspace:*",
@@ -124,7 +124,7 @@
     },
     "packages/contracts": {
       "name": "@clui/contracts",
-      "version": "0.0.15",
+      "version": "0.0.16",
       "dependencies": {
         "effect": "catalog:",
       },
