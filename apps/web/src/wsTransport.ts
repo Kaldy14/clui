@@ -72,6 +72,17 @@ export class WsTransport {
     });
   }
 
+  /**
+   * Send a request without waiting for or tracking a response.
+   * Use for operations where the result is not needed (e.g., terminal write/resize).
+   */
+  fireAndForget(method: string, params?: unknown): void {
+    if (typeof method !== "string" || method.length === 0) return;
+    const id = String(this.nextId++);
+    const body = params != null ? { ...params, _tag: method } : { _tag: method };
+    this.send({ id, body });
+  }
+
   subscribe(channel: string, listener: PushListener): () => void {
     let channelListeners = this.listeners.get(channel);
     if (!channelListeners) {

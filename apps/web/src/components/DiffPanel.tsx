@@ -592,10 +592,20 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [sortedRenderableFiles],
   );
 
-  // Keyboard navigation: j/k to move, v to toggle viewed
+  const closeDiff = useCallback(() => {
+    if (!routeThreadId) return;
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: routeThreadId },
+      search: (previous) => stripDiffSearchParams(previous),
+    });
+  }, [navigate, routeThreadId]);
+
+  // Keyboard navigation: j/k to move, v to toggle viewed, e to edit, Escape to close
+  // Registered on panelRef so shortcuts work regardless of which panel area has focus
   useEffect(() => {
-    const viewport = patchViewportRef.current;
-    if (!viewport || sortedRenderableFiles.length === 0) return;
+    const panel = panelRef.current;
+    if (!panel) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       // Don't capture when typing in inputs, editors, or when terminal has focus
@@ -609,6 +619,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ) {
         return;
       }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDiff();
+        return;
+      }
+
+      // File navigation shortcuts require files to be present
+      if (sortedRenderableFiles.length === 0) return;
 
       if (event.key === "j" || event.key === "ArrowDown") {
         event.preventDefault();
@@ -647,9 +666,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }
     };
 
-    viewport.addEventListener("keydown", onKeyDown);
-    return () => viewport.removeEventListener("keydown", onKeyDown);
-  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed, editingFiles, startEditing, stopEditing]);
+    panel.addEventListener("keydown", onKeyDown);
+    return () => panel.removeEventListener("keydown", onKeyDown);
+  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed, editingFiles, startEditing, stopEditing, closeDiff]);
+
+  // Auto-focus the panel when it mounts so keyboard shortcuts work immediately
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (panel) {
+      panel.focus({ preventScroll: true });
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
@@ -704,14 +731,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       },
     });
   };
-  const closeDiff = useCallback(() => {
-    if (!routeThreadId) return;
-    void navigate({
-      to: "/$threadId",
-      params: { threadId: routeThreadId },
-      search: (previous) => stripDiffSearchParams(previous),
-    });
-  }, [navigate, routeThreadId]);
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
     if (!element) {
@@ -976,12 +995,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           : "w-full",
       )}
       tabIndex={-1}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          closeDiff();
-        }
-      }}
     >
       {shouldUseDragRegion ? (
         <div className={headerRowClassName}>{headerRow}</div>
@@ -1224,6 +1237,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           </div>
           </div>
         </>
+      )}
+      {sortedRenderableFiles.length > 0 && (
+        <div className="flex shrink-0 items-center gap-3 border-t border-border/50 px-3 py-1.5 text-[10px] text-muted-foreground/50">
+          <span><kbd className="rounded border border-border/40 px-1 font-mono">j</kbd>/<kbd className="rounded border border-border/40 px-1 font-mono">k</kbd> navigate</span>
+          <span><kbd className="rounded border border-border/40 px-1 font-mono">v</kbd> viewed</span>
+          <span><kbd className="rounded border border-border/40 px-1 font-mono">e</kbd> edit</span>
+          <span><kbd className="rounded border border-border/40 px-1 font-mono">esc</kbd> close</span>
+        </div>
       )}
       {contextMenu && (
         <div

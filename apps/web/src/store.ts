@@ -109,7 +109,7 @@ const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
 
 // ── Pure helpers ──────────────────────────────────────────────────────
 
-function updateThread(
+export function updateThread(
   threads: Thread[],
   threadId: ThreadId,
   updater: (t: Thread) => Thread,
@@ -139,9 +139,10 @@ function mapProjectsFromReadModel(
   );
   const usePersistedOrder = previous.length === 0;
 
+  let anyProjectChanged = false;
   const mappedProjects = incoming.map((project) => {
     const existing = previousById.get(project.id) ?? previousByCwd.get(project.workspaceRoot);
-    return {
+    const newProject: Project = {
       id: project.id,
       name: project.title,
       cwd: project.workspaceRoot,
@@ -154,10 +155,15 @@ function mapProjectsFromReadModel(
           ? persistedExpandedProjectCwds.has(project.workspaceRoot)
           : true),
       scripts: project.scripts.map((script) => ({ ...script })),
-    } satisfies Project;
+    };
+    if (existing && !projectChanged(existing, newProject)) {
+      return existing;
+    }
+    anyProjectChanged = true;
+    return newProject;
   });
 
-  return mappedProjects
+  const sorted = mappedProjects
     .map((project, incomingIndex) => {
       const previousIndex =
         previousOrderById.get(project.id) ?? previousOrderByCwd.get(project.cwd);
@@ -174,6 +180,18 @@ function mapProjectsFromReadModel(
       return a.incomingIndex - b.incomingIndex;
     })
     .map((entry) => entry.project);
+  if (!anyProjectChanged && sorted.length === previous.length) {
+    // Check if order is also unchanged
+    let orderUnchanged = true;
+    for (let i = 0; i < sorted.length; i++) {
+      if (sorted[i] !== previous[i]) {
+        orderUnchanged = false;
+        break;
+      }
+    }
+    if (orderUnchanged) return previous;
+  }
+  return sorted;
 }
 
 function toLegacySessionStatus(
@@ -278,6 +296,50 @@ function attachmentPreviewRoutePath(attachmentId: string): string {
   return `/attachments/${encodeURIComponent(attachmentId)}`;
 }
 
+// ── Change-detection helpers ──────────────────────────────────────────
+
+function threadChanged(existing: Thread, incoming: Thread): boolean {
+  // Quick scalar checks first
+  if (existing.updatedAt !== incoming.updatedAt) return true;
+  if (existing.title !== incoming.title) return true;
+  if (existing.model !== incoming.model) return true;
+  if (existing.branch !== incoming.branch) return true;
+  if (existing.worktreePath !== incoming.worktreePath) return true;
+  if (existing.runtimeMode !== incoming.runtimeMode) return true;
+  if (existing.interactionMode !== incoming.interactionMode) return true;
+  if (existing.titleSource !== incoming.titleSource) return true;
+  // Session check
+  if ((existing.session?.updatedAt ?? null) !== (incoming.session?.updatedAt ?? null)) return true;
+  if ((existing.session?.orchestrationStatus ?? null) !== (incoming.session?.orchestrationStatus ?? null))
+    return true;
+  // Array length heuristics — if lengths differ, something changed
+  if (existing.messages.length !== incoming.messages.length) return true;
+  if (existing.activities.length !== incoming.activities.length) return true;
+  if (existing.turnDiffSummaries.length !== incoming.turnDiffSummaries.length) return true;
+  if (existing.proposedPlans.length !== incoming.proposedPlans.length) return true;
+  // Check latest message streaming status (active streaming changes frequently)
+  const lastExMsg = existing.messages.at(-1);
+  const lastInMsg = incoming.messages.at(-1);
+  if (lastExMsg?.streaming !== lastInMsg?.streaming) return true;
+  if (lastExMsg?.id !== lastInMsg?.id) return true;
+  // Latest turn
+  if (existing.latestTurn?.startedAt !== incoming.latestTurn?.startedAt) return true;
+  if (existing.latestTurn?.completedAt !== incoming.latestTurn?.completedAt) return true;
+  // Remaining scalars
+  if (existing.scrollbackSnapshot !== incoming.scrollbackSnapshot) return true;
+  if (existing.claudeSessionId !== incoming.claudeSessionId) return true;
+  return false;
+}
+
+function projectChanged(existing: Project, incoming: Project): boolean {
+  if (existing.name !== incoming.name) return true;
+  if (existing.cwd !== incoming.cwd) return true;
+  if (existing.model !== incoming.model) return true;
+  if (existing.expanded !== incoming.expanded) return true;
+  if (existing.scripts.length !== incoming.scripts.length) return true;
+  return false;
+}
+
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
@@ -286,11 +348,12 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     state.projects,
   );
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
+  let anyThreadChanged = false;
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
-      return {
+      const newThread: Thread = {
         id: thread.id,
         projectId: thread.projectId,
         title: thread.title,
@@ -366,11 +429,18 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         titleSource: thread.titleSource ?? "auto",
         hookStatus: existing?.hookStatus ?? null,
       };
+      if (existing && !threadChanged(existing, newThread)) {
+        return existing;
+      }
+      anyThreadChanged = true;
+      return newThread;
     });
+  const finalThreads =
+    anyThreadChanged || threads.length !== state.threads.length ? threads : state.threads;
   return {
     ...state,
     projects,
-    threads,
+    threads: finalThreads,
     threadsHydrated: true,
   };
 }
@@ -631,10 +701,13 @@ export const useStore = create<AppStore>((set) => ({
   bumpLastInteractedAt: (threadId) =>
     set((state) => {
       const now = new Date().toISOString();
-      const threads = updateThread(state.threads, threadId, (thread) => ({
-        ...thread,
-        lastInteractedAt: now,
-      }));
+      const threads = updateThread(state.threads, threadId, (thread) => {
+        // Skip if already bumped within the same second
+        if (thread.lastInteractedAt && thread.lastInteractedAt.slice(0, 19) === now.slice(0, 19)) {
+          return thread;
+        }
+        return { ...thread, lastInteractedAt: now };
+      });
       return threads === state.threads ? state : { ...state, threads };
     }),
   resetThreadStatus: (threadId) =>

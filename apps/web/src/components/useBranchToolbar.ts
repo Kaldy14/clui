@@ -7,13 +7,12 @@ import { useStore } from "../store";
 import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 
 export function useBranchToolbar(threadId: ThreadId) {
-  const threads = useStore((store) => store.threads);
-  const projects = useStore((store) => store.projects);
-  const setThreadBranchAction = useStore((store) => store.setThreadBranch);
-
-  const serverThread = threads.find((thread) => thread.id === threadId);
+  const serverThread = useStore((store) => store.threads.find((thread) => thread.id === threadId));
   const activeProjectId = serverThread?.projectId ?? null;
-  const activeProject = projects.find((project) => project.id === activeProjectId);
+  const activeProject = useStore(
+    (store) => store.projects.find((project) => project.id === activeProjectId),
+  );
+  const setThreadBranchAction = useStore((store) => store.setThreadBranch);
   const activeThreadId = serverThread?.id;
   const activeThreadBranch = serverThread?.branch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? null;

@@ -111,11 +111,6 @@ function ChatRouteLayout() {
     };
   }, [navigate]);
 
-  const threads = useStore((s) => s.threads);
-  const terminalStateByThreadId = useTerminalStateStore((s) => s.terminalStateByThreadId);
-  const setTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
-  const setProjectTerminalOpen = useTerminalStateStore((s) => s.setProjectTerminalOpen);
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isThreadSearchShortcut(event, keybindings)) {
@@ -128,8 +123,9 @@ function ChatRouteLayout() {
       if (isTerminalToggleShortcut(event, keybindings)) {
         event.preventDefault();
         if (routeThreadId) {
-          const isOpen = terminalStateByThreadId[routeThreadId]?.terminalOpen ?? false;
-          setTerminalOpen(routeThreadId, !isOpen);
+          const tsState = useTerminalStateStore.getState();
+          const isOpen = tsState.terminalStateByThreadId[routeThreadId]?.terminalOpen ?? false;
+          tsState.setTerminalOpen(routeThreadId, !isOpen);
         }
         return;
       }
@@ -154,12 +150,13 @@ function ChatRouteLayout() {
       if (isProjectTerminalToggleShortcut(event, keybindings)) {
         event.preventDefault();
         const currentThread = routeThreadId
-          ? threads.find((t) => t.id === routeThreadId)
+          ? useStore.getState().threads.find((t) => t.id === routeThreadId)
           : undefined;
         if (currentThread) {
+          const tsState = useTerminalStateStore.getState();
           const syntheticId = projectTerminalThreadId(currentThread.projectId);
-          const isOpen = terminalStateByThreadId[syntheticId]?.terminalOpen ?? false;
-          setProjectTerminalOpen(syntheticId, !isOpen);
+          const isOpen = tsState.terminalStateByThreadId[syntheticId]?.terminalOpen ?? false;
+          tsState.setProjectTerminalOpen(syntheticId, !isOpen);
         }
         return;
       }
@@ -168,7 +165,7 @@ function ChatRouteLayout() {
       if (isThreadNextShortcut(event, keybindings) || isThreadPrevShortcut(event, keybindings)) {
         event.preventDefault();
         const isNext = isThreadNextShortcut(event, keybindings);
-        const allThreads = threads.filter((t) => t.terminalStatus !== undefined);
+        const allThreads = useStore.getState().threads.filter((t) => t.terminalStatus !== undefined);
         if (allThreads.length === 0) return;
         const currentIndex = allThreads.findIndex((t) => t.id === routeThreadId);
         const nextIndex = isNext
@@ -204,8 +201,9 @@ function ChatRouteLayout() {
       if (modKey && !event.shiftKey && !event.altKey && event.key >= "1" && event.key <= "9") {
         event.preventDefault();
         const index = Number.parseInt(event.key, 10) - 1;
-        if (index < threads.length) {
-          const targetThread = threads[index];
+        const { threads: currentThreads } = useStore.getState();
+        if (index < currentThreads.length) {
+          const targetThread = currentThreads[index];
           if (targetThread) {
             void navigate({ to: "/$threadId", params: { threadId: targetThread.id } });
           }
@@ -220,7 +218,7 @@ function ChatRouteLayout() {
         if (scriptId) {
           event.preventDefault();
           const currentThread = routeThreadId
-            ? threads.find((t) => t.id === routeThreadId)
+            ? useStore.getState().threads.find((t) => t.id === routeThreadId)
             : undefined;
           if (currentThread) {
             const { projects } = useStore.getState();
@@ -237,7 +235,7 @@ function ChatRouteLayout() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, threads, navigate, routeThreadId, terminalStateByThreadId, setTerminalOpen, setProjectTerminalOpen]);
+  }, [keybindings, navigate, routeThreadId]);
 
   const handleSearchClick = useCallback(() => setSearchOpen(true), []);
 

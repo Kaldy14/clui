@@ -17,6 +17,9 @@ import { Cause, Schema } from "effect";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { WsTransport } from "./wsTransport";
 
+/** Static resolved promise reused by fire-and-forget calls to satisfy the Promise<void> contract. */
+const RESOLVED_VOID: Promise<void> = Promise.resolve();
+
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
@@ -225,8 +228,14 @@ export function createWsNativeApi(): NativeApi {
     claude: {
       start: (input) => transport.request(WS_METHODS.claudeStart, input),
       hibernate: (input) => transport.request(WS_METHODS.claudeHibernate, input),
-      write: (input) => transport.request(WS_METHODS.claudeWrite, input),
-      resize: (input) => transport.request(WS_METHODS.claudeResize, input),
+      write: (input) => {
+        transport.fireAndForget(WS_METHODS.claudeWrite, input);
+        return RESOLVED_VOID;
+      },
+      resize: (input) => {
+        transport.fireAndForget(WS_METHODS.claudeResize, input);
+        return RESOLVED_VOID;
+      },
       getScrollback: (input) => transport.request(WS_METHODS.claudeGetScrollback, input),
       onSessionEvent: (callback) =>
         transport.subscribe(WS_CHANNELS.claudeSessionEvent, (data) => {

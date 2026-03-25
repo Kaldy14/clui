@@ -4,6 +4,94 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-25 — Diff panel keyboard shortcuts: auto-focus, broader scope, hint bar
+
+**Problem:** Diff panel keyboard shortcuts (j/k/v/e) only worked after clicking inside the viewport area. Clicking the header, file tree, or any other panel area lost focus and disabled shortcuts. Escape was handled separately on the panel div, while navigation shortcuts were scoped to the inner viewport.
+
+**Root cause:** Keyboard handler was registered on `patchViewportRef` (inner viewport) instead of `panelRef` (whole panel). No auto-focus on mount meant the user had to click inside the viewport first. `closeDiff` was also defined after the effect that referenced it (temporal dead zone risk).
+
+**Fix:**
+1. Moved all keyboard shortcuts (j/k/v/e/Escape) to a single handler on `panelRef` so they work regardless of which panel area has focus.
+2. Added `useEffect` to auto-focus the panel on mount via `panel.focus({ preventScroll: true })`.
+3. Moved `closeDiff` declaration before the keyboard effect to avoid temporal dead zone.
+4. Added a subtle shortcut hints bar at the bottom of the panel showing `j/k navigate, v viewed, e edit, esc close`.
+
+**Affected files:**
+- `apps/web/src/components/DiffPanel.tsx`
+
+---
+
+## 2026-03-25 — Stabilize object references in syncServerReadModel to prevent re-render cascades
+
+**Problem:** Every call to `syncServerReadModel` created new object references for ALL threads and projects via `.map()`, even when nothing changed. This invalidated every Zustand selector that touches `threads` or `projects` on every sync, causing re-render cascades across the entire UI. Additionally, `bumpLastInteractedAt` always created a new thread object since `new Date().toISOString()` always produces a unique string.
+
+**Root cause:** No change detection — the map always returned new objects. For `bumpLastInteractedAt`, no same-second deduplication.
+
+**Fix:**
+1. Added `threadChanged()` helper that uses `updatedAt` as a cheap change-detection proxy, plus checks on volatile fields (session status, message count/streaming, latest turn, array lengths). If an existing thread matches, its reference is reused instead of creating a new object.
+2. Added `projectChanged()` helper with similar scalar/array-length comparison. Projects reuse existing references when unchanged, and the sorted array itself is reused when order is also stable.
+3. The `threads` array reference itself is preserved when no individual thread changed and the array length is the same.
+4. `bumpLastInteractedAt` now compares timestamps to the second — if already bumped within the same second, the existing thread reference is returned unchanged.
+
+**Affected files:**
+- `apps/web/src/store.ts` — Added `threadChanged()`, `projectChanged()` helpers; modified `syncServerReadModel`, `mapProjectsFromReadModel`, and `bumpLastInteractedAt`
+
+---
+
+## 2026-03-25 — Avoid unnecessary Zustand subscriber notifications for background thread patches
+
+**Problem:** Four `useStore.setState` calls in `__root.tsx` for background thread patches always created new `threads` arrays via `.map()` even when the target thread didn't exist or nothing changed. This triggered unnecessary Zustand subscriber notifications and downstream re-renders.
+
+**Root cause:** Raw `state.threads.map()` always returns a new array reference, causing Zustand to notify all subscribers even when no thread was actually modified.
+
+**Fix:** Replaced raw `.map()` with the existing `updateThread` helper from `store.ts` (which tracks whether any thread was actually modified and returns the original array when nothing changed). Each `setState` callback now compares `threads === state.threads` and returns the original state object when unchanged, preventing unnecessary notifications. Exported `updateThread` from `store.ts` to make it available to `__root.tsx`.
+
+**Affected files:**
+- `apps/web/src/store.ts` — Exported `updateThread` helper
+- `apps/web/src/routes/__root.tsx` — Updated 4 setState calls (activity-appended, session-set, meta-updated, turn-completed) to use `updateThread` with identity check
+
+---
+
+## 2026-03-25 — Eliminate per-keystroke Promise/timeout allocation for terminal write and resize
+
+**Problem:** Every terminal keystroke went through `api.claude.write()` which called `transport.request()`, creating a Promise, a 120-second timeout, and a pending Map entry. The response was always discarded with `.catch(() => undefined)`. Same for `api.claude.resize()`. This generated unnecessary GC pressure on every single keypress.
+
+**Root cause:** `write` and `resize` used the same `request()` path as RPC methods that need responses, even though their results were never consumed.
+
+**Fix:** Added a `fireAndForget()` method to `WsTransport` that sends the same message format (id + body with _tag) but skips Promise, timeout, and Map allocation entirely. Updated `claude.write` and `claude.resize` in `wsNativeApi.ts` to use `fireAndForget` instead of `request`. The server still processes the messages normally; unmatched response IDs are already handled gracefully.
+
+**Affected files:**
+- `apps/web/src/wsTransport.ts` — Added `fireAndForget()` public method
+- `apps/web/src/wsNativeApi.ts` — Changed `claude.write` and `claude.resize` to use `fireAndForget`
+
+---
+
+## 2026-03-25 — Narrow useBranchToolbar Zustand selectors
+
+**Problem:** `useBranchToolbar` subscribed to the entire `threads` and `projects` arrays but only needed one thread and one project (via `.find()`). Every thread mutation re-rendered all consumers.
+
+**Root cause:** Broad array selectors instead of targeted single-item selectors.
+
+**Fix:** Replaced `useStore((s) => s.threads)` with `useStore((s) => s.threads.find((t) => t.id === threadId))` and same for projects. Zustand's default `Object.is` equality means re-renders only fire when the specific thread/project object changes.
+
+**Affected files:**
+- `apps/web/src/components/useBranchToolbar.ts` — Narrowed selectors
+
+---
+
+## 2026-03-25 — Fix ChatRouteLayout re-rendering on every store sync
+
+**Problem:** `ChatRouteLayout` subscribed to `useStore((s) => s.threads)` and `useTerminalStateStore((s) => s.terminalStateByThreadId)` at component level, but both values were only used inside a keydown event handler. Since `threads` is a new reference on every store sync and `terminalStateByThreadId` changes on any terminal state change, this caused the entire component tree (sidebar, outlet, drawers) to re-render unnecessarily, and the keydown listener to be torn down and re-registered on every sync.
+
+**Root cause:** Reactive subscriptions used for values only needed at event-handler time. Standard Zustand anti-pattern.
+
+**Fix:** Replaced reactive `useStore`/`useTerminalStateStore` subscriptions with `getState()` calls inside the keydown handler. Removed `threads`, `terminalStateByThreadId`, `setTerminalOpen`, and `setProjectTerminalOpen` from the useEffect dependency array. The handler now reads the latest store snapshot at keypress time without causing re-renders.
+
+**Affected files:**
+- `apps/web/src/routes/_chat.tsx` — Removed 4 store subscriptions, replaced with `getState()` calls in keydown handler
+
+---
+
 ## 2026-03-25 — Fix thread not staying at top after user sends message
 
 **Problem:** After sending a message in a thread at position 3, it jumps to top (Working badge, Tier 2) but drops back to position 3 once the turn completes and the user reads it. The thread should remain at position 1 since the user interacted with it most recently.

@@ -16,7 +16,7 @@ import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { useStore } from "../store";
+import { updateThread, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
@@ -280,16 +280,16 @@ function EventRouter() {
         // "Pending Approval" / "Needs Input" badges appear immediately.
         if (!isCurrentThread && thread) {
           const activity = event.payload.activity;
-          useStore.setState((state) => ({
-            threads: state.threads.map((t) => {
-              if (t.id !== threadId) return t;
+          useStore.setState((state) => {
+            const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => {
               const activities = [
                 ...t.activities.filter((a) => a.id !== activity.id),
                 activity,
               ];
               return { ...t, activities };
-            }),
-          }));
+            });
+            return threads === state.threads ? state : { threads };
+          });
         }
       }
       if (event.type === "thread.session-set") {
@@ -314,9 +314,9 @@ function EventRouter() {
         // Eagerly patch session status in the store so the UI reflects the
         // real state without waiting for a full sync.
         if (!isCurrentThread && thread?.session) {
-          useStore.setState((state) => ({
-            threads: state.threads.map((t) => {
-              if (t.id !== threadId || !t.session) return t;
+          useStore.setState((state) => {
+            const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => {
+              if (!t.session) return t;
               return {
                 ...t,
                 session: {
@@ -328,8 +328,9 @@ function EventRouter() {
                   ...(session.lastError ? { lastError: session.lastError } : {}),
                 },
               };
-            }),
-          }));
+            });
+            return threads === state.threads ? state : { threads };
+          });
         }
       }
 
@@ -338,16 +339,14 @@ function EventRouter() {
       if (!isCurrentThread && event.type === "thread.meta-updated") {
         const { threadId, title, titleSource } = event.payload;
         if (title !== undefined) {
-          useStore.setState((state) => ({
-            threads: state.threads.map((t) => {
-              if (t.id !== threadId) return t;
-              return {
-                ...t,
-                title,
-                ...(titleSource !== undefined ? { titleSource } : {}),
-              };
-            }),
-          }));
+          useStore.setState((state) => {
+            const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => ({
+              ...t,
+              title,
+              ...(titleSource !== undefined ? { titleSource } : {}),
+            }));
+            return threads === state.threads ? state : { threads };
+          });
         }
       }
 
@@ -417,16 +416,17 @@ function EventRouter() {
           // Eagerly patch latestTurn.completedAt for background threads so
           // hasUnseenCompletion works without waiting for a full snapshot sync.
           if (event.threadId !== currentThreadId) {
-            useStore.setState((state) => ({
-              threads: state.threads.map((t) => {
-                if (t.id !== event.threadId || !t.latestTurn?.startedAt) return t;
+            useStore.setState((state) => {
+              const threads = updateThread(state.threads, ThreadId.makeUnsafe(event.threadId), (t) => {
+                if (!t.latestTurn?.startedAt) return t;
                 if (t.latestTurn.completedAt) return t; // Already set
                 return {
                   ...t,
                   latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
                 };
-              }),
-            }));
+              });
+              return threads === state.threads ? state : { threads };
+            });
           }
         }
       }
