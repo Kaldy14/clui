@@ -520,11 +520,24 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           if (Option.isNone(existingRow)) {
             return;
           }
+          // Soft-delete the thread row (preserve claudeSessionId for --resume)
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             deletedAt: event.payload.deletedAt,
             updatedAt: event.payload.deletedAt,
+            scrollbackSnapshot: null,
           });
+          // Cascade-delete all child projection data
+          const threadId = event.payload.threadId;
+          yield* projectionThreadMessageRepository.deleteByThreadId({ threadId });
+          yield* projectionThreadActivityRepository.deleteByThreadId({ threadId });
+          yield* projectionTurnRepository.deleteByThreadId({ threadId });
+          yield* projectionThreadSessionRepository.deleteByThreadId({ threadId });
+          yield* projectionThreadProposedPlanRepository.deleteByThreadId({ threadId });
+          yield* projectionPendingApprovalRepository.deleteByThreadId({ threadId });
+          yield* sql`DELETE FROM checkpoint_diff_blobs WHERE thread_id = ${threadId}`.pipe(
+            Effect.mapError(toPersistenceSqlError("ProjectionPipeline.thread.deleted:checkpoint_diff_blobs")),
+          );
           return;
         }
 

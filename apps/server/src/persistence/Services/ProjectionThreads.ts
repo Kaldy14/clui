@@ -34,7 +34,7 @@ export const ProjectionThread = Schema.Struct({
   terminalStatus: TerminalStatus,
   scrollbackSnapshot: Schema.NullOr(Schema.String),
   titleSource: TitleSource,
-  bookmarked: Schema.Boolean,
+  bookmarked: Schema.BooleanFromBit,
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -91,6 +91,11 @@ export interface ProjectionThreadRepositoryShape {
   readonly deleteById: (
     input: DeleteProjectionThreadInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Clear scrollback_snapshot for all non-deleted threads except the excluded set. Returns count of rows updated. */
+  readonly clearScrollbackSnapshotBulk: (
+    input: { readonly excludeThreadIds: ReadonlyArray<string> },
+  ) => Effect.Effect<number, ProjectionRepositoryError>;
 }
 
 /**

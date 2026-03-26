@@ -328,6 +328,23 @@ export function clearIdleTerminals(): number {
   return toDispose.length;
 }
 
+/**
+ * Dispose all cached terminals except the ones in the keep set.
+ * Returns the number of terminals disposed.
+ */
+export function disposeAllExcept(keepThreadIds: ReadonlySet<string>): number {
+  const toDispose: string[] = [];
+  for (const [threadId] of cache) {
+    if (!keepThreadIds.has(threadId)) {
+      toDispose.push(threadId);
+    }
+  }
+  for (const threadId of toDispose) {
+    dispose(threadId);
+  }
+  return toDispose.length;
+}
+
 // ── Idle sweep ─────────────────────────────────────────────────────────
 
 /** Detached terminals untouched for this long are automatically disposed. */

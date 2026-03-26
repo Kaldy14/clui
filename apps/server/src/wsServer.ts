@@ -85,6 +85,7 @@ import {
   buildPostToolUseEvents,
 } from "./hooks/hookReceiver";
 import { extractPromptText } from "./terminal/titleGenerator";
+import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThreads.ts";
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
 
 /**
@@ -267,7 +268,8 @@ export type ServerRuntimeServices =
   | ClaudeSessionManager
   | Keybindings
   | Open
-  | AnalyticsService;
+  | AnalyticsService
+  | ProjectionThreadRepository;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -868,6 +870,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const orchestrationReactor = yield* OrchestrationReactor;
   const checkpointReactor = yield* CheckpointReactor;
   const { openInEditor } = yield* Open;
+  const projectionThreadRepository = yield* ProjectionThreadRepository;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
@@ -1389,6 +1392,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.serverPurgeInactiveSessions: {
+        const body = stripRequestTag(request.body);
+        const excludeSet = new Set(body.excludeThreadIds);
+
+        logger.info("purge inactive sessions: starting", { excludeCount: excludeSet.size });
+
+        // Kill dormant PTY sessions
+        const sessionsKilled = yield* claudeSessionManager.purgeInactiveSessions(excludeSet);
+
+        // Clear scrollback snapshots in SQLite
+        const snapshotsCleared = yield* projectionThreadRepository.clearScrollbackSnapshotBulk({
+          excludeThreadIds: body.excludeThreadIds,
+        });
+
+        logger.info("purge inactive sessions: completed", { sessionsKilled, snapshotsCleared });
+        return { sessionsKilled, snapshotsCleared };
       }
 
       case MCP_WS_METHODS.mcpGetStatus: {

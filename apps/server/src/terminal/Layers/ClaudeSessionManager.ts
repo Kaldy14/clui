@@ -415,6 +415,25 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     });
   }
 
+  /** Kill all dormant sessions except the excluded thread IDs. Returns count of sessions killed. */
+  async purgeInactiveSessions(excludeThreadIds: ReadonlySet<string>): Promise<number> {
+    // Collect candidates first to avoid mutating the Map during iteration
+    const candidates = [...this.sessions.entries()]
+      .filter(([id, e]) => !excludeThreadIds.has(id) && e.status !== "active")
+      .map(([id]) => id);
+    let killed = 0;
+    for (const threadId of candidates) {
+      await this.runWithThreadLock(threadId, async () => {
+        const current = this.sessions.get(threadId);
+        if (!current || current.status === "active") return;
+        this.stopProcess(current);
+        this.sessions.delete(threadId);
+        killed++;
+      });
+    }
+    return killed;
+  }
+
   dispose(): void {
     for (const entry of this.sessions.values()) {
       this.stopProcess(entry);
@@ -587,6 +606,8 @@ export const ClaudeSessionManagerLive = Layer.effect(
         Effect.sync(() => runtime.getClaudeSessionId(threadId)),
       destroySession: (threadId) =>
         Effect.promise(() => runtime.destroySession(threadId)),
+      purgeInactiveSessions: (excludeThreadIds) =>
+        Effect.promise(() => runtime.purgeInactiveSessions(excludeThreadIds)),
       dispose: Effect.sync(() => runtime.dispose()),
     } satisfies ClaudeSessionManagerShape;
   }),

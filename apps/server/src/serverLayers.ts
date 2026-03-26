@@ -21,6 +21,7 @@ import { ClaudeCliTextGenerationLive } from "./git/Layers/ClaudeCliTextGeneratio
 import { GitServiceLive } from "./git/Layers/GitService";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { NodePtyHostAdapterLive } from "./terminal/Layers/NodePtyHost";
+import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads";
 
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
@@ -78,5 +79,6 @@ export function makeServerRuntimeServicesLayer() {
     terminalLayer,
     claudeSessionLayer,
     KeybindingsLive,
+    ProjectionThreadRepositoryLive,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

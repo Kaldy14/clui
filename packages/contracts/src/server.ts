@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
+import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
@@ -69,3 +69,14 @@ export const ServerConfigUpdatedPayload = Schema.Struct({
   providers: ServerProviderStatuses,
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
+
+export const PurgeInactiveSessionsInput = Schema.Struct({
+  excludeThreadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(500)),
+});
+export type PurgeInactiveSessionsInput = typeof PurgeInactiveSessionsInput.Type;
+
+export const PurgeInactiveSessionsResult = Schema.Struct({
+  sessionsKilled: Schema.Number,
+  snapshotsCleared: Schema.Number,
+});
+export type PurgeInactiveSessionsResult = typeof PurgeInactiveSessionsResult.Type;

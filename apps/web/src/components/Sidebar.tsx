@@ -87,6 +87,7 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
+import { PurgeSessionsButton } from "./PurgeSessionsButton";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import {
@@ -1791,6 +1792,9 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
               </SidebarMenuButton>
             </SidebarMenuItem>
           ) : null}
+          <SidebarMenuItem>
+            <PurgeSessionsButton routeThreadId={routeThreadId} />
+          </SidebarMenuItem>
           <SidebarMenuItem>
             {isOnSettings ? (
               <SidebarMenuButton

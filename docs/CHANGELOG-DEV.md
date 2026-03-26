@@ -4,6 +4,39 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-26 — Session cleanup & storage reclamation
+
+**Problem:** Clui accumulates significant SQLite data with no cleanup path. Thread soft-deletion leaves all child rows (messages, activities, turns, diffs, scrollback snapshots) orphaned. Dormant sessions hold scrollback snapshots (up to 200K lines each) indefinitely. No storage reclamation mechanism exists.
+
+**Root cause:** The `thread.deleted` handler in the projection pipeline only set `deletedAt` on the thread row — it never cascade-deleted child data. There was no way to bulk-clear dormant session data.
+
+**Fix:**
+1. **Cascade delete on thread deletion**: When a thread is soft-deleted, all child projection data (messages, activities, turns, sessions, proposed plans, pending approvals, checkpoint diffs) is now hard-deleted and `scrollback_snapshot` is nulled — all within the existing transaction. `claudeSessionId` is preserved for `--resume`.
+2. **"Purge sessions" button**: New sidebar footer button that kills dormant PTY processes and clears scrollback snapshots for all non-active, non-busy threads. Uses an AlertDialog confirmation. Protects the currently viewed thread and busy threads (active terminal, working/needsInput/pendingApproval hook status).
+3. **Migration 021**: Retroactively cleans up orphaned data from previously soft-deleted threads.
+
+**Affected files:**
+- `packages/contracts/src/server.ts` — `PurgeInactiveSessionsInput`/`Result` schemas
+- `packages/contracts/src/ws.ts` — `serverPurgeInactiveSessions` WS method + tagged body
+- `packages/contracts/src/ipc.ts` — `NativeApi.server.purgeInactiveSessions`
+- `apps/server/src/persistence/Services/ProjectionThreads.ts` — `clearScrollbackSnapshotBulk`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts` — Implementation
+- `apps/server/src/persistence/Services/ProjectionPendingApprovals.ts` — `deleteByThreadId`
+- `apps/server/src/persistence/Layers/ProjectionPendingApprovals.ts` — Implementation
+- `apps/server/src/terminal/Services/ClaudeSession.ts` — `purgeInactiveSessions`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` — Implementation
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` — Cascade deletes in `thread.deleted`
+- `apps/server/src/wsServer.ts` — `server.purgeInactiveSessions` handler
+- `apps/server/src/serverLayers.ts` — `ProjectionThreadRepositoryLive` in runtime services
+- `apps/server/src/persistence/Migrations/021_CleanupDeletedThreadData.ts` — New migration
+- `apps/server/src/persistence/Migrations.ts` — Registered migration 021
+- `apps/web/src/wsNativeApi.ts` — Client RPC wiring
+- `apps/web/src/lib/claudeTerminalCache.ts` — `disposeAllExcept`
+- `apps/web/src/components/PurgeSessionsButton.tsx` — New component
+- `apps/web/src/components/Sidebar.tsx` — Mounted purge button in footer
+
+---
+
 ## 2026-03-26 — Thread bookmarking ("Mark for later")
 
 **Problem:** Threads get lost over time. No way to flag threads you want to come back to — you have to scroll through and hope you find them.

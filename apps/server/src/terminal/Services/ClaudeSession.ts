@@ -69,6 +69,10 @@ export interface ClaudeSessionManagerShape {
   readonly destroySession: (
     threadId: string,
   ) => Effect.Effect<void>;
+  /** Kill all dormant sessions except the excluded thread IDs. Returns count of sessions killed. */
+  readonly purgeInactiveSessions: (
+    excludeThreadIds: ReadonlySet<string>,
+  ) => Effect.Effect<number>;
   readonly dispose: Effect.Effect<void>;
 }
 

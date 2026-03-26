@@ -6,6 +6,7 @@ import { toPersistenceSqlError } from "../Errors.ts";
 import {
   GetProjectionPendingApprovalInput,
   DeleteProjectionPendingApprovalInput,
+  DeletePendingApprovalsByThreadInput,
   ListProjectionPendingApprovalsInput,
   ProjectionPendingApproval,
   ProjectionPendingApprovalRepository,
@@ -94,6 +95,15 @@ const makeProjectionPendingApprovalRepository = Effect.gen(function* () {
       `,
   });
 
+  const deleteProjectionPendingApprovalRowsByThreadId = SqlSchema.void({
+    Request: DeletePendingApprovalsByThreadInput,
+    execute: ({ threadId }) =>
+      sql`
+        DELETE FROM projection_pending_approvals
+        WHERE thread_id = ${threadId}
+      `,
+  });
+
   const upsert: ProjectionPendingApprovalRepositoryShape["upsert"] = (row) =>
     upsertProjectionPendingApprovalRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionPendingApprovalRepository.upsert:query")),
@@ -122,11 +132,19 @@ const makeProjectionPendingApprovalRepository = Effect.gen(function* () {
       ),
     );
 
+  const deleteByThreadId: ProjectionPendingApprovalRepositoryShape["deleteByThreadId"] = (input) =>
+    deleteProjectionPendingApprovalRowsByThreadId(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionPendingApprovalRepository.deleteByThreadId:query"),
+      ),
+    );
+
   return {
     upsert,
     listByThreadId,
     getByRequestId,
     deleteByRequestId,
+    deleteByThreadId,
   } satisfies ProjectionPendingApprovalRepositoryShape;
 });
 

@@ -42,6 +42,7 @@ import {
   ClaudeResizeInput,
 } from "./claude-terminal";
 import { KeybindingRule } from "./keybindings";
+import { PurgeInactiveSessionsInput } from "./server";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput, ProjectReadFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import {
@@ -96,6 +97,7 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  serverPurgeInactiveSessions: "server.purgeInactiveSessions",
 } as const;
 
 export const MCP_WS_METHODS = {
@@ -183,6 +185,7 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+  tagRequestBody(WS_METHODS.serverPurgeInactiveSessions, PurgeInactiveSessionsInput),
 
   // MCP methods
   tagRequestBody(MCP_WS_METHODS.mcpGetStatus, McpGetStatusInput),

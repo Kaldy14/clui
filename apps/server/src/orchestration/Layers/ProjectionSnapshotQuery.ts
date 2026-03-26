@@ -173,7 +173,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           terminal_status AS "terminalStatus",
           scrollback_snapshot AS "scrollbackSnapshot",
           title_source AS "titleSource",
-          CAST(bookmarked AS BOOLEAN) AS "bookmarked",
+          bookmarked,
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

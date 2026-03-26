@@ -203,6 +203,7 @@ const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   subscribe: () => Effect.succeed(() => {}),
   getClaudeSessionId: () => Effect.succeed(null),
   destroySession: () => Effect.void,
+  purgeInactiveSessions: () => Effect.succeed(0),
   dispose: Effect.void,
 };
 
@@ -1666,6 +1667,7 @@ describe("WebSocket Server", () => {
         subscribe: () => Effect.succeed(() => {}),
         getClaudeSessionId: () => Effect.succeed(null),
         destroySession: () => Effect.void,
+        purgeInactiveSessions: () => Effect.succeed(0),
         dispose: Effect.void,
       };
       return { calls, shape };

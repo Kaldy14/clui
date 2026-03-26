@@ -99,7 +99,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           terminal_status AS "terminalStatus",
           scrollback_snapshot AS "scrollbackSnapshot",
           title_source AS "titleSource",
-          CAST(bookmarked AS BOOLEAN) AS "bookmarked",
+          bookmarked,
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -128,7 +128,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           terminal_status AS "terminalStatus",
           scrollback_snapshot AS "scrollbackSnapshot",
           title_source AS "titleSource",
-          CAST(bookmarked AS BOOLEAN) AS "bookmarked",
+          bookmarked,
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -169,11 +169,43 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.deleteById:query")),
     );
 
+  const clearScrollbackSnapshotBulk: ProjectionThreadRepositoryShape["clearScrollbackSnapshotBulk"] =
+    (input) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          if (input.excludeThreadIds.length === 0) {
+            yield* sql`
+              UPDATE projection_threads
+              SET scrollback_snapshot = NULL
+              WHERE deleted_at IS NULL
+                AND scrollback_snapshot IS NOT NULL
+            `;
+          } else {
+            const ids = input.excludeThreadIds;
+            yield* sql`
+              UPDATE projection_threads
+              SET scrollback_snapshot = NULL
+              WHERE deleted_at IS NULL
+                AND scrollback_snapshot IS NOT NULL
+                AND thread_id NOT IN (${sql.in(ids)})
+            `;
+          }
+          // changes() must run on the same connection as the UPDATE — transaction ensures this
+          const [row] = yield* sql<{ count: number }>`SELECT changes() AS count`;
+          return row?.count ?? 0;
+        }),
+      ).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionThreadRepository.clearScrollbackSnapshotBulk:query"),
+        ),
+      );
+
   return {
     upsert,
     getById,
     listByProjectId,
     deleteById,
+    clearScrollbackSnapshotBulk,
   } satisfies ProjectionThreadRepositoryShape;
 });
 
