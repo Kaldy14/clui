@@ -236,6 +236,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           terminalStatus: "new",
           scrollbackSnapshot: null,
           titleSource: "auto",
+          bookmarked: false,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",

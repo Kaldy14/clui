@@ -322,6 +322,7 @@ export const OrchestrationThread = Schema.Struct({
   titleSource: TitleSource.pipe(
     Schema.withDecodingDefault(() => "auto" as const),
   ),
+  bookmarked: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -401,6 +402,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),
+  bookmarked: Schema.optional(Schema.Boolean),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -728,6 +730,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),
+  bookmarked: Schema.optional(Schema.Boolean),
   updatedAt: IsoDateTime,
 });
 

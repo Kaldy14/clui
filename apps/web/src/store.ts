@@ -308,6 +308,7 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.runtimeMode !== incoming.runtimeMode) return true;
   if (existing.interactionMode !== incoming.interactionMode) return true;
   if (existing.titleSource !== incoming.titleSource) return true;
+  if (existing.bookmarked !== incoming.bookmarked) return true;
   // Session check
   if ((existing.session?.updatedAt ?? null) !== (incoming.session?.updatedAt ?? null)) return true;
   if ((existing.session?.orchestrationStatus ?? null) !== (incoming.session?.orchestrationStatus ?? null))
@@ -427,6 +428,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         claudeSessionId: thread.claudeSessionId ?? null,
         scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
         titleSource: thread.titleSource ?? "auto",
+        bookmarked: thread.bookmarked ?? false,
         hookStatus: existing?.hookStatus ?? null,
       };
       if (existing && !threadChanged(existing, newThread)) {
@@ -580,6 +582,7 @@ export function addOptimisticThread(
     claudeSessionId: null,
     scrollbackSnapshot: null,
     titleSource: "auto",
+    bookmarked: false,
     hookStatus: null,
   };
   return { ...state, threads: [...state.threads, thread] };

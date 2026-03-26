@@ -126,6 +126,7 @@ export interface Thread {
   claudeSessionId: string | null;
   scrollbackSnapshot: string | null;
   titleSource: TitleSource;
+  bookmarked: boolean;
   hookStatus: ClaudeHookStatus | null;
 }
 

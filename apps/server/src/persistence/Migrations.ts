@@ -31,6 +31,7 @@ import Migration0016 from "./Migrations/016_TerminalSessions.ts";
 import Migration0017 from "./Migrations/017_ScrollbackSnapshot.ts";
 import Migration0018 from "./Migrations/018_TitleSource.ts";
 import Migration0019 from "./Migrations/019_LastInteractedAt.ts";
+import Migration0020 from "./Migrations/020_Bookmarked.ts";
 import { Effect } from "effect";
 
 /**
@@ -63,6 +64,7 @@ const loader = Migrator.fromRecord({
   "17_ScrollbackSnapshot": Migration0017,
   "18_TitleSource": Migration0018,
   "19_LastInteractedAt": Migration0019,
+  "20_Bookmarked": Migration0020,
 });
 
 /**

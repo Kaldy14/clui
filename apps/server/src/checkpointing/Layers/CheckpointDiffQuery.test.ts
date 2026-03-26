@@ -52,6 +52,7 @@ function makeSnapshot(input: {
         terminalStatus: "new",
         scrollbackSnapshot: null,
         titleSource: "auto" as const,
+        bookmarked: false,
         latestTurn: {
           turnId: TurnId.makeUnsafe("turn-1"),
           state: "completed",

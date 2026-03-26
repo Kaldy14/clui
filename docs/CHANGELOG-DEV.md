@@ -4,6 +4,28 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-26 — Thread bookmarking ("Mark for later")
+
+**Problem:** Threads get lost over time. No way to flag threads you want to come back to — you have to scroll through and hope you find them.
+
+**Fix:** Added a `bookmarked` boolean field to threads, persisted server-side (SQLite + event-sourced). Right-click context menu on any thread shows "Mark for later" / "Remove bookmark". Bookmarked threads display a filled amber bookmark icon in the sidebar for easy visual identification.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts` — Added `bookmarked` to `OrchestrationThread`, `ThreadMetaUpdateCommand`, `ThreadMetaUpdatedPayload`
+- `apps/server/src/persistence/Migrations/020_Bookmarked.ts` — New migration
+- `apps/server/src/persistence/Migrations.ts` — Registered migration
+- `apps/server/src/persistence/Services/ProjectionThreads.ts` — Added to schema
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts` — Added to SQL
+- `apps/server/src/orchestration/decider.ts` — Pass through in meta update
+- `apps/server/src/orchestration/projector.ts` — Apply in meta-updated event
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` — Persist in projection
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` — Read from DB
+- `apps/web/src/types.ts` — Added to `Thread` interface
+- `apps/web/src/store.ts` — Added to sync, change detection, optimistic thread
+- `apps/web/src/components/Sidebar.tsx` — Context menu toggle + bookmark icon
+
+---
+
 ## 2026-03-25 — Diff panel: Cmd+F search, working tree toggle, resizable file tree, v+advance
 
 **Problem:** No way to search through diff content, no way to view actual git staged/unstaged changes (only checkpoint-based diffs), vertical file tree had fixed max height, and `v` (mark viewed) didn't auto-advance to next file.

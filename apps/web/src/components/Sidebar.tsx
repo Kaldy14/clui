@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  BookmarkIcon,
   ChevronRightIcon,
   DownloadIcon,
   XIcon,
@@ -697,9 +698,12 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
+      const thread = threads.find((t) => t.id === threadId);
+      if (!thread) return;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
+          { id: "bookmark", label: thread.bookmarked ? "Remove bookmark" : "Mark for later" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "reset-status", label: "Reset status badge" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -707,13 +711,21 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         ],
         position,
       );
-      const thread = threads.find((t) => t.id === threadId);
-      if (!thread) return;
 
       if (clicked === "rename") {
         setRenamingThreadId(threadId);
         setRenamingTitle(thread.title);
         renamingCommittedRef.current = false;
+        return;
+      }
+
+      if (clicked === "bookmark") {
+        void api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId,
+          bookmarked: !thread.bookmarked,
+        });
         return;
       }
 
@@ -1590,6 +1602,9 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                               {threadStatus.label}
                                             </span>
                                           </span>
+                                        )}
+                                        {thread.bookmarked && (
+                                          <BookmarkIcon className="size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300/80 dark:text-amber-400/80" />
                                         )}
                                         {renamingThreadId === thread.id ? (
                                           <input

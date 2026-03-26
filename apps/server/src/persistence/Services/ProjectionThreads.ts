@@ -34,6 +34,7 @@ export const ProjectionThread = Schema.Struct({
   terminalStatus: TerminalStatus,
   scrollbackSnapshot: Schema.NullOr(Schema.String),
   titleSource: TitleSource,
+  bookmarked: Schema.Boolean,
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

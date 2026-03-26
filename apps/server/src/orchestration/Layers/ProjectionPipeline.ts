@@ -429,6 +429,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             terminalStatus: "new",
             scrollbackSnapshot: null,
             titleSource: "auto",
+            bookmarked: false,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -458,6 +459,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               ? { worktreePath: event.payload.worktreePath }
               : {}),
             ...(!skipTitle && event.payload.titleSource !== undefined ? { titleSource: event.payload.titleSource } : {}),
+            ...(event.payload.bookmarked !== undefined ? { bookmarked: event.payload.bookmarked } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

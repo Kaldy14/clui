@@ -312,6 +312,7 @@ export function projectEvent(
               ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
               ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
               ...(!skipTitle && payload.titleSource !== undefined ? { titleSource: payload.titleSource } : {}),
+              ...(payload.bookmarked !== undefined ? { bookmarked: payload.bookmarked } : {}),
               updatedAt: payload.updatedAt,
             }),
           };

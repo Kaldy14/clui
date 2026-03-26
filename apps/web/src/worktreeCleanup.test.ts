@@ -28,6 +28,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     claudeSessionId: null,
     scrollbackSnapshot: null,
     titleSource: "auto" as const,
+    bookmarked: false,
     hookStatus: null,
     dormantReason: null,
     ...overrides,
