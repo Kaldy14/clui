@@ -41,6 +41,7 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const SET_BADGE_COUNT_CHANNEL = "desktop:set-badge-count";
 const STATE_DIR =
   process.env.CLUI_STATE_DIR?.trim() || Path.join(OS.homedir(), ".clui", "userdata");
 const DESKTOP_SCHEME = "clui";
@@ -1171,6 +1172,13 @@ function registerIpcHandlers(): void {
       completed: result.completed,
       state: updateState,
     } satisfies DesktopUpdateActionResult;
+  });
+
+  ipcMain.on(SET_BADGE_COUNT_CHANNEL, (_event, count: unknown) => {
+    if (typeof count !== "number") return;
+    if (process.platform === "darwin" && app.dock) {
+      app.dock.setBadge(count > 0 ? String(count) : "");
+    }
   });
 }
 

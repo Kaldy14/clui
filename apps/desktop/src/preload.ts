@@ -10,6 +10,7 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const SET_BADGE_COUNT_CHANNEL = "desktop:set-badge-count";
 const wsUrl = process.env.CLUI_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -42,5 +43,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener);
     };
+  },
+  setBadgeCount: (count: number) => {
+    ipcRenderer.send(SET_BADGE_COUNT_CHANNEL, count);
   },
 } satisfies DesktopBridge);

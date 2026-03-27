@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-26 — macOS dock badge for pending approvals
+
+**Problem:** No visual indicator on the macOS dock icon when threads need user attention (pending approval or input requested), requiring constant window switching to check.
+
+**Fix:** Added IPC channel from web → Electron main process to set the dock badge count. The badge shows the number of threads with `pendingApproval` or `needsInput` hookStatus and clears automatically when threads are resolved or on reconnect.
+
+**Affected files:**
+- `packages/contracts/src/ipc.ts` — Added `setBadgeCount` to `DesktopBridge`
+- `apps/desktop/src/preload.ts` — Exposed `setBadgeCount` via IPC `ipcRenderer.send`
+- `apps/desktop/src/main.ts` — Added `ipcMain.on` handler calling `app.dock.setBadge()`
+- `apps/web/src/lib/notifications.ts` — Added `updateDockBadge()` helper
+- `apps/web/src/routes/__root.tsx` — Calls `updateDockBadge` on hookStatus changes and reconnect
+
+---
+
 ## 2026-03-26 — Session cleanup & storage reclamation
 
 **Problem:** Clui accumulates significant SQLite data with no cleanup path. Thread soft-deletion leaves all child rows (messages, activities, turns, diffs, scrollback snapshots) orphaned. Dormant sessions hold scrollback snapshots (up to 200K lines each) indefinitely. No storage reclamation mechanism exists.

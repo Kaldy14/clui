@@ -27,6 +27,7 @@ import {
   dispatchSessionSetNotification,
   dispatchTurnCompletedNotification,
   requestNotificationPermission,
+  updateDockBadge,
 } from "../lib/notifications";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { createSessionEventState, setGlobalSessionEventState } from "../lib/sessionEventState";
@@ -399,6 +400,11 @@ function EventRouter() {
       if (event.type === "hookStatus") {
         const result = sessionState.handleHookStatus(event.threadId, event.hookStatus);
 
+        // Update macOS dock badge with count of threads needing attention
+        if (result.applied) {
+          updateDockBadge(useStore.getState().threads);
+        }
+
         // Fire OS notification for turn completion (kept here — depends on navigate/thread title)
         if (result.applied && result.hookStatus === "completed") {
           const currentThreadId = getCurrentThreadId();
@@ -474,6 +480,7 @@ function EventRouter() {
             ),
           };
         });
+        updateDockBadge([]);
         deferredThreadIdsRef.current.clear();
 
         await syncSnapshot();
