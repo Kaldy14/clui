@@ -335,16 +335,17 @@ function EventRouter() {
         }
       }
 
-      // Eagerly patch thread title for background threads so the sidebar
-      // shows the auto-generated title without waiting for a full sync.
+      // Eagerly patch thread metadata for background threads so the sidebar
+      // reflects changes without waiting for a full snapshot sync.
       if (!isCurrentThread && event.type === "thread.meta-updated") {
-        const { threadId, title, titleSource } = event.payload;
-        if (title !== undefined) {
+        const { threadId, title, titleSource, bookmarked } = event.payload;
+        if (title !== undefined || bookmarked !== undefined) {
           useStore.setState((state) => {
             const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => ({
               ...t,
-              title,
+              ...(title !== undefined ? { title } : {}),
               ...(titleSource !== undefined ? { titleSource } : {}),
+              ...(bookmarked !== undefined ? { bookmarked } : {}),
             }));
             return threads === state.threads ? state : { threads };
           });

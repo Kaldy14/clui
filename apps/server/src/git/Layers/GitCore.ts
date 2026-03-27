@@ -838,6 +838,32 @@ const makeGitCore = Effect.gen(function* () {
         };
       }
 
+      // When the upstream tracks a different branch name (e.g. feature/X
+      // tracking origin/main due to worktree creation from a remote ref),
+      // bare `git push` would either fail (push.default=simple) or push to
+      // the wrong remote branch (push.default=upstream).  Detect the
+      // mismatch and push with explicit `-u origin <branch>` to correct
+      // the tracking and target the right remote branch.
+      const upstreamBranchName = details.upstreamRef
+        ? details.upstreamRef.replace(/^[^/]+\//, "")
+        : null;
+      const isUpstreamMismatch = upstreamBranchName !== null && upstreamBranchName !== branch;
+
+      if (isUpstreamMismatch) {
+        yield* runGit("GitCore.pushCurrentBranch.pushFixUpstream", cwd, [
+          "push",
+          "-u",
+          "origin",
+          branch,
+        ]);
+        return {
+          status: "pushed" as const,
+          branch,
+          upstreamBranch: `origin/${branch}`,
+          setUpstream: true,
+        };
+      }
+
       yield* runGit("GitCore.pushCurrentBranch.push", cwd, ["push"]);
       return {
         status: "pushed" as const,
@@ -1139,8 +1165,13 @@ const makeGitCore = Effect.gen(function* () {
         }
       }
 
+      // Use --no-track when branching from a remote-tracking ref so the new
+      // feature branch does NOT auto-track the base branch (e.g. origin/main).
+      // Without this, `git push` would target origin/main instead of
+      // origin/<newBranch>, which is almost never what the user wants.
+      const needsNoTrack = input.newBranch && startPoint !== input.branch;
       const args = input.newBranch
-        ? ["worktree", "add", "-b", input.newBranch, worktreePath, startPoint]
+        ? ["worktree", "add", "-b", input.newBranch, ...(needsNoTrack ? ["--no-track"] : []), worktreePath, startPoint]
         : ["worktree", "add", worktreePath, input.branch];
 
       yield* executeGit("GitCore.createWorktree", input.cwd, args, {

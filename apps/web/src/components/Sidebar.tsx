@@ -721,11 +721,19 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       }
 
       if (clicked === "bookmark") {
+        const newBookmarked = !thread.bookmarked;
+        // Optimistic update — reflect immediately in the sidebar
+        useStore.setState((state) => {
+          const threads = state.threads.map((t) =>
+            t.id === threadId ? { ...t, bookmarked: newBookmarked } : t,
+          );
+          return { threads };
+        });
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
           threadId,
-          bookmarked: !thread.bookmarked,
+          bookmarked: newBookmarked,
         });
         return;
       }

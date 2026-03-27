@@ -4,6 +4,35 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-27 — Worktree push targets wrong branch
+
+**Problem:** When creating a new worktree and pushing, the push targets `origin/main` instead of the feature branch (e.g. `origin/feature/ITE-308-...`). Users had to manually run `git push -u origin <branch>` for every new worktree.
+
+**Root cause:** `git worktree add -b <newBranch> <path> origin/main` auto-sets the upstream tracking of the new branch to `origin/main` (via `branch.autoSetupMerge`). Then `pushCurrentBranch` sees `hasUpstream=true` and runs bare `git push`, which either fails (`push.default=simple`, names don't match) or pushes to `origin/main` (`push.default=upstream`).
+
+**Fix:** Two changes:
+1. `createWorktree`: Added `--no-track` when branching from a remote-tracking ref to prevent auto-tracking the base branch.
+2. `pushCurrentBranch`: Added upstream branch name mismatch detection — when the local branch name differs from the upstream branch name (e.g. `feature/X` tracking `origin/main`), uses `git push -u origin <branch>` to correct the tracking and push to the right remote branch.
+
+**Affected files:**
+- `apps/server/src/git/Layers/GitCore.ts` — `createWorktree` (--no-track), `pushCurrentBranch` (upstream mismatch detection)
+
+---
+
+## 2026-03-27 — Bookmark toggle instant feedback
+
+**Problem:** Toggling "Mark for later" / "Remove bookmark" took 4-10 seconds to reflect in the sidebar. The click dispatched a server command with no optimistic update, requiring a full snapshot round-trip (9 SQL queries + full Zustand reconciliation) before the UI changed.
+
+**Root cause:** Two gaps: (1) no optimistic store update at the click site, and (2) the `thread.meta-updated` eager-patch handler only patched `title`, not `bookmarked`, so background threads waited for a deferred full sync.
+
+**Fix:** Added an optimistic Zustand update in the Sidebar click handler so the bookmark icon toggles instantly. Extended the eager-patch block in `__root.tsx` to also apply `bookmarked` from domain events, so the server-confirmed state resolves without a full snapshot sync.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.tsx` — Optimistic `bookmarked` toggle before `dispatchCommand`
+- `apps/web/src/routes/__root.tsx` — Eager-patch `bookmarked` in `thread.meta-updated` handler
+
+---
+
 ## 2026-03-26 — macOS dock badge for pending approvals
 
 **Problem:** No visual indicator on the macOS dock icon when threads need user attention (pending approval or input requested), requiring constant window switching to check.
