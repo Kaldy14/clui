@@ -163,23 +163,26 @@ export function BranchToolbarBranchSelector({
     const api = readNativeApi();
     if (!api || !branchCwd || isBranchActionPending) return;
 
-    // In new-worktree mode, selecting a branch sets the base branch.
-    if (isSelectingWorktreeBase) {
-      onSetThreadBranch(branch.name, null);
-      setIsBranchMenuOpen(false);
-
-      return;
-    }
-
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
       activeWorktreePath,
       branch,
     });
 
-    // If the branch already lives in a worktree, point the thread there.
+    // If the branch already lives in a worktree, reuse it — even in
+    // new-worktree mode where we'd otherwise treat the selection as a
+    // base-branch pick.  This prevents starting the session in the main
+    // repo when the user selects a branch that already has a worktree.
     if (selectionTarget.reuseExistingWorktree) {
       onSetThreadBranch(branch.name, selectionTarget.nextWorktreePath);
+      setIsBranchMenuOpen(false);
+
+      return;
+    }
+
+    // In new-worktree mode, selecting a branch sets the base branch.
+    if (isSelectingWorktreeBase) {
+      onSetThreadBranch(branch.name, null);
       setIsBranchMenuOpen(false);
 
       return;

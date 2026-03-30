@@ -4,6 +4,19 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-30 — Existing worktree ignored when creating new thread in worktree mode
+
+**Problem:** When creating a new thread, toggling to "Worktree" mode, and selecting a branch that already has a worktree, the Claude Code session starts in the main repo instead of the existing worktree directory.
+
+**Root cause:** In `BranchToolbarBranchSelector.selectBranch`, the `isSelectingWorktreeBase` early return ran *before* `resolveBranchSelectionTarget`. When in worktree mode on a new thread (`effectiveEnvMode === "worktree" && !activeWorktreePath`), selecting any branch — even one with an existing worktree — called `onSetThreadBranch(branch.name, null)`, discarding the worktree path. The `cwd` then fell back to `project?.cwd` (main repo).
+
+**Fix:** Moved the `resolveBranchSelectionTarget` / `reuseExistingWorktree` check before the `isSelectingWorktreeBase` check, so branches with existing worktrees are always reused regardless of the env mode.
+
+**Affected files:**
+- `apps/web/src/components/BranchToolbarBranchSelector.tsx` — reordered `selectBranch` logic
+
+---
+
 ## 2026-03-27 — Worktree push targets wrong branch
 
 **Problem:** When creating a new worktree and pushing, the push targets `origin/main` instead of the feature branch (e.g. `origin/feature/ITE-308-...`). Users had to manually run `git push -u origin <branch>` for every new worktree.
