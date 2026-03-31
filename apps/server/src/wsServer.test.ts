@@ -1172,20 +1172,18 @@ describe("WebSocket Server", () => {
     expect((open.result as TerminalSessionSnapshot).threadId).toBe("thread-1");
     expect((open.result as TerminalSessionSnapshot).terminalId).toBe(DEFAULT_TERMINAL_ID);
 
-    // terminal.write and terminal.resize are fire-and-forget — no response sent
-    sendFireAndForget(ws, WS_METHODS.terminalWrite, {
+    const write = await sendRequest(ws, WS_METHODS.terminalWrite, {
       threadId: "thread-1",
       data: "echo hello\n",
     });
+    expect(write.error).toBeUndefined();
 
-    sendFireAndForget(ws, WS_METHODS.terminalResize, {
+    const resize = await sendRequest(ws, WS_METHODS.terminalResize, {
       threadId: "thread-1",
       cols: 120,
       rows: 30,
     });
-
-    // Give the server a tick to process fire-and-forget messages
-    await new Promise((r) => setTimeout(r, 50));
+    expect(resize.error).toBeUndefined();
 
     const clear = await sendRequest(ws, WS_METHODS.terminalClear, {
       threadId: "thread-1",

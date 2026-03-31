@@ -19,7 +19,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 1. Added `FIRE_AND_FORGET_METHODS` set; server skips response encoding+sending for claude.write, claude.resize, terminal.write, terminal.resize.
 2. Added `getThreadState` combined dep that does a single `threads.find()` returning both `hookStatus` and `terminalStatus`. Passed known `hookStatus` to `resetWorkingIdleTimer` to avoid redundant store read.
 3. Hoisted `encodeResponse` to module scope alongside `encodePush`.
-4. Reduced scrollback from 200k to 50k lines.
+4. Reduced scrollback from 200k to 150k lines.
 5. Added 200ms safety timeout for scrollback gate on reattached terminals.
 
 **Affected files:**

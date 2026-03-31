@@ -341,8 +341,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const FIRE_AND_FORGET_METHODS: ReadonlySet<string> = new Set([
     WS_METHODS.claudeWrite,
     WS_METHODS.claudeResize,
-    WS_METHODS.terminalWrite,
-    WS_METHODS.terminalResize,
   ]);
   const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
     const message = yield* encodePush(push);
@@ -1470,7 +1468,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     const isFireAndForget = FIRE_AND_FORGET_METHODS.has(request.value.body._tag);
 
     const result = yield* Effect.exit(routeRequest(request.value));
-    if (isFireAndForget) return;
+    if (isFireAndForget) {
+      if (result._tag === "Failure") {
+        yield* Effect.logWarning("fire-and-forget request failed", {
+          method: request.value.body._tag,
+          error: messageFromCause(result.cause),
+        });
+      }
+      return;
+    }
 
     if (result._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
