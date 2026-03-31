@@ -16,7 +16,7 @@ import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { updateThread, useStore } from "../store";
+import { clearBranchUpdatePending, updateThread, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
@@ -335,17 +335,31 @@ function EventRouter() {
         }
       }
 
-      // Eagerly patch thread metadata for background threads so the sidebar
-      // reflects changes without waiting for a full snapshot sync.
-      if (!isCurrentThread && event.type === "thread.meta-updated") {
-        const { threadId, title, titleSource, bookmarked } = event.payload;
-        if (title !== undefined || bookmarked !== undefined) {
+      // Eagerly patch thread metadata so the store reflects changes without
+      // waiting for the full snapshot sync.  Branch/worktreePath are patched
+      // for ALL threads (including the current one) to close the race window
+      // where a stale in-flight snapshot could overwrite an optimistic update.
+      // Title/bookmarked are only patched for background threads.
+      if (event.type === "thread.meta-updated") {
+        const { threadId, title, titleSource, bookmarked, branch, worktreePath } = event.payload;
+
+        if (branch !== undefined || worktreePath !== undefined) {
+          clearBranchUpdatePending(threadId);
+        }
+
+        const hasBranchPatch = branch !== undefined || worktreePath !== undefined;
+        const hasTitlePatch =
+          !isCurrentThread && (title !== undefined || bookmarked !== undefined);
+
+        if (hasBranchPatch || hasTitlePatch) {
           useStore.setState((state) => {
             const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => ({
               ...t,
-              ...(title !== undefined ? { title } : {}),
-              ...(titleSource !== undefined ? { titleSource } : {}),
-              ...(bookmarked !== undefined ? { bookmarked } : {}),
+              ...(branch !== undefined ? { branch } : {}),
+              ...(worktreePath !== undefined ? { worktreePath } : {}),
+              ...(!isCurrentThread && title !== undefined ? { title } : {}),
+              ...(!isCurrentThread && titleSource !== undefined ? { titleSource } : {}),
+              ...(!isCurrentThread && bookmarked !== undefined ? { bookmarked } : {}),
             }));
             return threads === state.threads ? state : { threads };
           });

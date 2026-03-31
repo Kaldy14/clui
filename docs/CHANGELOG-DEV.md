@@ -4,6 +4,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-31 — Fix branch selection reverting after switching on new thread
+
+**Problem:** When clicking a new thread and quickly switching to a different branch/worktree, the selection would revert back to the previous branch after 1-2 seconds.
+
+**Root cause:** Race condition between optimistic branch updates and snapshot syncs. When a new thread is created, the `thread.created` domain event triggers a throttled snapshot sync. If the user changes the branch before that snapshot response returns, `syncServerReadModel` unconditionally overwrites `branch` and `worktreePath` with the stale server values — discarding the user's optimistic update.
+
+**Fix:**
+1. Added a pending-branch-update guard (`pendingBranchUpdates` Map) in `store.ts` — when the user changes branch, a timestamp is recorded per thread. `syncServerReadModel` preserves local branch/worktreePath while the guard is active (up to 5s), clearing it once the server catches up.
+2. Extended the `thread.meta-updated` domain event handler in `__root.tsx` to eagerly patch `branch`/`worktreePath` for ALL threads (not just background ones), and clear the pending guard on receipt — ensuring the store reflects the server-confirmed state as soon as the domain event arrives.
+
+**Affected files:**
+- `apps/web/src/store.ts`
+- `apps/web/src/routes/__root.tsx`
+
+---
+
 ## 2026-03-30 — Terminal typing performance optimizations
 
 **Problem:** Typing in the Claude Code terminal was laggy — keystrokes sometimes didn't appear, there was a multi-second delay when switching threads, and the overall input experience felt sluggish.

@@ -341,6 +341,34 @@ function projectChanged(existing: Project, incoming: Project): boolean {
   return false;
 }
 
+// ── Pending branch-update guard ───────────────────────────────────────
+//
+// When the user changes branch/worktreePath, the optimistic update races
+// with in-flight snapshot syncs that may carry stale server state.  We
+// track a timestamp per thread so syncServerReadModel can preserve the
+// local values until the server catches up.
+
+const pendingBranchUpdates = new Map<string, number>();
+const BRANCH_UPDATE_GUARD_MS = 5_000;
+
+export function markBranchUpdatePending(threadId: string): void {
+  pendingBranchUpdates.set(threadId, Date.now());
+}
+
+export function clearBranchUpdatePending(threadId: string): void {
+  pendingBranchUpdates.delete(threadId);
+}
+
+function hasPendingBranchUpdate(threadId: string): boolean {
+  const ts = pendingBranchUpdates.get(threadId);
+  if (ts === undefined) return false;
+  if (Date.now() - ts > BRANCH_UPDATE_GUARD_MS) {
+    pendingBranchUpdates.delete(threadId);
+    return false;
+  }
+  return true;
+}
+
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
@@ -354,6 +382,19 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
+
+      // If server already reflects the local branch, clear the guard early
+      // so the snapshot values are used as-is.
+      if (
+        existing &&
+        pendingBranchUpdates.has(thread.id) &&
+        thread.branch === existing.branch &&
+        thread.worktreePath === existing.worktreePath
+      ) {
+        pendingBranchUpdates.delete(thread.id);
+      }
+      const preserveLocalBranch = existing != null && hasPendingBranchUpdate(thread.id);
+
       const newThread: Thread = {
         id: thread.id,
         projectId: thread.projectId,
@@ -411,8 +452,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         lastInteractedAt: thread.lastInteractedAt || thread.updatedAt,
         latestTurn: thread.latestTurn,
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
+        branch: preserveLocalBranch ? existing.branch : thread.branch,
+        worktreePath: preserveLocalBranch ? existing.worktreePath : thread.worktreePath,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
           turnId: checkpoint.turnId,
           completedAt: checkpoint.completedAt,
@@ -531,6 +572,7 @@ export function setThreadBranch(
   branch: string | null,
   worktreePath: string | null,
 ): AppState {
+  markBranchUpdatePending(threadId);
   const threads = updateThread(state.threads, threadId, (t) => {
     if (t.branch === branch && t.worktreePath === worktreePath) return t;
     const cwdChanged = t.worktreePath !== worktreePath;
