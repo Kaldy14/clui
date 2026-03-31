@@ -4,6 +4,33 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-03-30 — Terminal typing performance optimizations
+
+**Problem:** Typing in the Claude Code terminal was laggy — keystrokes sometimes didn't appear, there was a multi-second delay when switching threads, and the overall input experience felt sluggish.
+
+**Root cause:** Death by a thousand cuts across the full input/output path:
+1. Server encoded+sent a response for every fire-and-forget keystroke (claude.write, claude.resize) — wasted Schema encode + ws.send per keystroke that the client ignores.
+2. `handleOutput()` ran two separate O(n) `threads.find()` store lookups on every PTY output chunk, plus a third in `resetWorkingIdleTimer`.
+3. `encodeResponse` was allocated inside the per-message handler instead of once at module scope.
+4. xterm.js scrollback buffer was 200,000 lines (~183MB per terminal at full capacity), slowing fit/reflow operations.
+5. No timeout fallback on the scrollback gate for reattached terminals — a slow server response could block the terminal indefinitely.
+
+**Fix:**
+1. Added `FIRE_AND_FORGET_METHODS` set; server skips response encoding+sending for claude.write, claude.resize, terminal.write, terminal.resize.
+2. Added `getThreadState` combined dep that does a single `threads.find()` returning both `hookStatus` and `terminalStatus`. Passed known `hookStatus` to `resetWorkingIdleTimer` to avoid redundant store read.
+3. Hoisted `encodeResponse` to module scope alongside `encodePush`.
+4. Reduced scrollback from 200k to 50k lines.
+5. Added 200ms safety timeout for scrollback gate on reattached terminals.
+
+**Affected files:**
+- `apps/server/src/wsServer.ts` — hoisted encodeResponse, fire-and-forget response skip
+- `apps/web/src/lib/sessionEventState.ts` — combined thread lookup, pass known hookStatus
+- `apps/web/src/routes/__root.tsx` — wire getThreadState dep
+- `apps/web/src/lib/claudeTerminalCache.ts` — scrollback 200k → 50k
+- `apps/web/src/components/ThreadTerminalView.tsx` — scrollback gate timeout fallback
+
+---
+
 ## 2026-03-30 — Existing worktree ignored when creating new thread in worktree mode
 
 **Problem:** When creating a new thread, toggling to "Worktree" mode, and selecting a branch that already has a worktree, the Claude Code session starts in the main repo instead of the existing worktree directory.

@@ -335,6 +335,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   }
 
   const encodePush = Schema.encodeEffect(Schema.fromJsonString(WsPush));
+  const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
+
+  /** Methods where the client uses fireAndForget — skip encoding+sending a response. */
+  const FIRE_AND_FORGET_METHODS: ReadonlySet<string> = new Set([
+    WS_METHODS.claudeWrite,
+    WS_METHODS.claudeResize,
+    WS_METHODS.terminalWrite,
+    WS_METHODS.terminalResize,
+  ]);
   const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
     const message = yield* encodePush(push);
     let recipients = 0;
@@ -1438,8 +1447,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
-    const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
-
     const messageText = websocketRawToString(raw);
     if (messageText === null) {
       const errorResponse = yield* encodeResponse({
@@ -1460,7 +1467,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       return;
     }
 
+    const isFireAndForget = FIRE_AND_FORGET_METHODS.has(request.value.body._tag);
+
     const result = yield* Effect.exit(routeRequest(request.value));
+    if (isFireAndForget) return;
+
     if (result._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: request.value.id,

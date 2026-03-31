@@ -4,6 +4,8 @@ import type { DormantReason } from "../types";
 export interface SessionEventDeps {
   getThreadHookStatus: (rawId: string) => ClaudeHookStatus | null | undefined;
   getThreadTerminalStatus: (rawId: string) => TerminalStatus | undefined;
+  /** Combined lookup — returns both hookStatus and terminalStatus in a single store read. */
+  getThreadState?: (rawId: string) => { hookStatus: ClaudeHookStatus | null | undefined; terminalStatus: TerminalStatus | undefined };
   setHookStatus: (rawId: string, status: ClaudeHookStatus | null) => void;
   setTerminalStatus: (rawId: string, status: TerminalStatus) => void;
   setTerminalLifecycle: (
@@ -96,7 +98,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
 
   const now = deps.now ?? Date.now;
 
-  const resetWorkingIdleTimer = (rawThreadId: string, force = false) => {
+  const resetWorkingIdleTimer = (rawThreadId: string, force = false, knownHookStatus?: ClaudeHookStatus | null | undefined) => {
     if (!force) {
       const lastReset = workingIdleLastReset.get(rawThreadId) ?? 0;
       if (now() - lastReset < IDLE_TIMER_RESET_THROTTLE_MS) return;
@@ -104,7 +106,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     workingIdleLastReset.set(rawThreadId, now());
     const existing = workingIdleTimers.get(rawThreadId);
     if (existing) clearTimeout(existing);
-    const hookStatus = deps.getThreadHookStatus(rawThreadId);
+    const hookStatus = knownHookStatus !== undefined ? knownHookStatus : deps.getThreadHookStatus(rawThreadId);
     if (hookStatus !== "working") return;
     workingIdleTimers.set(
       rawThreadId,
@@ -237,12 +239,15 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   }
 
   function handleOutput(rawThreadId: string, data: string): void {
-    const hookStatus = deps.getThreadHookStatus(rawThreadId);
-    const terminalStatus = deps.getThreadTerminalStatus(rawThreadId);
+    const threadState = deps.getThreadState
+      ? deps.getThreadState(rawThreadId)
+      : { hookStatus: deps.getThreadHookStatus(rawThreadId), terminalStatus: deps.getThreadTerminalStatus(rawThreadId) };
+    const hookStatus = threadState.hookStatus;
+    const terminalStatus = threadState.terminalStatus;
 
     // Reset idle timer -- output means Claude is still working
     if (hookStatus === "working") {
-      resetWorkingIdleTimer(rawThreadId);
+      resetWorkingIdleTimer(rawThreadId, false, hookStatus);
     }
 
     // Recovery from "completed" state: background subagents may produce output

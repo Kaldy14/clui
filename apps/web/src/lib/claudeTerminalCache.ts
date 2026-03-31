@@ -79,7 +79,7 @@ export function createTerminal(): CachedTerminal {
     cursorInactiveStyle: "none",
     lineHeight: 1.2,
     fontSize,
-    scrollback: 200_000,
+    scrollback: 150_000,
     fontFamily,
     theme: terminalThemeFromApp(),
     macOptionIsMeta: true,

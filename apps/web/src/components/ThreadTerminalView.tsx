@@ -653,6 +653,19 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
         flushIfReady();
       });
 
+    // Safety: for reattach (terminal already has content), don't block the
+    // terminal for more than 200ms if the scrollback fetch is slow.  The cached
+    // terminal already displays previous output, so live events can flow while
+    // the delta fills in later (or is skipped entirely).
+    let scrollbackTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (sinceOffset != null) {
+      scrollbackTimeoutId = setTimeout(() => {
+        if (disposed || terminalReady) return;
+        pendingScrollback = pendingScrollback ?? { scrollback: null, offset: null, reset: false };
+        flushIfReady();
+      }, 200);
+    }
+
     // Intercept macOS navigation shortcuts before the browser captures them
     terminal.attachCustomKeyEventHandler((event) => {
       // Cmd+F (Mac) / Ctrl+F (other) — open terminal search
@@ -865,6 +878,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+      if (scrollbackTimeoutId != null) clearTimeout(scrollbackTimeoutId);
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onWheelClearIndicator);
       window.removeEventListener("resize", onWindowResize);

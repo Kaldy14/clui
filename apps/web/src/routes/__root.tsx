@@ -379,6 +379,10 @@ function EventRouter() {
         useStore.getState().threads.find((t) => t.id === rawId)?.hookStatus ?? null,
       getThreadTerminalStatus: (rawId) =>
         useStore.getState().threads.find((t) => t.id === rawId)?.terminalStatus,
+      getThreadState: (rawId) => {
+        const thread = useStore.getState().threads.find((t) => t.id === rawId);
+        return { hookStatus: thread?.hookStatus ?? null, terminalStatus: thread?.terminalStatus };
+      },
       setHookStatus: (rawId, status) =>
         useStore.getState().setHookStatus(ThreadId.makeUnsafe(rawId), status),
       setTerminalStatus: (rawId, status) =>

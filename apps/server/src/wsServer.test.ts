@@ -283,6 +283,20 @@ async function sendRequest(
   }
 }
 
+/** Send a fire-and-forget message (no response expected from server). */
+function sendFireAndForget(
+  ws: WebSocket,
+  method: string,
+  params?: unknown,
+): void {
+  const id = crypto.randomUUID();
+  const body =
+    params && typeof params === "object" && !Array.isArray(params)
+      ? { _tag: method, ...(params as Record<string, unknown>) }
+      : { _tag: method };
+  ws.send(JSON.stringify({ id, body }));
+}
+
 async function waitForPush(
   ws: WebSocket,
   channel: string,
@@ -1158,18 +1172,20 @@ describe("WebSocket Server", () => {
     expect((open.result as TerminalSessionSnapshot).threadId).toBe("thread-1");
     expect((open.result as TerminalSessionSnapshot).terminalId).toBe(DEFAULT_TERMINAL_ID);
 
-    const write = await sendRequest(ws, WS_METHODS.terminalWrite, {
+    // terminal.write and terminal.resize are fire-and-forget — no response sent
+    sendFireAndForget(ws, WS_METHODS.terminalWrite, {
       threadId: "thread-1",
       data: "echo hello\n",
     });
-    expect(write.error).toBeUndefined();
 
-    const resize = await sendRequest(ws, WS_METHODS.terminalResize, {
+    sendFireAndForget(ws, WS_METHODS.terminalResize, {
       threadId: "thread-1",
       cols: 120,
       rows: 30,
     });
-    expect(resize.error).toBeUndefined();
+
+    // Give the server a tick to process fire-and-forget messages
+    await new Promise((r) => setTimeout(r, 50));
 
     const clear = await sendRequest(ws, WS_METHODS.terminalClear, {
       threadId: "thread-1",
@@ -1753,12 +1769,15 @@ describe("WebSocket Server", () => {
       connections.push(ws);
       await waitForMessage(ws); // welcome
 
-      const response = await sendRequest(ws, WS_METHODS.claudeWrite, {
+      // claude.write is fire-and-forget — no response sent
+      sendFireAndForget(ws, WS_METHODS.claudeWrite, {
         threadId: "thread-1",
         data: "hello world",
       });
 
-      expect(response.error).toBeUndefined();
+      // Give the server a tick to process the message
+      await new Promise((r) => setTimeout(r, 50));
+
       expect(calls).toHaveLength(1);
       expect(calls[0]!.method).toBe("writeToSession");
       expect(calls[0]!.args[0]).toBe("thread-1");
@@ -1775,13 +1794,16 @@ describe("WebSocket Server", () => {
       connections.push(ws);
       await waitForMessage(ws); // welcome
 
-      const response = await sendRequest(ws, WS_METHODS.claudeResize, {
+      // claude.resize is fire-and-forget — no response sent
+      sendFireAndForget(ws, WS_METHODS.claudeResize, {
         threadId: "thread-1",
         cols: 120,
         rows: 40,
       });
 
-      expect(response.error).toBeUndefined();
+      // Give the server a tick to process the message
+      await new Promise((r) => setTimeout(r, 50));
+
       expect(calls).toHaveLength(1);
       expect(calls[0]!.method).toBe("resizeSession");
       expect(calls[0]!.args[0]).toBe("thread-1");
