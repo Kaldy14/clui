@@ -4,6 +4,19 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-14 — GitHub Release `v0.0.18` (includes unshipped `main` work)
+
+**Problem:** `v0.0.17` was cut from `main` before the large “pi agent” change set landed in git, so that release did not ship the latest code. Package versions on `main` were still `0.0.16` because the earlier release’s finalize step had not successfully bumped them.
+
+**Root cause:** Release tags point at whatever commit is current when the tag is pushed; local work only enters a release after it is committed and included in the tagged commit.
+
+**Fix:** Pushed annotated tag `v0.0.18` at `92b55cc` (“pi agent”) so the desktop release workflow builds from that tree. The workflow’s finalize job should bump `apps/server`, `apps/desktop`, `apps/web`, and `packages/contracts` to `0.0.18` after assets publish.
+
+**Affected files:**
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-14 — Release workflow: finalize job checked out non-existent `master`
 
 **Problem:** Pushing a `v*.*.*` tag runs `.github/workflows/release.yml`, whose `finalize` job checks out `ref: master` before bumping package versions and pushing to `main`. This repository only has `main`, so checkout could fail and block automated version bumps after a GitHub Release.
@@ -646,16 +659,5 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 **Root cause:** `setupProjectScript()` was defined and tested in `projectScripts.ts` but never imported or called in the worktree creation flow. `ThreadTerminalView.tsx`'s `handleStart` created the worktree and started the Claude session without checking for setup scripts.
 
-**Fix:** After worktree creation in `handleStart`, call `setupProjectScript()` to find the configured setup script and `runProjectScriptInTerminal()` to execute it in the new worktree.
 
-**Affected files:**
-- `apps/web/src/components/ThreadTerminalView.tsx` — import and call `setupProjectScript` + `runProjectScriptInTerminal` after worktree creation
-
----
-
-## 2026-03-23 — Fix terminal scroll jump regression (xterm.js v6 viewport change)
-
-**Problem:** When scrolling through Claude Code session history, new output from Claude would kick the user to the top of the terminal, losing their scroll position. This was a regression of a previously working fix (commit e312b82).
-
-
-[Showing lines 1-645 of 662 (50.0KB limit). Use offset=646 to continue.]
+[Showing lines 1-648 of 661 (50.0KB limit). Use offset=649 to continue.]
