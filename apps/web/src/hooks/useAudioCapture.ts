@@ -45,7 +45,6 @@ export function useAudioCapture(): UseAudioCaptureReturn {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const chunksRef = useRef<Float32Array[]>([]);
   const animFrameRef = useRef<number | null>(null);
-  const stopResolveRef = useRef<((audio: Float32Array) => void) | null>(null);
   const stoppedRef = useRef(false);
 
   const stopLevelLoop = useCallback(() => {
@@ -159,7 +158,7 @@ export function useAudioCapture(): UseAudioCaptureReturn {
         err instanceof Error ? err.message : "Failed to start recording";
       setError(msg);
     }
-  }, [startLevelLoop, stopLevelLoop]);
+  }, [startLevelLoop]);
 
   const stopRecording = useCallback((): Promise<Float32Array> => {
     return new Promise<Float32Array>((resolve, reject) => {

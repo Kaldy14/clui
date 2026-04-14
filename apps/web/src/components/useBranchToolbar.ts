@@ -40,10 +40,14 @@ export function useBranchToolbar(threadId: ThreadId) {
           })
           .catch(() => undefined);
       }
-      // Hibernate the claude terminal when cwd changes so it restarts in the
+      // Hibernate the active harness terminal when cwd changes so it restarts in the
       // new worktree directory on next interaction.
       if (worktreePath !== activeWorktreePath && api) {
-        void api.claude.hibernate({ threadId: activeThreadId }).catch(() => undefined);
+        const hibernate =
+          serverThread?.harness === "pi"
+            ? api.pi.hibernate({ threadId: activeThreadId })
+            : api.claude.hibernate({ threadId: activeThreadId });
+        void hibernate.catch(() => undefined);
       }
       if (api && hasServerThread) {
         void api.orchestration.dispatchCommand({
@@ -61,6 +65,7 @@ export function useBranchToolbar(threadId: ThreadId) {
     [
       activeThreadId,
       serverThread?.session,
+      serverThread?.harness,
       activeWorktreePath,
       hasServerThread,
       setThreadBranchAction,

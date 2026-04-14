@@ -105,11 +105,7 @@ export class WsTransport {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("Transport disposed"));
-    }
-    this.pending.clear();
+    this.rejectPending("Transport disposed");
     this.ws?.close();
     this.ws = null;
   }
@@ -130,6 +126,7 @@ export class WsTransport {
 
     ws.addEventListener("close", () => {
       this.ws = null;
+      this.rejectPending("Connection lost");
       this.scheduleReconnect();
     });
 
@@ -206,6 +203,14 @@ export class WsTransport {
       }, 50);
     };
     waitForOpen();
+  }
+
+  private rejectPending(reason: string) {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(reason));
+    }
+    this.pending.clear();
   }
 
   private scheduleReconnect() {

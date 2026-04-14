@@ -108,6 +108,10 @@ export function SpeechControl({ threadId }: { threadId: string }) {
   if (status === "recording") {
     const barHeights = [0.4, 0.7, 1.0, 0.7, 0.5];
     const delays = ["0ms", "100ms", "200ms", "150ms", "250ms"];
+    const recordingBars = barHeights.map((baseHeight, i) => ({
+      baseHeight,
+      delay: delays[i]!,
+    }));
     return (
       <button
         type="button"
@@ -118,15 +122,15 @@ export function SpeechControl({ threadId }: { threadId: string }) {
         <SquareIcon className="size-2.5 fill-red-500 text-red-500" aria-hidden="true" />
         <MicIcon className="size-3 animate-pulse-mic text-red-500" aria-hidden="true" />
         <span className="flex items-end gap-px" aria-hidden="true">
-          {barHeights.map((baseHeight, i) => (
+          {recordingBars.map(({ baseHeight, delay }) => (
             <span
-              key={i}
+              key={delay}
               className="w-0.5 rounded-full bg-red-500"
               style={{
                 height: "12px",
                 transform: `scaleY(${Math.max(0.2, baseHeight * (0.4 + audioLevel * 0.6))})`,
                 transformOrigin: "bottom",
-                animationDelay: delays[i],
+                animationDelay: delay,
                 transition: "transform 80ms ease-out",
               }}
             />

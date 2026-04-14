@@ -447,11 +447,10 @@ export default function TerminalToolbar({
 
   const handleYoloToggle = useCallback(async (enable: boolean) => {
     const api = readNativeApi();
-    if (!api || !thread) return;
+    if (!api || !thread || thread.harness !== "claudeCode") return;
     const cwd = thread.worktreePath ?? project?.cwd ?? "";
     if (!cwd) return;
     setYoloMode(threadId, enable);
-    // Restart the session with --resume so context is preserved
     const cached = claudeCache.get(threadId);
     const cols = cached?.terminal.cols ?? 120;
     const rows = cached?.terminal.rows ?? 40;
@@ -465,7 +464,6 @@ export default function TerminalToolbar({
         ...(enable ? { dangerouslySkipPermissions: true } : {}),
       });
     } catch {
-      // Revert on failure
       setYoloMode(threadId, !enable);
     }
   }, [threadId, thread, project, setYoloMode]);
@@ -475,20 +473,22 @@ export default function TerminalToolbar({
     if (!api || !thread) return;
     const cwd = thread.worktreePath ?? project?.cwd ?? "";
     if (!cwd) return;
-    // Don't dispose the cached terminal — ActiveTerminalView will reuse it,
-    // preserving full client-side scrollback (matches DormantTerminalView behavior).
     const cached = claudeCache.get(threadId);
     const cols = cached?.terminal.cols ?? 120;
     const rows = cached?.terminal.rows ?? 40;
     try {
-      await api.claude.start({
-        threadId,
-        cwd,
-        cols,
-        rows,
-        resumeSessionId: thread.claudeSessionId ?? undefined,
-        ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
-      });
+      if (thread.harness === "pi") {
+        await api.pi.start({ threadId, cwd, cols, rows });
+      } else {
+        await api.claude.start({
+          threadId,
+          cwd,
+          cols,
+          rows,
+          resumeSessionId: thread.claudeSessionId ?? undefined,
+          ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
+        });
+      }
     } catch {
       // Start failure handled by ThreadTerminalView
     }
@@ -567,6 +567,8 @@ export default function TerminalToolbar({
         )}
 
         {/* YOLO mode toggle */}
+        {thread.harness === "claudeCode" ? (
+          <>
         <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
         <Popover>
           <Tooltip>
@@ -631,6 +633,8 @@ export default function TerminalToolbar({
             </div>
           </PopoverPopup>
         </Popover>
+          </>
+        ) : null}
 
         {/* Separator before terminal actions */}
         {isDormant && (
@@ -669,13 +673,23 @@ export default function TerminalToolbar({
                       const cwd = thread.worktreePath ?? project?.cwd ?? "";
                       if (!cwd) return;
                       claudeCache.dispose(threadId);
-                      void api.claude.start({
-                        threadId,
-                        cwd,
-                        cols: 120,
-                        rows: 40,
-                        ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
-                      });
+                      if (thread.harness === "pi") {
+                        void api.pi.start({
+                          threadId,
+                          cwd,
+                          cols: 120,
+                          rows: 40,
+                          fresh: true,
+                        });
+                      } else {
+                        void api.claude.start({
+                          threadId,
+                          cwd,
+                          cols: 120,
+                          rows: 40,
+                          ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
+                        });
+                      }
                     }}
                     className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
                   />

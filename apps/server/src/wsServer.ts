@@ -12,10 +12,12 @@ import type { Duplex } from "node:stream";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
+  DEFAULT_CODING_HARNESS,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   type ClientOrchestrationCommand,
   type ClaudeSessionEvent,
+  type PiSessionEvent,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -51,6 +53,8 @@ import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { ClaudeSessionManager } from "./terminal/Services/ClaudeSession.ts";
+import { PiSessionManager } from "./terminal/Services/PiSession.ts";
+import { advancePiWritePromptBuffer } from "./piWritePromptBuffer";
 import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
@@ -266,6 +270,7 @@ export type ServerRuntimeServices =
   | TextGeneration
   | TerminalManager
   | ClaudeSessionManager
+  | PiSessionManager
   | Keybindings
   | Open
   | AnalyticsService
@@ -307,6 +312,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const terminalManager = yield* TerminalManager;
   const claudeSessionManager = yield* ClaudeSessionManager;
+  const piSessionManager = yield* PiSessionManager;
   const keybindingsManager = yield* Keybindings;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -341,6 +347,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const FIRE_AND_FORGET_METHODS: ReadonlySet<string> = new Set([
     WS_METHODS.claudeWrite,
     WS_METHODS.claudeResize,
+    WS_METHODS.piWrite,
+    WS_METHODS.piResize,
   ]);
   const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
     const message = yield* encodePush(push);
@@ -478,6 +486,55 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   // Track threads that have already been auto-titled (in-memory, per server session)
   const autoTitledThreads = new Set<string>();
+  const pendingPiPromptBuffers = new Map<string, string>();
+
+  const dispatchPiAutoTitleIfNeeded = (threadId: string, promptText: string): void => {
+    if (autoTitledThreads.has(threadId)) return;
+    autoTitledThreads.add(threadId);
+
+    const fallbackTitle =
+      promptText.length <= 50 ? promptText : `${promptText.slice(0, 49)}\u2026`;
+
+    void Effect.runPromise(
+      textGeneration
+        .generateThreadTitle({ promptText })
+        .pipe(
+          Effect.map(({ title }) => title),
+          Effect.catch((error) => {
+            logger.warn("pi auto-title AI failed, using fallback", { threadId, error: String(error) });
+            return Effect.succeed(fallbackTitle);
+          }),
+          Effect.flatMap((title) =>
+            orchestrationEngine.dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+              threadId: ThreadId.makeUnsafe(threadId),
+              title,
+              titleSource: "auto",
+            }),
+          ),
+          Effect.catch((error) => {
+            autoTitledThreads.delete(threadId);
+            return Effect.logError("pi auto-title dispatch failed", { cause: error });
+          }),
+        ),
+    );
+  };
+
+  const handlePiWriteBuffers = (threadId: string, data: string): void => {
+    const adv = advancePiWritePromptBuffer(pendingPiPromptBuffers, threadId, data);
+    if (adv.kind !== "submitted") return;
+    void Effect.runPromise(
+      piSessionManager.notifyPromptSubmitted(threadId).pipe(
+        Effect.catch((error: unknown) =>
+          Effect.logWarning("pi prompt submit hook failed", { cause: error }),
+        ),
+      ),
+    );
+    if (!autoTitledThreads.has(threadId)) {
+      dispatchPiAutoTitleIfNeeded(threadId, adv.firstLineStripped);
+    }
+  };
 
   // Track pending approval requestIds per thread so we can dispatch matching
   // approval.resolved activities when post-tool-use or stop hooks fire.
@@ -987,6 +1044,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           projectId: bootstrapProjectId,
           title: "New thread",
           model: bootstrapProjectDefaultModel,
+          harness: DEFAULT_CODING_HARNESS,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",
           branch: null,
@@ -1074,16 +1132,70 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeClaudeEvents()));
 
+  const onPiSessionEvent = Effect.fnUntraced(function* (event: PiSessionEvent) {
+    yield* broadcastPush({
+      type: "push",
+      channel: WS_CHANNELS.piSessionEvent,
+      data: event,
+    });
+
+    if (event.type === "started") {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.terminal.statusChanged",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: ThreadId.makeUnsafe(event.threadId),
+        terminalStatus: "active",
+        claudeSessionId: null,
+        scrollbackSnapshot: null,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (event.type === "hibernated" || event.type === "exited") {
+      const scrollbackResult = yield* piSessionManager.getScrollback(event.threadId);
+      yield* orchestrationEngine.dispatch({
+        type: "thread.terminal.statusChanged",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: ThreadId.makeUnsafe(event.threadId),
+        terminalStatus: "dormant",
+        claudeSessionId: null,
+        scrollbackSnapshot: scrollbackResult.scrollback,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  });
+
+  const unsubscribePiEvents = yield* piSessionManager.subscribe(
+    (event) =>
+      void Effect.runPromise(
+        onPiSessionEvent(event).pipe(
+          Effect.catch((error) =>
+            Effect.logError("pi session event handler failed", { cause: error }),
+          ),
+        ),
+      ),
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribePiEvents()));
+
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
+
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
 
   // Phase 5: Graceful shutdown — hibernate all sessions BEFORE closing connections
   yield* Effect.addFinalizer(() =>
-    claudeSessionManager.hibernateAll().pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to hibernate claude sessions on shutdown", { cause: error }),
+    Effect.all([
+      claudeSessionManager.hibernateAll().pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to hibernate claude sessions on shutdown", { cause: error }),
+        ),
       ),
+      piSessionManager.hibernateAll().pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to hibernate pi sessions on shutdown", { cause: error }),
+        ),
+      ),
+    ]).pipe(
       Effect.andThen(
         Effect.all([
           closeAllClients,
@@ -1110,6 +1222,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         // Phase 5: Kill active PTY after thread deletion is committed
         if (normalizedCommand.type === "thread.delete") {
           yield* claudeSessionManager.destroySession(normalizedCommand.threadId);
+          yield* piSessionManager.destroySession(normalizedCommand.threadId);
+          pendingPiPromptBuffers.delete(normalizedCommand.threadId);
+          autoTitledThreads.delete(normalizedCommand.threadId);
         }
 
         return result;
@@ -1384,6 +1499,63 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* claudeSessionManager.resizeSession(threadId, cols, rows);
       }
 
+      case WS_METHODS.piStart: {
+        const { threadId, cwd: requestedCwd, cols, rows, fresh } = stripRequestTag(request.body);
+
+        const resolvedCwd = path.resolve(requestedCwd);
+        const resolvedRoot = path.resolve(cwd);
+        const isUnderRoot =
+          resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
+        if (!isUnderRoot) {
+          const snapshot = yield* projectionReadModelQuery.getSnapshot();
+          const thread = snapshot.threads.find((t) => t.id === threadId);
+          const threadWorktree = thread?.worktreePath ? path.resolve(thread.worktreePath) : null;
+          const isThreadWorktree =
+            threadWorktree != null &&
+            (resolvedCwd === threadWorktree || resolvedCwd.startsWith(`${threadWorktree}/`));
+          if (!isThreadWorktree) {
+            return yield* new RouteRequestError({
+              message: `cwd must be within workspace root: ${cwd}`,
+            });
+          }
+        }
+
+        return yield* piSessionManager.startSession({
+          threadId,
+          cwd: resolvedCwd,
+          cols,
+          rows,
+          ...(fresh !== undefined ? { fresh } : {}),
+        });
+      }
+
+      case WS_METHODS.piHibernate: {
+        const body = stripRequestTag(request.body);
+        return yield* piSessionManager.hibernateSession(body.threadId);
+      }
+
+      case WS_METHODS.piGetScrollback: {
+        const body = stripRequestTag(request.body);
+        const result = yield* piSessionManager.getScrollback(body.threadId, body.sinceOffset);
+        return {
+          threadId: body.threadId,
+          scrollback: result.scrollback,
+          offset: result.offset,
+          reset: result.reset,
+        };
+      }
+
+      case WS_METHODS.piWrite: {
+        const { threadId, data } = stripRequestTag(request.body);
+        handlePiWriteBuffers(threadId, data);
+        return yield* piSessionManager.writeToSession(threadId, data);
+      }
+
+      case WS_METHODS.piResize: {
+        const { threadId, cols, rows } = stripRequestTag(request.body);
+        return yield* piSessionManager.resizeSession(threadId, cols, rows);
+      }
+
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         return {
@@ -1408,7 +1580,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         logger.info("purge inactive sessions: starting", { excludeCount: excludeSet.size });
 
         // Kill dormant PTY sessions
-        const sessionsKilled = yield* claudeSessionManager.purgeInactiveSessions(excludeSet);
+        const claudeSessionsKilled = yield* claudeSessionManager.purgeInactiveSessions(excludeSet);
+        const piSessionsKilled = yield* piSessionManager.purgeInactiveSessions(excludeSet);
+        const sessionsKilled = claudeSessionsKilled + piSessionsKilled;
 
         // Clear scrollback snapshots in SQLite
         const snapshotsCleared = yield* projectionThreadRepository.clearScrollbackSnapshotBulk({

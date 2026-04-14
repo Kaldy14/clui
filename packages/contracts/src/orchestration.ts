@@ -34,6 +34,8 @@ export const ORCHESTRATION_WS_CHANNELS = {
 
 export const ProviderKind = Schema.Literals(["codex", "claudeCode", "cursor"]);
 export type ProviderKind = typeof ProviderKind.Type;
+export const CodingHarness = Schema.Literals(["claudeCode", "pi"]);
+export type CodingHarness = typeof CodingHarness.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
@@ -48,6 +50,7 @@ export const ProviderSandboxMode = Schema.Literals([
 ]);
 export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
+export const DEFAULT_CODING_HARNESS: CodingHarness = "claudeCode";
 const CodexProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyString),
   homePath: Schema.optional(TrimmedNonEmptyString),
@@ -304,6 +307,7 @@ export const OrchestrationThread = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
+  harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -378,6 +382,7 @@ const ThreadCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
+  harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -399,6 +404,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
+  harness: Schema.optional(CodingHarness),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),
@@ -708,6 +714,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
+  harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -727,6 +734,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
+  harness: Schema.optional(CodingHarness),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),

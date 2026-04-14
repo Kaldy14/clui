@@ -382,12 +382,20 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       const createdAt = new Date().toISOString();
       const branch = options?.branch ?? null;
       const worktreePath = options?.worktreePath ?? null;
+      const harness = appSettings.defaultCodingHarness;
+      const project = projects.find((entry) => entry.id === projectId);
+      const model =
+        project?.model ??
+        (harness === "claudeCode"
+          ? DEFAULT_MODEL_BY_PROVIDER.claudeCode
+          : DEFAULT_MODEL_BY_PROVIDER.codex);
 
       // Add thread optimistically so the route has it immediately
       addOptimisticThread({
         id: threadId,
         projectId,
         title: "New thread",
+        harness,
         branch,
         worktreePath,
         createdAt,
@@ -399,7 +407,8 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         threadId,
         projectId,
         title: "New thread",
-        model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        model,
+        harness,
         runtimeMode: DEFAULT_RUNTIME_MODE,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         branch,
@@ -412,7 +421,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         params: { threadId },
       });
     },
-    [navigate, addOptimisticThread],
+    [appSettings.defaultCodingHarness, navigate, addOptimisticThread, projects],
   );
 
   const focusMostRecentThreadForProject = useCallback(

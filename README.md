@@ -1,14 +1,15 @@
 # Clui
 
-> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code CLI.
+> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code and pi.
 
 ## What is this?
 
-Clui wraps Claude Code CLI in a proper desktop app with project organization, conversation threads, and git workflow — without replacing the CLI itself. Every thread is a real terminal running `claude`, so you get the full CLI experience with a UI layer on top.
+Clui wraps terminal-native coding agents in a proper desktop app with project organization, conversation threads, and git workflow — without replacing the CLI itself. Each thread is a real terminal running its selected coding harness, currently `claude` or `pi`.
 
-- **Projects with threads** — organize Claude conversations by project. Each thread gets its own branch/worktree.
-- **Real terminal, not a chat UI** — xterm.js + node-pty. What you see is what Claude Code actually outputs.
-- **Resume anywhere** — dormant threads save scrollback to SQLite and resume via `claude --resume`.
+- **Projects with threads** — organize coding sessions by project. Each thread gets its own branch/worktree.
+- **Selectable coding harnesses** — every thread persists its harness (`claudeCode` or `pi`), and Settings can choose the default for new threads.
+- **Real terminal, not a chat UI** — xterm.js + node-pty. What you see is what the underlying CLI actually outputs.
+- **Resume anywhere** — dormant threads save scrollback to SQLite. Claude threads resume via `claude --resume`; pi threads resume from a deterministic per-thread `--session-dir` with automatic `-c` reuse.
 - **Git workflow built in** — branch management, commit, push, and PR creation from the sidebar.
 - **Smart resource management** — configurable cap on active terminals with LRU hibernation. Hundreds of dormant threads, near-zero resource cost.
 - **Auto-update** — the app checks for updates and lets you download + install from within the sidebar.
@@ -35,7 +36,7 @@ Clui wouldn't exist without these projects:
 - **[t3code](https://github.com/pingdotgg/t3code)** — Clui is a fork of t3code. The project sidebar, thread organization, branch/worktree management, and git workflow all originate from their work. Huge thanks to the Ping team for building such a solid foundation.
 - **[cmux](https://github.com/alanxoc3/cmux)** — inspiration for the terminal multiplexer approach to managing multiple Claude sessions.
 
-The core idea: t3code's project management UI is excellent, but the Agent SDK chat interface misses many features the CLI has natively. Rather than bridging the gap with abstraction layers, Clui runs Claude Code CLI directly — it already handles conversation history, tool use, context management, and everything else out of the box.
+The core idea: t3code's project management UI is excellent, but the Agent SDK chat interface misses many features terminal-native agents already have. Rather than bridging the gap with abstraction layers, Clui runs the real CLIs directly inside thread terminals.
 
 ## Tech Stack
 
@@ -57,7 +58,7 @@ See [CLAUDE.md](./CLAUDE.md) for architecture details and development commands.
 
 ## Future
 
-Post-MVP, Clui aims to support multiple CLI agents — Codex CLI, GitHub Copilot CLI, etc. The terminal-first architecture makes this straightforward since every CLI tool works in a terminal.
+Clui has started that multi-harness path with Claude Code and pi. Post-MVP, it aims to broaden support further — Codex CLI, GitHub Copilot CLI, Aider, and other terminal-native agents.
 
 ## Disclaimer
 

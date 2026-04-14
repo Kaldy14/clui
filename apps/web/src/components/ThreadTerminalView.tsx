@@ -1,12 +1,12 @@
-import { type ThreadId } from "@clui/contracts";
-import type { ClaudeSessionEvent } from "@clui/contracts";
+import { type NativeApi, type ThreadId } from "@clui/contracts";
+import type { ClaudeSessionEvent, PiSessionEvent } from "@clui/contracts";
 import { PlayIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import * as claudeCache from "../lib/claudeTerminalCache";
-import { isMacPlatform } from "../lib/utils";
+import { isMacPlatform, newCommandId } from "../lib/utils";
 import { setupProjectScript } from "../projectScripts";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
@@ -44,6 +44,63 @@ function setWorktreeBranchPrefix(projectCwd: string, prefix: string): void {
   } catch { /* best-effort */ }
 }
 
+type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
+
+function startHarnessSession(
+  api: NativeApi,
+  thread: Thread,
+  input: { cwd: string; cols: number; rows: number; fresh?: boolean; yoloMode?: boolean },
+): Promise<void> {
+  if (thread.harness === "pi") {
+    return api.pi.start({
+      threadId: thread.id,
+      cwd: input.cwd,
+      cols: input.cols,
+      rows: input.rows,
+      ...(input.fresh ? { fresh: true } : {}),
+    });
+  }
+
+  return api.claude.start({
+    threadId: thread.id,
+    cwd: input.cwd,
+    cols: input.cols,
+    rows: input.rows,
+    resumeSessionId: thread.claudeSessionId ?? undefined,
+    ...(input.yoloMode ? { dangerouslySkipPermissions: true } : {}),
+  });
+}
+
+function getHarnessScrollback(
+  api: NativeApi,
+  thread: Thread,
+  input: { threadId: ThreadId; sinceOffset?: number },
+): Promise<{ threadId: string; scrollback: string | null; offset: number; reset?: boolean }> {
+  return thread.harness === "pi"
+    ? api.pi.getScrollback(input)
+    : api.claude.getScrollback(input);
+}
+
+function subscribeHarnessSessionEvents(
+  api: NativeApi,
+  thread: Thread,
+  callback: (event: HarnessSessionEvent) => void,
+): () => void {
+  return thread.harness === "pi" ? api.pi.onSessionEvent(callback) : api.claude.onSessionEvent(callback);
+}
+
+function writeHarnessData(api: NativeApi, thread: Thread, data: string): Promise<void> {
+  return thread.harness === "pi"
+    ? api.pi.write({ threadId: thread.id, data })
+    : api.claude.write({ threadId: thread.id, data });
+}
+
+function resizeHarnessSession(api: NativeApi, thread: Thread, cols: number, rows: number): Promise<void> {
+  return thread.harness === "pi"
+    ? api.pi.resize({ threadId: thread.id, cols, rows })
+    : api.claude.resize({ threadId: thread.id, cols, rows });
+}
+
 // ── NewThreadView ─────────────────────────────────────────────────────
 
 function NewThreadView({
@@ -65,6 +122,7 @@ function NewThreadView({
   const [prInitialReference, setPrInitialReference] = useState<string | null>(null);
   const project = useStore((s) => s.projects.find((p) => p.id === thread.projectId));
   const branchToolbar = useBranchToolbar(threadId);
+  const setThreadHarness = useStore((s) => s.setThreadHarness);
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
   const projectCwd = project?.cwd ?? "";
   const [branchPrefix, setBranchPrefix] = useState(() => getWorktreeBranchPrefix(projectCwd));
@@ -103,21 +161,45 @@ function NewThreadView({
       if (!startCwd) return;
       // cols/rows are initial defaults — ActiveTerminalView sends a corrective
       // resize with actual container dimensions immediately after mounting.
-      await api.claude.start({
-        threadId,
+      await startHarnessSession(api, thread, {
         cwd: startCwd,
         cols: 120,
         rows: 40,
-        ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions } : {}),
+        yoloMode: dangerouslySkipPermissions,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start session");
       setStarting(false);
     }
-  }, [threadId, cwd, isWorktreePending, thread.branch, project?.cwd, branchToolbar, trimmedWorktreeBranch, dangerouslySkipPermissions]);
+  }, [
+    thread,
+    threadId,
+    cwd,
+    isWorktreePending,
+    project,
+    branchToolbar,
+    trimmedWorktreeBranch,
+    dangerouslySkipPermissions,
+  ]);
 
   const showBranchInput = isWorktreePending && !!thread.branch;
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleHarnessChange = useCallback(
+    (harness: Thread["harness"]) => {
+      if (thread.terminalStatus !== "new") return;
+      const api = readNativeApi();
+      setThreadHarness(threadId, harness);
+      if (!api) return;
+      void api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: newCommandId(),
+        threadId,
+        harness,
+      });
+    },
+    [setThreadHarness, thread.terminalStatus, threadId],
+  );
 
   // Auto-focus container so Enter works immediately
   useEffect(() => {
@@ -152,7 +234,9 @@ function NewThreadView({
 
         {/* Copy — fixed height to prevent shift */}
         <div className="flex h-10 flex-col items-center justify-center gap-1.5 text-center">
-          <h2 className="text-sm font-medium text-foreground/90">New Claude Session</h2>
+          <h2 className="text-sm font-medium text-foreground/90">
+            {thread.harness === "pi" ? "New pi Session" : "New Claude Code Session"}
+          </h2>
           <p
             className="max-w-xs truncate font-mono text-[11px] text-muted-foreground/60 transition-opacity duration-200"
             title={isWorktreePending && thread.branch ? `Worktree from ${thread.branch}` : cwd}
@@ -243,16 +327,46 @@ function NewThreadView({
           </div>
         )}
 
+        <div className="flex w-full flex-col gap-2 animate-fade-in-up-delay">
+          <span className="text-center text-[11px] uppercase tracking-wide text-muted-foreground/60">
+            Coding harness
+          </span>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { value: "claudeCode" as const, label: "Claude Code" },
+              { value: "pi" as const, label: "pi" },
+            ].map((option) => {
+              const selected = thread.harness === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleHarnessChange(option.value)}
+                  className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    selected
+                      ? "border-primary/60 bg-primary/8 text-foreground"
+                      : "border-border/40 bg-background/80 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Auto-accept toggle */}
-        <label className={`flex items-center gap-2 text-xs animate-fade-in-up-delay ${dangerouslySkipPermissions ? "text-red-500" : "text-muted-foreground/70"}`}>
-          <input
-            type="checkbox"
-            checked={dangerouslySkipPermissions}
-            onChange={(e) => setYolo(e.target.checked)}
-            className="size-3.5 rounded border-border/40 accent-red-500"
-          />
-          <span>{dangerouslySkipPermissions ? "YOLO mode" : "YOLO mode"}</span>
-        </label>
+        {thread.harness === "claudeCode" ? (
+          <label className={`flex items-center gap-2 text-xs animate-fade-in-up-delay ${dangerouslySkipPermissions ? "text-red-500" : "text-muted-foreground/70"}`}>
+            <input
+              type="checkbox"
+              checked={dangerouslySkipPermissions}
+              onChange={(e) => setYolo(e.target.checked)}
+              className="size-3.5 rounded border-border/40 accent-red-500"
+            />
+            <span>YOLO mode</span>
+          </label>
+        ) : null}
 
         {/* Launch button */}
         <button
@@ -270,7 +384,7 @@ function NewThreadView({
           ) : (
             <>
               <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
-              Start Claude
+              {thread.harness === "pi" ? "Start pi" : "Start Claude Code"}
             </>
           )}
         </button>
@@ -381,7 +495,7 @@ function DormantTerminalView({
       writePendingIfReady();
     });
 
-    void api.claude.getScrollback({ threadId }).then((result) => {
+    void getHarnessScrollback(api, thread, { threadId }).then((result) => {
       if (disposed) return;
       pendingData = { scrollback: result.scrollback, offset: result.offset ?? null };
       writePendingIfReady();
@@ -395,7 +509,7 @@ function DormantTerminalView({
       // and we don't want stale scrollback accumulating in memory.
       claudeCache.dispose(threadId);
     };
-  }, [threadId]);
+  }, [thread, threadId]);
 
   // Focus the Resume button on mount so keyboard users have an obvious target.
   useEffect(() => {
@@ -415,19 +529,17 @@ function DormantTerminalView({
       const cached = claudeCache.get(threadId);
       const cols = cached?.terminal.cols ?? 120;
       const rows = cached?.terminal.rows ?? 40;
-      await api.claude.start({
-        threadId,
+      await startHarnessSession(api, thread, {
         cwd,
         cols,
         rows,
-        resumeSessionId: thread.claudeSessionId ?? undefined,
-        ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
+        yoloMode,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resume session");
       setResuming(false);
     }
-  }, [threadId, cwd, thread.claudeSessionId, yoloMode]);
+  }, [thread, threadId, cwd, yoloMode]);
 
   // Auto-resume on mount. Cooldown guard prevents infinite loops when
   // --resume fails (stale session → immediate exit → remount cycle).
@@ -479,7 +591,7 @@ function DormantTerminalView({
 
 // ── ActiveTerminalView ────────────────────────────────────────────────
 
-function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
+function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: Thread }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showNewOutput, setShowNewOutput] = useState(false);
@@ -499,7 +611,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     // Writing before fit produces content at stale dimensions — TUI escape
     // sequences with hardcoded cursor positions can't be reflowed by xterm.js,
     // causing permanent overlapping/garbled lines when switching threads.
-    const eventBuffer: ClaudeSessionEvent[] = [];
+    const eventBuffer: HarnessSessionEvent[] = [];
     let terminalReady = false;
     let fitComplete = false;
     let pendingScrollback: { scrollback: string | null; offset: number | null; reset: boolean } | null = null;
@@ -561,7 +673,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       }
     };
 
-    const writeEvent = (event: ClaudeSessionEvent) => {
+    const writeEvent = (event: HarnessSessionEvent) => {
       if (event.threadId !== threadId) return;
       switch (event.type) {
         case "output":
@@ -625,7 +737,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       eventBuffer.length = 0;
     };
 
-    const unsubscribe = api.claude.onSessionEvent((event) => {
+    const unsubscribe = subscribeHarnessSessionEvents(api, thread, (event) => {
       if (event.threadId !== threadId) return;
       if (!terminalReady) {
         eventBuffer.push(event);
@@ -639,8 +751,9 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     // terminal already has scrollback (lastServerOffset > 0), request only the
     // delta to avoid resetting the terminal and losing old scrollback history.
     const sinceOffset = entry.lastServerOffset > 0 ? entry.lastServerOffset : undefined;
-    void api.claude
-      .getScrollback({ threadId, sinceOffset })
+    const scrollbackRequest =
+      sinceOffset != null ? { threadId, sinceOffset } : { threadId };
+    void getHarnessScrollback(api, thread, scrollbackRequest)
       .then((result) => {
         if (disposed) return;
         pendingScrollback = { scrollback: result.scrollback, offset: result.offset ?? null, reset: result.reset ?? false };
@@ -686,14 +799,14 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (navigationData !== null) {
         event.preventDefault();
         event.stopPropagation();
-        void api.claude.write({ threadId, data: navigationData }).catch(() => undefined);
+        void writeHarnessData(api, thread, navigationData).catch(() => undefined);
         return false;
       }
 
       if (isTerminalClearShortcut(event)) {
         event.preventDefault();
         event.stopPropagation();
-        void api.claude.write({ threadId, data: "\u000c" }).catch(() => undefined);
+        void writeHarnessData(api, thread, "\u000c").catch(() => undefined);
         return false;
       }
 
@@ -703,7 +816,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (event.type === "keydown" && event.key === "Enter" && (event.shiftKey || event.altKey) && !event.metaKey && !event.ctrlKey) {
         event.preventDefault();
         event.stopPropagation();
-        void api.claude.write({ threadId, data: "\x1b[13;2u" }).catch(() => undefined);
+        void writeHarnessData(api, thread, "\x1b[13;2u").catch(() => undefined);
         return false;
       }
 
@@ -713,7 +826,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       if (event.type === "keydown" && event.key === "z" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
         event.preventDefault();
         event.stopPropagation();
-        void api.claude.write({ threadId, data: "\x1a" }).catch(() => undefined);
+        void writeHarnessData(api, thread, "\x1a").catch(() => undefined);
         return false;
       }
 
@@ -727,7 +840,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       ) {
         event.preventDefault();
         event.stopPropagation();
-        void api.claude.write({ threadId, data: "\x06" }).catch(() => undefined);
+        void writeHarnessData(api, thread, "\x06").catch(() => undefined);
         return false;
       }
 
@@ -740,13 +853,13 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
     const inputDisposable = terminal.onData((data) => {
       const filtered = stripTerminalResponses(data);
       if (filtered) {
-        void api.claude.write({ threadId, data: filtered }).catch(() => undefined);
+        void writeHarnessData(api, thread, filtered).catch(() => undefined);
       }
     });
 
     // Handle resize
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      void api.claude.resize({ threadId, cols, rows }).catch(() => undefined);
+      void resizeHarnessSession(api, thread, cols, rows).catch(() => undefined);
     });
 
     // Defer fit + resize to after the browser has laid out the container.
@@ -760,9 +873,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       // Always send resize after reattach — even if cols/rows look unchanged,
       // the PTY may have been started with default dimensions or the previous
       // attach may have sent wrong values.
-      void api.claude
-        .resize({ threadId, cols: terminal.cols, rows: terminal.rows })
-        .catch(() => undefined);
+      void resizeHarnessSession(api, thread, terminal.cols, terminal.rows).catch(() => undefined);
       terminal.focus();
       // Signal that dimensions are now correct — safe to write content
       fitComplete = true;
@@ -825,7 +936,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       const key = deltaY < 0 ? "A" : "B"; // A = up, B = down
       const data = (prefix + key).repeat(Math.min(lines, 15));
 
-      void api.claude.write({ threadId, data }).catch(() => undefined);
+      void writeHarnessData(api, thread, data).catch(() => undefined);
     };
     el.addEventListener("wheel", onAltBufferWheel, { capture: true, passive: false });
 
@@ -891,7 +1002,7 @@ function ActiveTerminalView({ threadId }: { threadId: ThreadId }) {
       // Detach but keep in cache for instant reattachment
       claudeCache.detach(threadId);
     };
-  }, [threadId]);
+  }, [thread, threadId]);
 
   const handleSearchClose = useCallback(() => {
     setSearchOpen(false);
@@ -945,7 +1056,7 @@ export default function ThreadTerminalView({
 
   switch (thread.terminalStatus) {
     case "active":
-      return <ActiveTerminalView threadId={threadId} />;
+      return <ActiveTerminalView threadId={threadId} thread={thread} />;
     case "dormant":
       return <DormantTerminalView threadId={threadId} thread={thread} />;
     case "new":

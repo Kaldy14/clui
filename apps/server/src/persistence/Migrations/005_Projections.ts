@@ -23,6 +23,7 @@ export default Effect.gen(function* () {
       project_id TEXT NOT NULL,
       title TEXT NOT NULL,
       model TEXT NOT NULL,
+      harness TEXT NOT NULL DEFAULT 'claudeCode',
       branch TEXT,
       worktree_path TEXT,
       latest_turn_id TEXT,

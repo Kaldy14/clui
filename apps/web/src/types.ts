@@ -15,6 +15,7 @@ import type {
   TerminalStatus,
   TitleSource,
   ClaudeHookStatus,
+  CodingHarness,
 } from "@clui/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -105,6 +106,7 @@ export interface Thread {
   projectId: ProjectId;
   title: string;
   model: string;
+  harness: CodingHarness;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;

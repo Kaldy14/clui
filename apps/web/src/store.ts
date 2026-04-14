@@ -1,6 +1,8 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
+  DEFAULT_CODING_HARNESS,
   DEFAULT_MODEL_BY_PROVIDER,
+  type CodingHarness,
   type ProviderKind,
   ThreadId,
   type OrchestrationReadModel,
@@ -303,6 +305,7 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.updatedAt !== incoming.updatedAt) return true;
   if (existing.title !== incoming.title) return true;
   if (existing.model !== incoming.model) return true;
+  if (existing.harness !== incoming.harness) return true;
   if (existing.branch !== incoming.branch) return true;
   if (existing.worktreePath !== incoming.worktreePath) return true;
   if (existing.runtimeMode !== incoming.runtimeMode) return true;
@@ -406,6 +409,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           }),
           thread.model,
         ),
+        harness: thread.harness ?? DEFAULT_CODING_HARNESS,
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
         session: thread.session
@@ -592,6 +596,7 @@ export function addOptimisticThread(
     id: ThreadId;
     projectId: Project["id"];
     title: string;
+    harness: CodingHarness;
     branch: string | null;
     worktreePath: string | null;
     createdAt: string;
@@ -604,6 +609,7 @@ export function addOptimisticThread(
     projectId: input.projectId,
     title: input.title,
     model: "",
+    harness: input.harness,
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,
@@ -632,6 +638,18 @@ export function addOptimisticThread(
 
 export function setProjectOrder(state: AppState, order: string[]): AppState {
   return { ...state, projectOrder: order };
+}
+
+export function setThreadHarness(
+  state: AppState,
+  threadId: ThreadId,
+  harness: CodingHarness,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.harness === harness) return thread;
+    return { ...thread, harness };
+  });
+  return threads === state.threads ? state : { ...state, threads };
 }
 
 export function setTerminalStatus(
@@ -694,6 +712,7 @@ interface AppStore extends AppState {
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  setThreadHarness: (threadId: ThreadId, harness: CodingHarness) => void;
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
@@ -708,6 +727,7 @@ interface AppStore extends AppState {
     id: ThreadId;
     projectId: Project["id"];
     title: string;
+    harness: CodingHarness;
     branch: string | null;
     worktreePath: string | null;
     createdAt: string;
@@ -728,6 +748,8 @@ export const useStore = create<AppStore>((set) => ({
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
+  setThreadHarness: (threadId, harness) =>
+    set((state) => setThreadHarness(state, threadId, harness)),
   setProjectOrder: (order) => set((state) => setProjectOrder(state, order)),
   addOptimisticThread: (input) => set((state) => addOptimisticThread(state, input)),
   removeThread: (threadId) =>

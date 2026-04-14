@@ -1,3 +1,4 @@
+/* oxlint-disable unicorn/require-post-message-target-origin -- Worker.postMessage has no targetOrigin */
 type WorkerOutMessage =
   | { type: "ready"; id: string }
   | { type: "result"; text: string; id: string }
@@ -82,7 +83,7 @@ function getOrCreateWorker(): Worker {
     { type: "module" },
   );
 
-  worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
+  worker.addEventListener("message", (event: MessageEvent<WorkerOutMessage>) => {
     const msg = event.data;
 
     if (msg.type === "ready") {
@@ -126,9 +127,9 @@ function getOrCreateWorker(): Worker {
         pending.reject(new Error(msg.message));
       }
     }
-  };
+  });
 
-  worker.onerror = (err) => {
+  worker.addEventListener("error", (err) => {
     const message = err.message ?? "Worker error";
     if (pendingLoad) {
       const load = pendingLoad;
@@ -140,7 +141,7 @@ function getOrCreateWorker(): Worker {
       pendingTranscribes.delete(id);
       pending.reject(new Error(message));
     }
-  };
+  });
 
   return worker;
 }

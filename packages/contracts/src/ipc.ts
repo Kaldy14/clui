@@ -72,6 +72,14 @@ import type {
   ClaudeGetScrollbackInput,
   ClaudeSessionEvent,
 } from "./claude-terminal";
+import type {
+  PiStartInput,
+  PiHibernateInput,
+  PiWriteInput,
+  PiResizeInput,
+  PiGetScrollbackInput,
+  PiSessionEvent,
+} from "./pi-terminal";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -226,5 +234,15 @@ export interface NativeApi {
       input: ClaudeGetScrollbackInput,
     ) => Promise<{ threadId: string; scrollback: string | null; offset: number; reset?: boolean }>;
     onSessionEvent: (callback: (event: ClaudeSessionEvent) => void) => () => void;
+  };
+  pi: {
+    start: (input: PiStartInput) => Promise<void>;
+    hibernate: (input: PiHibernateInput) => Promise<void>;
+    write: (input: PiWriteInput) => Promise<void>;
+    resize: (input: PiResizeInput) => Promise<void>;
+    getScrollback: (
+      input: PiGetScrollbackInput,
+    ) => Promise<{ threadId: string; scrollback: string | null; offset: number; reset?: boolean }>;
+    onSessionEvent: (callback: (event: PiSessionEvent) => void) => () => void;
   };
 }

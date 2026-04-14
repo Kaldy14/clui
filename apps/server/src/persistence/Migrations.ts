@@ -33,6 +33,7 @@ import Migration0018 from "./Migrations/018_TitleSource.ts";
 import Migration0019 from "./Migrations/019_LastInteractedAt.ts";
 import Migration0020 from "./Migrations/020_Bookmarked.ts";
 import Migration0021 from "./Migrations/021_CleanupDeletedThreadData.ts";
+import Migration0022 from "./Migrations/022_ProjectionThreadsHarness.ts";
 import { Effect } from "effect";
 
 /**
@@ -67,6 +68,7 @@ const loader = Migrator.fromRecord({
   "19_LastInteractedAt": Migration0019,
   "20_Bookmarked": Migration0020,
   "21_CleanupDeletedThreadData": Migration0021,
+  "22_ProjectionThreadsHarness": Migration0022,
 });
 
 /**

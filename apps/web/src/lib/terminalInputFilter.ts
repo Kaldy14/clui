@@ -9,10 +9,13 @@
  *  - CPR responses:  ESC [ <row> ; <col> R
  */
 
-// OSC: \x1b] ... (\x1b\\ | \x07)
-// CPR: \x1b[ digits ; digits R
-const TERMINAL_RESPONSE_RE =
-  /\x1b\][^\x07\x1b]*(?:\x1b\\|\x07)|\x1b\[\d+;\d+R/g;
+const esc = String.fromCharCode(0x1b);
+const bel = String.fromCharCode(7);
+// OSC: ESC ] ... (ESC \ | BEL)  ·  CPR: ESC [ row ; col R
+const TERMINAL_RESPONSE_RE = new RegExp(
+  `${esc}\\][^${bel}${esc}]*(?:${esc}\\\\|${bel})|${esc}\\[\\d+;\\d+R`,
+  "g",
+);
 
 /**
  * Strips terminal query responses from input data.

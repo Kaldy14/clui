@@ -165,7 +165,7 @@ export function buildMenuItems(
 export function resolveQuickAction(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
-  isDefaultBranch = false,
+  _isDefaultBranch = false,
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };

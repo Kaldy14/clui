@@ -250,21 +250,6 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       resetWorkingIdleTimer(rawThreadId, false, hookStatus);
     }
 
-    // Recovery from "completed" state: background subagents may produce output
-    // after the main turn's Stop hook fires.  Once past the short stale window
-    // (concurrent curl race), treat output as evidence of ongoing work.
-    if (hookStatus === "completed" && terminalStatus === "active") {
-      const doneTs = completedAt.get(rawThreadId);
-      if (doneTs && now() - doneTs >= POST_COMPLETION_STALE_MS) {
-        completedAt.delete(rawThreadId);
-        turnInProgress.set(rawThreadId, true);
-        // Don't set turnConfirmed — the idle timer should be able to clear
-        // "working" after silence (no Stop hook fires for subagent completion).
-        deps.setHookStatus(rawThreadId, "working");
-        resetWorkingIdleTimer(rawThreadId, true);
-      }
-    }
-
     // Recover "Working" badge when output arrives on an active terminal with no
     // hookStatus — but ONLY if we know a turn is in progress (we saw a real
     // hook like UserPromptSubmit or PostToolUse).  Without this guard, any PTY

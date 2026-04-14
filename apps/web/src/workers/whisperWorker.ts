@@ -23,7 +23,7 @@ let loadedModelId: string | null = null;
 // Worker postMessage doesn't take targetOrigin — disable false-positive lint rule
 /* oxlint-disable unicorn/require-post-message-target-origin */
 
-self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
+self.addEventListener("message", async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
 
   if (msg.type === "load") {
@@ -118,4 +118,4 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       } satisfies OutgoingMessage);
     }
   }
-};
+});

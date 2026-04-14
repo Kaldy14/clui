@@ -1,5 +1,6 @@
 import {
   ClaudeSessionEvent,
+  PiSessionEvent,
   MCP_WS_METHODS,
   OrchestrationEvent,
   ORCHESTRATION_WS_CHANNELS,
@@ -133,8 +134,14 @@ export function createWsNativeApi(): NativeApi {
     },
     terminal: {
       open: (input) => transport.request(WS_METHODS.terminalOpen, input),
-      write: (input) => transport.request(WS_METHODS.terminalWrite, input),
-      resize: (input) => transport.request(WS_METHODS.terminalResize, input),
+      write: (input) => {
+        transport.fireAndForget(WS_METHODS.terminalWrite, input);
+        return RESOLVED_VOID;
+      },
+      resize: (input) => {
+        transport.fireAndForget(WS_METHODS.terminalResize, input);
+        return RESOLVED_VOID;
+      },
       clear: (input) => transport.request(WS_METHODS.terminalClear, input),
       restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
       close: (input) => transport.request(WS_METHODS.terminalClose, input),
@@ -242,6 +249,24 @@ export function createWsNativeApi(): NativeApi {
       onSessionEvent: (callback) =>
         transport.subscribe(WS_CHANNELS.claudeSessionEvent, (data) => {
           const payload = decodeAndWarnOnFailure(ClaudeSessionEvent, data);
+          if (payload) callback(payload);
+        }),
+    },
+    pi: {
+      start: (input) => transport.request(WS_METHODS.piStart, input),
+      hibernate: (input) => transport.request(WS_METHODS.piHibernate, input),
+      write: (input) => {
+        transport.fireAndForget(WS_METHODS.piWrite, input);
+        return RESOLVED_VOID;
+      },
+      resize: (input) => {
+        transport.fireAndForget(WS_METHODS.piResize, input);
+        return RESOLVED_VOID;
+      },
+      getScrollback: (input) => transport.request(WS_METHODS.piGetScrollback, input),
+      onSessionEvent: (callback) =>
+        transport.subscribe(WS_CHANNELS.piSessionEvent, (data) => {
+          const payload = decodeAndWarnOnFailure(PiSessionEvent, data);
           if (payload) callback(payload);
         }),
     },

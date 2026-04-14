@@ -84,32 +84,24 @@ describe("createSessionEventState", () => {
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
     });
 
-    it("suppresses 'working' recovery during post-completion stale window", () => {
+    it("does not recover 'working' from 'completed' on output (waits for PostToolUse hook)", () => {
       ctx.terminalStatusByThread.set("t1", "active");
-      // Complete the thread
       state.handleHookStatus("t1", "completed");
       vi.mocked(ctx.deps.setHookStatus).mockClear();
 
-      // Output arrives within stale window — likely from the completing turn
+      // Output within stale window — prompt rendering, status line
       vi.advanceTimersByTime(1_000);
       state.handleOutput("t1", "some output");
-
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
-    });
 
-    it("recovers 'working' from 'completed' when output arrives after stale window", () => {
-      ctx.terminalStatusByThread.set("t1", "active");
-      state.handleHookStatus("t1", "completed");
-      vi.mocked(ctx.deps.setHookStatus).mockClear();
+      // Output well past stale window — status line updates, cursor redraws
+      vi.advanceTimersByTime(POST_COMPLETION_STALE_MS + 5_000);
+      state.handleOutput("t1", "status line update");
+      expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
 
-      // Output arrives past the stale window — background subagent activity
-      vi.advanceTimersByTime(POST_COMPLETION_STALE_MS + 100);
-      state.handleOutput("t1", "agent output");
-
-      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
-      expect(state._turnInProgress.get("t1")).toBe(true);
-      // turnConfirmed NOT set — idle timer should be able to clear
-      expect(state._turnConfirmed.has("t1")).toBe(false);
+      // Only a real PostToolUse hook should recover to "working"
+      const result = state.handleHookStatus("t1", "working");
+      expect(result).toEqual({ applied: true, hookStatus: "working" });
     });
 
     it("does NOT delete completedAt on recovery", () => {

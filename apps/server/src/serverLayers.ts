@@ -13,6 +13,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { ClaudeSessionManagerLive } from "./terminal/Layers/ClaudeSessionManager";
+import { PiSessionManagerLive } from "./terminal/Layers/PiSessionManager";
 import { KeybindingsLive } from "./keybindings";
 import { GitManagerLive } from "./git/Layers/GitManager";
 import { GitCoreLive } from "./git/Layers/GitCore";
@@ -64,6 +65,7 @@ export function makeServerRuntimeServicesLayer() {
   const terminalLayer = TerminalManagerLive.pipe(Layer.provide(ptyAdapterLayer));
 
   const claudeSessionLayer = ClaudeSessionManagerLive.pipe(Layer.provide(ptyAdapterLayer));
+  const piSessionLayer = PiSessionManagerLive.pipe(Layer.provide(ptyAdapterLayer));
 
   const gitManagerLayer = GitManagerLive.pipe(
     Layer.provideMerge(gitCoreLayer),
@@ -78,6 +80,7 @@ export function makeServerRuntimeServicesLayer() {
     textGenerationLayer,
     terminalLayer,
     claudeSessionLayer,
+    piSessionLayer,
     KeybindingsLive,
     ProjectionThreadRepositoryLive,
   ).pipe(Layer.provideMerge(NodeServices.layer));

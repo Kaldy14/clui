@@ -1,14 +1,16 @@
 # Clui — Session Handoff
 
-> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code CLI.
+> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code and pi.
 
 ## What is Clui?
 
-A fork of [t3code](https://github.com/pingdotgg/t3code) that replaces the Agent SDK chat interface with embedded xterm.js terminals running Claude Code CLI directly. We keep t3code's excellent project/thread sidebar, branch/worktree management, and git workflow — but instead of a chat UI built on the Agent SDK, each thread is a real terminal running `claude` CLI.
+A fork of [t3code](https://github.com/pingdotgg/t3code) that replaces the Agent SDK chat interface with embedded xterm.js terminals running terminal-native coding agents directly. We keep t3code's excellent project/thread sidebar, branch/worktree management, and git workflow — but instead of a chat UI built on the Agent SDK, each thread is a real terminal running its selected harness.
 
-**Why?** The chat UI built on the Agent SDK is missing many features that the CLI has natively. Rather than writing abstraction layers to bridge the gap, it's better to use Claude Code CLI directly.
+**Current harnesses:** `claudeCode` and `pi`.
 
-**Future vision:** Post-MVP, support multiple CLI agents (Codex CLI, GitHub Copilot CLI, Aider, etc.) — the terminal-first architecture makes this trivial since every CLI tool works in a terminal.
+**Why?** The chat UI built on the Agent SDK is missing many features that the CLI has natively. Rather than writing abstraction layers to bridge the gap, it's better to run the real CLI directly.
+
+**Future vision:** Keep broadening harness support (Codex CLI, GitHub Copilot CLI, Aider, etc.) — the terminal-first architecture makes this straightforward since every CLI tool works in a terminal.
 
 ## Repository
 
@@ -34,8 +36,17 @@ A fork of [t3code](https://github.com/pingdotgg/t3code) that replaces the Agent 
 - **Max active terminals:** Configurable cap (default 12)
 - **LRU eviction:** When cap exceeded, least-recently-interacted terminal hibernates (scrollback saved, PTY killed)
 - **App startup:** Zero PTYs spawn. All threads render as dormant with saved scrollback. Resume on-demand.
-- **Resume:** `claude --resume <session_id>` — Claude CLI handles conversation continuity natively
-- **Session ID:** Assigned upfront via `--session-id <uuid>` for new sessions, reused via `--resume <uuid>` for resumes. No regex extraction needed.
+- **Claude resume:** `claude --resume <session_id>` — Claude CLI handles conversation continuity natively
+- **Claude session ID:** Assigned upfront via `--session-id <uuid>` for new sessions, reused via `--resume <uuid>` for resumes. No regex extraction needed.
+- **pi resume:** deterministic per-thread `--session-dir <state>/pi-sessions/<threadId>`; if the directory already contains sessions, Clui starts pi with `-c` to continue that thread's existing session state.
+
+### Coding Harnesses
+
+- Each persisted thread now has a `harness: "claudeCode" | "pi"` field.
+- App settings include `defaultCodingHarness`, which seeds newly-created threads.
+- The new-thread screen can switch harnesses only while `terminalStatus === "new"`.
+- Once a thread has started, harness changes are rejected at the orchestration layer.
+- Claude-only controls like YOLO mode stay hidden for `pi` threads.
 
 ### xterm.js Instance Management
 
@@ -78,8 +89,8 @@ Busy threads are protected from both LRU cap eviction and idle sweep, ensuring t
 ```
 Electron Shell → React UI (sidebar + terminal content area)
     ↕ WebSocket
-Node.js Server → TerminalSessionManager → node-pty → claude CLI
-    ↕ SQLite (threads, scrollback, session IDs)
+Node.js Server → ClaudeSessionManager / PiSessionManager → node-pty → claude or pi CLI
+    ↕ SQLite (threads, scrollback, session IDs, harness metadata)
 ```
 
 ## Source Repos Analyzed
@@ -647,7 +658,7 @@ Continue Clui implementation — Phase 11: Terminal Input Enhancement + Polish
 
 Read SESSION.md and PLAN.md first. They contain the full project context, architecture decisions, and completed phase details.
 
-Clui is a terminal multiplexer for Claude Code CLI — each thread is a real terminal running claude via node-pty. Phases 0–10 are complete: Agent SDK removed, DB schema, ClaudeSessionManager service, terminal UI (ThreadTerminalView with three-state routing), lifecycle management (LRU eviction, graceful shutdown, startup recovery, session resume via --session-id), polish (terminal toolbar, keyboard shortcuts, configurable font settings, git branch integration), testing (45+ new tests), Claude Code hooks integration (badge system with sidebar + toolbar badges, OS notifications), auto-title generation (extracts prompt from UserPromptSubmit hook, generates ≤60-char title, titleSource: auto/manual protection), and git workflow UI restoration (GitActionsControl commit/push/PR toolbar, BranchToolbarBranchSelector in toolbar + NewThreadView, PullRequestThreadDialog, worktree creation on start with branch name input prefilled feature/ITE-, optimistic thread creation, Cmd+J/Cmd+Shift+J terminal drawer shortcuts, worktree cwd validation fix).
+Clui is a terminal multiplexer for terminal-native coding agents. Each thread is a real terminal running its selected harness via node-pty; current harnesses are Claude Code and pi. Phases 0–11 are complete: Agent SDK removed, DB schema, ClaudeSessionManager service, terminal UI (ThreadTerminalView with three-state routing), lifecycle management (LRU eviction, graceful shutdown, startup recovery, session resume via --session-id), polish (terminal toolbar, keyboard shortcuts, configurable font settings, git branch integration), testing (45+ new tests), Claude Code hooks integration (badge system with sidebar + toolbar badges, OS notifications), auto-title generation (extracts prompt from UserPromptSubmit hook, generates ≤60-char title, titleSource: auto/manual protection), git workflow UI restoration (GitActionsControl commit/push/PR toolbar, BranchToolbarBranchSelector in toolbar + NewThreadView, PullRequestThreadDialog, worktree creation on start with branch name input prefilled feature/ITE-, optimistic thread creation, Cmd+J/Cmd+Shift+J terminal drawer shortcuts, worktree cwd validation fix), and persisted coding harness support (`claudeCode | pi`) with default-harness settings plus per-thread pi session-dir resume.
 
 Phase 11 scope (SESSION.md § Phase 11):
 
@@ -709,23 +720,63 @@ Replaced hardcoded `"feature/ITE-"` with per-project configurable prefix stored 
 
 **Checkpoint verified:** `bun typecheck` 6/6 pass, `bun lint` 0 errors (12 warnings, baseline), `bun run test` all packages pass (424 server, 349 web (+4), 46 contracts, 26 shared, 26 desktop, 18 scripts).
 
+## Post-Phase 11: Selectable Coding Harnesses (Claude Code / pi) ✅ COMPLETE
+
+Implemented first-class persisted coding harness support across contracts, persistence, transport, server runtime, and the web UI.
+
+**What changed:**
+- Added persisted thread-level `harness: "claudeCode" | "pi"` with migration/backfill for existing rows.
+- Added app setting `defaultCodingHarness`; new threads inherit it.
+- New/unstarted threads can switch harnesses from the new-thread screen.
+- Added additive `pi.*` contracts, IPC, WebSocket methods, and client wiring alongside existing `claude.*` APIs.
+- Added `PiSessionManager`, which launches `pi` in a deterministic thread-scoped session directory and auto-resumes with `-c` when prior session state exists.
+- Routed start/resume/restart/hibernate flows by harness and hid Claude-only YOLO controls for pi threads.
+- Enforced invariant: harness changes are rejected once a thread has started.
+
+**Key design note:** pi resume intentionally does **not** persist a separate `piSessionRef`. Instead, the session identity is the thread-scoped session directory under server state. That keeps resume behavior stable across restarts without session-ID discovery/storage logic.
+
+**Primary files:**
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/ipc.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/serverLayers.ts`
+- `apps/server/src/persistence/Migrations/022_ProjectionThreadsHarness.ts`
+- `apps/web/src/appSettings.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `apps/web/src/store.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/routes/__root.tsx`
+- `apps/web/src/wsNativeApi.ts`
+
+**Verification:** `bun typecheck` ✅, `bun lint` ✅. Full `bun run test` was not run for this change set.
+
 ## Key Files for Next Session
 
 | File | Purpose |
 |------|---------|
 | `PLAN.md` | Full implementation plan with file-level detail |
 | `AGENTS.md` | Build instructions, tech stack, project snapshot (symlinked as CLAUDE.md) |
-| `apps/web/src/components/TerminalToolbar.tsx` | Terminal toolbar with branch selector + git actions + status badge |
-| `apps/web/src/components/ThreadTerminalView.tsx` | Three-state terminal view with key handler, branch prefix config |
+| `apps/web/src/components/TerminalToolbar.tsx` | Terminal toolbar with branch selector + git actions + harness-aware actions/status |
+| `apps/web/src/components/ThreadTerminalView.tsx` | Three-state terminal view with key handler, branch prefix config, and new-thread harness switching |
 | `apps/web/src/keybindings.ts` | Terminal navigation shortcuts (Cmd+Left/Right, Cmd+Backspace, Option+Left/Right) |
-| `apps/web/src/components/useBranchToolbar.ts` | Branch state management hook (hibernate on cwd change) |
+| `apps/web/src/components/useBranchToolbar.ts` | Branch state management hook (hibernate on cwd change, now harness-aware) |
 | `apps/web/src/components/GitActionsControl.tsx` | Commit/push/PR split button |
 | `apps/web/src/components/BranchToolbarBranchSelector.tsx` | Branch picker combobox |
-| `apps/web/src/store.ts` | Zustand store with `addOptimisticThread` |
+| `apps/web/src/appSettings.ts` | App settings schema including `defaultCodingHarness` |
+| `apps/web/src/store.ts` | Zustand store with optimistic thread creation and persisted harness state |
+| `apps/web/src/wsNativeApi.ts` | Native API transport wiring for both `claude.*` and `pi.*` |
 | `apps/web/src/routes/_chat.tsx` | Layout with Cmd+J/Cmd+Shift+J terminal shortcuts |
 | `apps/web/src/routes/_chat.$threadId.tsx` | Thread route with ThreadTerminalDrawerContainer |
 | `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | ClaudeSessionManager implementation |
-| `apps/server/src/wsServer.ts` | WS routes + hook HTTP routes + auto-title dispatch |
+| `apps/server/src/terminal/Layers/PiSessionManager.ts` | PiSessionManager implementation with per-thread `--session-dir` resume |
+| `apps/server/src/wsServer.ts` | WS routes + hook HTTP routes + harness routing + auto-title dispatch |
 
 ## Future Phases
 

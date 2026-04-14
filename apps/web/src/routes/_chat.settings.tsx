@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
-import { type ProviderKind } from "@clui/contracts";
+import { type CodingHarness, type ProviderKind } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
 import {
+  CODING_HARNESS_OPTIONS,
   DEFAULT_TERMINAL_FONT_FAMILY,
   MAX_CUSTOM_MODEL_LENGTH,
   MAX_TERMINAL_FONT_SIZE,
@@ -60,6 +61,17 @@ const TERMINAL_COLOR_THEME_OPTIONS: Array<{
     description: "Bright pastel palette on the app background.",
   },
 ];
+
+const CODING_HARNESS_LABELS: Record<CodingHarness, { label: string; description: string }> = {
+  claudeCode: {
+    label: "Claude Code",
+    description: "Use the existing Claude Code terminal harness for new threads.",
+  },
+  pi: {
+    label: "pi",
+    description: "Use the pi coding agent terminal harness for new threads.",
+  },
+};
 
 const MODEL_PROVIDER_SETTINGS: Array<{
   provider: ProviderKind;
@@ -297,6 +309,46 @@ function SettingsRouteView() {
                     Get it here
                   </a>.
                 </p>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Default coding harness</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose which harness new threads start with by default. You can still change it before the thread is first launched.
+                </p>
+              </div>
+
+              <div className="space-y-2" role="radiogroup" aria-label="Default coding harness">
+                {CODING_HARNESS_OPTIONS.map((option) => {
+                  const selected = settings.defaultCodingHarness === option;
+                  const copy = CODING_HARNESS_LABELS[option];
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                        selected
+                          ? "border-primary/60 bg-primary/8 text-foreground"
+                          : "border-border bg-background text-muted-foreground hover:bg-accent"
+                      }`}
+                      onClick={() => updateSettings({ defaultCodingHarness: option })}
+                    >
+                      <span className="flex flex-col">
+                        <span className="text-sm font-medium">{copy.label}</span>
+                        <span className="text-xs">{copy.description}</span>
+                      </span>
+                      {selected ? (
+                        <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                          Selected
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
             </section>
 

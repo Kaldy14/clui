@@ -41,6 +41,13 @@ import {
   ClaudeWriteInput,
   ClaudeResizeInput,
 } from "./claude-terminal";
+import {
+  PiStartInput,
+  PiHibernateInput,
+  PiGetScrollbackInput,
+  PiWriteInput,
+  PiResizeInput,
+} from "./pi-terminal";
 import { KeybindingRule } from "./keybindings";
 import { PurgeInactiveSessionsInput } from "./server";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput, ProjectReadFileInput } from "./project";
@@ -94,6 +101,13 @@ export const WS_METHODS = {
   claudeWrite: "claude.write",
   claudeResize: "claude.resize",
 
+  // Pi terminal methods
+  piStart: "pi.start",
+  piHibernate: "pi.hibernate",
+  piGetScrollback: "pi.getScrollback",
+  piWrite: "pi.write",
+  piResize: "pi.resize",
+
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
@@ -112,6 +126,7 @@ export const MCP_WS_METHODS = {
 export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   claudeSessionEvent: "claude.sessionEvent",
+  piSessionEvent: "pi.sessionEvent",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
 } as const;
@@ -181,6 +196,13 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.claudeGetScrollback, ClaudeGetScrollbackInput),
   tagRequestBody(WS_METHODS.claudeWrite, ClaudeWriteInput),
   tagRequestBody(WS_METHODS.claudeResize, ClaudeResizeInput),
+
+  // Pi terminal methods
+  tagRequestBody(WS_METHODS.piStart, PiStartInput),
+  tagRequestBody(WS_METHODS.piHibernate, PiHibernateInput),
+  tagRequestBody(WS_METHODS.piGetScrollback, PiGetScrollbackInput),
+  tagRequestBody(WS_METHODS.piWrite, PiWriteInput),
+  tagRequestBody(WS_METHODS.piResize, PiResizeInput),
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),

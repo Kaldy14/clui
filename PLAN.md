@@ -1,12 +1,14 @@
 # Clui — Implementation Plan
 
-> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code CLI.
+> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code and pi.
 
 **Name:** Clui (CLI + UI)
 
 ## Overview
 
-Fork t3code and replace its Agent SDK chat interface with embedded xterm.js terminals running Claude Code CLI directly. Keep the project → thread sidebar, branch/worktree management, and git workflow. Each thread becomes a terminal session running `claude` in the thread's worktree cwd, resumable via `claude --resume <session_id>`.
+Fork t3code and replace its Agent SDK chat interface with embedded xterm.js terminals running coding-agent CLIs directly. Keep the project → thread sidebar, branch/worktree management, and git workflow. Each thread becomes a terminal session running its selected harness in the thread's worktree cwd.
+
+**Current status update (2026-04-13):** Clui now ships selectable per-thread coding harnesses (`claudeCode | pi`). Claude threads resume via `claude --resume <session_id>`. pi threads use a deterministic per-thread `--session-dir` under server state and auto-resume with `pi -c` when that directory already contains sessions.
 
 ---
 
@@ -35,9 +37,9 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 16. Terminal scrollback search across threads
 
 ### Future (Post-MVP)
-17. Multi-CLI support: Codex CLI, GitHub Copilot CLI, Aider, etc.
-18. Per-thread CLI selector (pick which agent CLI to spawn)
-19. CLI-specific resume logic (each CLI has its own session/resume mechanism)
+17. Expand harness support beyond Claude Code and pi: Codex CLI, GitHub Copilot CLI, Aider, etc.
+18. Broaden the per-thread harness selector beyond the current `claudeCode | pi` choices.
+19. Continue adding harness-specific resume/runtime logic where each CLI has its own session model.
 
 ---
 

@@ -4,6 +4,188 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-14 — Release workflow: finalize job checked out non-existent `master`
+
+**Problem:** Pushing a `v*.*.*` tag runs `.github/workflows/release.yml`, whose `finalize` job checks out `ref: master` before bumping package versions and pushing to `main`. This repository only has `main`, so checkout could fail and block automated version bumps after a GitHub Release.
+
+**Root cause:** The workflow assumed the default branch was named `master` while the repo uses `main`.
+
+**Fix:** Point the finalize checkout at `main` so it matches `git push origin HEAD:main`.
+
+**Affected files:**
+- `.github/workflows/release.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-14 — WebSocket `pi.*` routing and hybrid prompt hook in `wsServer`
+
+**Problem:** The server layer already provided `PiSessionManagerLive`, but `createServer` in `wsServer.ts` did not yield `PiSessionManager`, expose `pi.start` / `pi.write` / `pi.hibernate` / scrollback / resize, fan out `pi.sessionEvent`, or tie `pi.write` to `notifyPromptSubmitted` and auto-title. Auto-bootstrap `thread.create` omitted the new required `harness` field, so typecheck failed against current contracts.
+
+**Root cause:** Pi terminal work landed in layers and contracts first; the monolithic WebSocket router was never updated in the same change. Submit-side hooking depends on server-side buffering (`advancePiWritePromptBuffer`) before `writeToSession`, which only exists when wired here.
+
+**Fix:** Extended `ServerRuntimeServices`, imports, shutdown (`hibernateAll` for both managers), `thread.delete` and purge counts, `FIRE_AND_FORGET` for `pi.write`/`pi.resize`, `handlePiWriteBuffers` + `dispatchPiAutoTitleIfNeeded`, `onPiSessionEvent` + subscribe with finalizer, and the full `switch` cases mirroring Claude cwd validation. Bootstrap `thread.create` now passes `harness: DEFAULT_CODING_HARNESS`. Rebuilt `PI_WRITE_CONTROL_SEQ_RE` from `String.fromCharCode` segments so oxlint `no-control-regex` passes. Cleared unrelated oxlint warnings (Worker `addEventListener`, `SpeechControl` keys, `wsTransport` iteration, etc.) so `bun lint` stays green.
+
+**Affected files:**
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/piWritePromptBuffer.ts`
+- `apps/web/src/components/SpeechControl.tsx`
+- `apps/web/src/components/GitActionsControl.logic.ts`
+- `apps/web/src/hooks/useAudioCapture.ts`
+- `apps/web/src/lib/terminalInputFilter.ts`
+- `apps/web/src/lib/whisperManager.ts`
+- `apps/web/src/workers/whisperWorker.ts`
+- `apps/web/src/wsTransport.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-14 — Pi harness hook status: no "Working" on keystroke echo, show "Completed" after idle
+
+**Problem:** In pi threads, the sidebar badge flipped to "Working" while typing in the agent prompt (local PTY echo), and after a run finished it never showed "Completed" because the server cleared inferred status with `hookStatus: null` instead of the lifecycle value the UI maps to the green pill.
+
+**Root cause:** `PiSessionManager.onProcessData` treated every byte of PTY output as agent activity, including echo from `writeToSession`. The idle debouncer then emitted `null`, which `claudeTerminalStatusPill` intentionally renders as no badge — not `"completed"`, which is the only active-terminal state that shows "Completed".
+
+**Fix:**
+1. Track `lastClientWriteAtMs` on client writes and ignore transitions to `"working"` when output arrives within a short window (`PI_LOCAL_ECHO_SUPPRESS_AFTER_WRITE_MS`, 120ms) while not already working — keystroke echo is typically immediate; model output usually follows after the user pauses.
+2. After PTY silence, emit `hookStatus: "completed"` (and keep internal state aligned) instead of `null`.
+3. In `__root.tsx`, route pi `completed` through `sessionState.handleHookStatus` so turn-completed notifications, dock badge refresh, and `latestTurn.completedAt` bookkeeping match Claude sessions; other pi hook values still bypass straight into the store.
+4. Updated `projector.test.ts` expectations for new default thread fields (`harness`, `bookmarked`) so the server test suite matches the current projection shape.
+
+**Affected files:**
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/web/src/routes/__root.tsx`
+- `apps/server/src/orchestration/projector.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-13 — Basic sidebar badges and auto-title fallback for pi harness
+
+**Problem:** Pi threads sat in the sidebar with no "Working" badge, no "Completed" indicator, no dock badge, and no auto-generated title. Every piece of that UX was wired to Claude Code's HTTP hook receiver, so pi threads — which have no hook channel at all — fell through all of it.
+
+**Root cause:** `PiSessionManager` was pure PTY passthrough: `onProcessData` appended to the scrollback ring buffer and emitted a raw `output` event. Nothing in the pipeline ever set `hookStatus` for pi threads, so `Sidebar.logic.ts`'s `resolveThreadStatusPill()` had no signal to render. Separately, the auto-title flow was triggered exclusively inside the `/hooks/user-prompt-submit` HTTP handler (`extractPromptText` → `textGeneration.generateThreadTitle` → `thread.meta.update`), which pi never reaches.
+
+**Fix:**
+1. Added a `PiHookStatusEvent` variant to the `PiSessionEvent` union so the server can broadcast explicit `working | null` transitions alongside the existing `output`/`started`/`hibernated`/`exited`/`error` events.
+2. `PiSessionManager` now infers activity from PTY output rate: any byte transitions the entry to `"working"` (emitting a `hookStatus` event), and a 1.5s idle debouncer fires a `hookStatus: null` event once the session goes quiet. The idle timer is cleared and hookStatus reset on `stopProcess` and `onProcessExit` so hibernate/exit/restart leave no stale state.
+3. `__root.tsx`'s `api.pi.onSessionEvent` handler now routes `hookStatus` events directly into `useStore.setHookStatus`, bypassing the Claude-specific session-event state machine (grace periods, interrupt banner detection, API-error parsing) which doesn't apply to pi. The existing sidebar badge tiering (`Sidebar.logic.ts:174-178`) picks up `"working"` automatically once the field is populated.
+4. Extracted the Claude auto-title body into a `dispatchAutoTitleIfNeeded(threadId, promptText)` helper in `wsServer.ts` and added a `tryPiAutoTitleFromWrite` fallback that accumulates `pi.write` keystrokes per thread, strips ANSI/control sequences on first newline, and feeds the first prompt to the same helper. Buffers are capped at 4KB and cleared on thread delete alongside `autoTitledThreads`.
+5. `TextGeneration` remains the single text-gen backend, so pi threads borrow the Claude CLI summarizer without duplicating infrastructure.
+
+**Affected files:**
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/web/src/routes/__root.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+**Known gaps not closed in this pass:** no `needsInput`/`pendingApproval` detection for pi (requires prompt parsing), no turn-completed notification or diff-panel checkpoint capture for pi, and no pendingApproval persistence across reload. These are tracked for a later pass.
+
+---
+
+## 2026-04-13 — Sync repo docs with selectable coding harness support
+
+**Problem:** The codebase now supports persisted per-thread coding harnesses (`claudeCode | pi`), default harness selection in Settings, and pi-specific session resume behavior, but the top-level docs still described Clui as Claude-only.
+
+**Root cause:** `README.md`, `PLAN.md`, and `SESSION.md` had not been updated after the multi-harness implementation landed, so the documented architecture and resume model lagged behind the actual product.
+
+**Fix:** Updated the top-level docs to describe current harness support, the new `defaultCodingHarness` setting, harness-specific resume behavior (Claude `--resume`, pi thread-scoped `--session-dir` + `-c`), and the new Pi session manager/runtime wiring. Also refreshed the handoff notes and next-session reference files.
+
+**Affected files:**
+- `README.md`
+- `PLAN.md`
+- `SESSION.md`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-13 — Add selectable coding harnesses (Claude Code / pi) for new threads
+
+**Problem:** Clui only supported Claude Code as a thread terminal harness. There was no way to choose a default harness in Settings, no way to switch a brand-new thread to pi before first launch, and all runtime/session plumbing was hard-coded to Claude-specific APIs.
+
+**Root cause:** Harness selection was not modeled in the thread domain at all — `thread.create`, the thread projection, the web store, and the new-thread UI only tracked model/runtime/interaction mode. On top of that, the transport/runtime layer only exposed `claude.*` WebSocket APIs and a Claude-only session manager, so there was no additive path for launching pi.
+
+**Fix:**
+1. Added a first-class `harness` thread field (`claudeCode | pi`) to orchestration contracts, projections, migrations, and the web store, defaulting historical threads to `claudeCode`.
+2. Added an app-level `defaultCodingHarness` setting and Settings UI so new threads inherit the chosen harness.
+3. Updated sidebar thread creation and the new-thread screen to seed/show the selected harness and allow switching it before first launch.
+4. Added additive `pi.*` terminal contracts, WebSocket methods, client wiring, and a new `PiSessionManager` that runs `pi` in a thread-scoped `--session-dir`, using `-c` automatically to resume existing pi sessions for that thread.
+5. Routed new-thread start/resume/restart flows by harness and hid Claude-only YOLO controls for pi threads.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/ipc.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/index.ts`
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/persistence/Services/ProjectionThreads.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/server/src/persistence/Migrations/005_Projections.ts`
+- `apps/server/src/persistence/Migrations/022_ProjectionThreadsHarness.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/serverLayers.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/web/src/appSettings.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `apps/web/src/types.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/components/useBranchToolbar.ts`
+- `apps/web/src/routes/__root.tsx`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/store.test.ts`
+- `apps/web/src/worktreeCleanup.test.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
+- `apps/server/src/orchestration/commandInvariants.test.ts`
+- `apps/server/src/orchestration/decider.projectScripts.test.ts`
+- `apps/server/src/orchestration/Layers/CheckpointReactor.test.ts`
+- `apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
+
+---
+
+## 2026-04-02 — Fix terminal.write timeout errors on idle thread terminals
+
+**Problem:** Thread terminal drawer shows repeated `[terminal] Request timed out: terminal.write` errors when the terminal is idle.
+
+**Root cause:** Commit `b9c014b` removed `terminalWrite`/`terminalResize` from the server's `FIRE_AND_FORGET_METHODS`, making them request-based RPCs. The client now expects a response within 120s. When the WebSocket drops and reconnects, orphaned pending requests from the old connection never receive responses and all timeout together. Additionally, `WsTransport` did not reject pending requests on connection close, so they always waited the full 120s.
+
+**Fix:**
+1. Made `terminal.write` and `terminal.resize` fire-and-forget on the client (matching `claude.write`/`claude.resize`) — interactive terminal input doesn't benefit from request tracking.
+2. Re-added `terminalWrite`/`terminalResize` to the server's `FIRE_AND_FORGET_METHODS`.
+3. Added `rejectPending()` to `WsTransport` that rejects all pending requests on WebSocket close, so any remaining request-based RPCs fail fast instead of hanging for 120s.
+
+**Affected files:**
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/wsTransport.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+
+---
+
+## 2026-04-01 — Fix "Working" badge stuck after Claude Code completes
+
+**Problem:** After Claude Code finishes a turn and returns to the idle prompt, the badge stays on "Working" instead of showing "Completed". Newer Claude Code versions exacerbate this.
+
+**Root cause:** The `handleOutput` completed→working recovery in `sessionEventState.ts` was too aggressive. After the Stop hook set `hookStatus="completed"`, any terminal output arriving >1.5s later (status line updates, prompt rendering, "※ Brewed for..." message) falsely triggered recovery to "working". Subsequent output kept resetting the 90-second idle timer, preventing it from ever clearing.
+
+**Fix:** Removed the output-only completed→working recovery from `handleOutput`. Background subagent activity is already handled correctly by the PostToolUse hook path in `handleHookStatus`, making the output-only recovery redundant.
+
+**Affected files:**
+- `apps/web/src/lib/sessionEventState.ts`
+- `apps/web/src/lib/sessionEventState.test.ts`
+
+---
+
 ## 2026-03-31 — Fix branch selection reverting after switching on new thread
 
 **Problem:** When clicking a new thread and quickly switching to a different branch/worktree, the selection would revert back to the previous branch after 1-2 seconds.
@@ -475,792 +657,5 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 **Problem:** When scrolling through Claude Code session history, new output from Claude would kick the user to the top of the terminal, losing their scroll position. This was a regression of a previously working fix (commit e312b82).
 
-**Root cause:** xterm.js v6 replaced the native `.xterm-viewport` scroll container with VS Code's `SmoothScrollableElement` (a virtual scrollbar). The `.xterm-viewport` div still exists in the DOM but its `scrollTop` is always 0 and `scrollHeight === clientHeight`. Our scroll preservation code queried `.xterm-viewport` for position — `isViewportAtBottom()` always returned `true`, so `scrollAwareWrite` never entered the preservation branch. The "New output" indicator also never showed.
 
-**Fix:** Replaced all `.xterm-viewport` DOM manipulation with xterm.js public API: `terminal.buffer.active.viewportY` (line-based scroll position), `terminal.buffer.active.baseY` (bottom of scrollback), and `terminal.scrollToLine(line)` for restoration. This is version-agnostic and immune to internal DOM structure changes. Also added defensive `visibilitychange` listener and `terminal.onScroll` tracking to re-assert scroll position when switching apps or clicking back into the terminal.
-
-**Affected files:**
-- `apps/web/src/components/ThreadTerminalView.tsx` — `isViewportAtBottom`, `scrollAwareWrite`, `onWindowResize`, `ResizeObserver` handler, `visibilitychange`/`onScroll` scroll defense
-
----
-
-## 2026-03-23 — Fix thread terminal stealing focus from Claude Code
-
-**Problem:** When a thread had an open thread terminal (persisted state), navigating to it or starting a Claude Code session would focus the thread terminal instead of Claude Code. Focus should default to Claude Code; the thread terminal should only auto-focus when explicitly opened by the user (e.g., Cmd+J toggle).
-
-**Root cause:** `ThreadTerminalDrawer`'s `TerminalViewport` had `autoFocus={true}` hardcoded, causing it to steal focus on every mount — including mounts from persisted state or thread navigation. `focusRequestId` was hardcoded to `0` and never signaled explicit user opens.
-
-**Fix:** Track closed→open transitions in `ThreadTerminalDrawerContainer` via a `focusRequestId` counter that increments only when `terminalOpen` transitions from `false` to `true` on the same thread. Added `key={threadId}` to reset focus state on thread navigation. Changed `autoFocus={true}` to `autoFocus={focusRequestId > 0}` so the thread terminal only auto-focuses when explicitly opened by user action.
-
-**Affected files:**
-- `apps/web/src/routes/_chat.$threadId.tsx` — focus tracking logic, key={threadId}
-- `apps/web/src/components/ThreadTerminalDrawer.tsx` — conditional autoFocus
-
----
-
-## 2026-03-23 — Replace sidebar sort key with `lastInteractedAt`
-
-**Problem:** Sidebar thread sorting was unreliable — threads jumped around whenever Claude produced output, completed turns, appended activities, or any hook event fired. The `updatedAt` field used as the sort key was bumped by 11 different event types in the projector, making sort order unpredictable.
-
-**Root cause:** `updatedAt` serves as a general "data modified" timestamp, bumped by every orchestration event (messages, activities, session changes, completions, reverts, meta updates). Using it for sidebar sort meant any background Claude activity reshuffled the list.
-
-**Fix:** Added a dedicated `lastInteractedAt` field to `OrchestrationThread` that is ONLY updated in two places: (1) thread creation, and (2) when a new turn begins in `thread.session-set` (user submitted a prompt). The sidebar sort comparator now uses `lastInteractedAt` instead of `updatedAt`. Also added `lastInteractedAt` to `TerminalManager.TerminalSessionState` (bumped only on user actions: open, write, restart) and switched inactive terminal eviction to use it instead of `updatedAt`.
-
-**Affected files:**
-- `packages/contracts/src/orchestration.ts` — added `lastInteractedAt` to `OrchestrationThread`
-- `apps/server/src/orchestration/projector.ts` — set on created + new turn
-- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` — set on created + new turn in persistence
-- `apps/server/src/persistence/Migrations/019_LastInteractedAt.ts` — DB migration
-- `apps/server/src/persistence/Services/ProjectionThreads.ts` — schema
-- `apps/server/src/persistence/Layers/ProjectionThreads.ts` — SQL queries
-- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` — snapshot assembly
-- `apps/server/src/terminal/Services/Manager.ts` — added `lastInteractedAt` to `TerminalSessionState`
-- `apps/server/src/terminal/Layers/Manager.ts` — user-only bumps + eviction sort
-- `apps/web/src/types.ts` — frontend type
-- `apps/web/src/store.ts` — mapping
-- `apps/web/src/components/Sidebar.logic.ts` — sort comparator
-
----
-
-## 2026-03-23 — Fix stuck "Working" badge after quick Esc cancel
-
-**Problem:** When the user sent a message and immediately pressed Esc to cancel before Claude's agent loop started, the "Working" badge in the sidebar stayed stuck permanently.
-
-**Root cause:** `handleTurnStart` (fired by UserPromptSubmit hook) set `hookStatus = "working"` and `turnInProgress = true`. When the user cancelled before the agent loop began, neither the Stop hook nor the "⏎ Interrupted" terminal banner fired, so nothing cleared those flags. The 90-second idle timer re-armed indefinitely because `turnInProgress && terminal === "active"`, and the output recovery heuristic re-set "working" on any terminal output (keystroke echo) because `turnInProgress` was still true.
-
-**Fix:** Added `turnConfirmed` tracking — a flag set only when a real hook (PostToolUse → "working", PermissionRequest → "pendingApproval"/"needsInput") fires, confirming the agent loop actually started. `handleTurnStart` alone does NOT confirm. When the idle timer fires for an unconfirmed turn, it clears `hookStatus`, `turnInProgress`, and sets `completedAt` (grace period) instead of re-arming, preventing the output recovery from re-setting the badge.
-
-**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`
-
----
-
-## 2026-03-23 — Fix terminal content duplication when switching back to active thread
-
-**Problem:** Every time the user clicked on a working (active) thread in the sidebar, the entire terminal content was duplicated — the same conversation appeared multiple times in the terminal output.
-
-**Root cause:** `ActiveTerminalView` tracks `entry.lastServerOffset` to request delta-only scrollback on reattach. However, `lastServerOffset` was only set from the initial scrollback fetch response — live output events written to the terminal never updated it. When the user switched away and back, `getScrollback({ sinceOffset })` used the stale initial offset, returning all output that had arrived via live events (already visible in the terminal). This delta was written on top of existing content, causing duplication.
-
-**Fix:** Update `entry.lastServerOffset` as live output events are processed in `writeEvent()`, so that on detach→reattach the scrollback delta fetch only returns truly new content.
-
-**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-20 — Fix terminal scroll jump (round 2: race with xterm render pipeline)
-
-**Problem:** Previous scroll-jump fix still allowed jumps. Scrolling up even 1px from the bottom while Claude Code output arrived caused the viewport to jump away.
-
-**Root cause:** xterm.js v5 decouples parsing from rendering. The `write(data, callback)` callback fires after parsing but *before* the render rAF. xterm's render calls `_innerRefresh` which sets `scrollTop = ydisp * charHeight`, overwriting the scroll restoration done in the callback. Same race existed in resize handlers where the sync restore after `fit()` was overwritten by xterm's deferred render.
-
-**Fix:** Schedule `scrollTop` restoration inside a `requestAnimationFrame` from within the write callback and after `fit()` calls. xterm's render rAF is registered first (during write processing / fit), so our rAF executes after xterm's in the same frame — guaranteeing our restoration is the last write to `scrollTop`.
-
-**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-20 — Fix speech-to-text: no audio captured, "ultrathink" in UI, silent write failures
-
-**Problem:** Speech-to-text was completely broken — pressing the shortcut showed "ultrathink" in the recording animation, audio was never captured, and transcribed text never reached the terminal.
-
-**Root cause:** Three independent bugs: (1) `AudioContext` created without `resume()` in `useAudioCapture.ts` — browser autoplay policy (Chrome 71+) left it in `"suspended"` state, so `ScriptProcessorNode.onaudioprocess` never fired and zero audio was captured. (2) Default `voicePrefix` in `appSettings.ts` was `"ultrathink"`, which displayed in the recording bar and was prepended to all transcriptions. (3) `claude.write()` call in `useSpeechToText.ts` was fire-and-forget with no `.catch()` — if the write failed, the transcription was silently lost. Additionally, the `WorkerOutMessage` type in `whisperManager.ts` was missing the `id` field on the `ready` variant (mismatching the worker), and the auto-load in `SpeechControl.tsx` had no `.catch()` for worker failures.
-
-**Fix:** Added `await audioCtx.resume()` after AudioContext creation. Changed voicePrefix default to empty string. Added `.catch()` error handling to `claude.write()` matching the codebase pattern. Fixed worker message type mismatch. Added `.catch()` to auto-load.
-
-**Affected files:** `apps/web/src/hooks/useAudioCapture.ts`, `apps/web/src/hooks/useSpeechToText.ts`, `apps/web/src/appSettings.ts`, `apps/web/src/lib/whisperManager.ts`, `apps/web/src/components/SpeechControl.tsx`
-
----
-
-## 2026-03-20 — Fix "Pending Approval" badge returning after reset
-
-**Problem:** Threads that finished work kept showing a "Pending Approval" badge. Using "Reset status badge" cleared it momentarily, but it returned on the next server sync.
-
-**Root cause:** Two issues combined: (1) Server tracked only one pending approval requestId per thread (`Map<string, string>`). When a user rejected a tool (no `post-tool-use` fired) and Claude proposed another, the old requestId was overwritten and its `approval.requested` activity was never resolved — creating permanently orphaned activities. (2) Client `syncServerReadModel` unconditionally overwrites `activities` from the server (unlike `hookStatus` which preserves client state), so locally-cleared activities were restored on the next sync. `resolveThreadStatusPill` then fell through to activity-based "Pending Approval" even though the real-time hookStatus system said the thread was idle.
-
-**Fix:** Client: Gate activity-based badges (`hasPendingApprovals`, `hasPendingUserInput`) behind `terminalStatus !== "active"` in both `resolveThreadStatusPill` and `threadSortTier`. For active terminals, hookStatus is the authoritative real-time source — null means idle at prompt, not pending approval. Server: Changed `pendingApprovalRequestIdByThread` from `Map<string, string>` to `Map<string, Set<string>>` so multiple pending approvals are tracked. `stop` and `user-prompt-submit` now resolve ALL pending approvals, not just the last one.
-
-**Affected files:** `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/lib/threadStatus.ts`, `apps/server/src/wsServer.ts`
-
----
-
-## 2026-03-20 — Move update button to sidebar footer, make it slim
-
-**Problem:** The desktop update button sat in the sidebar header, overflowing and looking ugly. A separate banner below the content area duplicated update info with too much visual weight.
-
-**Root cause:** Two separate update UI elements (header icon button + content-area banner) competed for space, and the banner was too large with multiple sub-elements.
-
-**Fix:** Removed the header rocket icon button entirely. Replaced the old banner with a slim `SidebarMenuButton` row inside `SidebarFooter` (above Settings) that just says "Update available", "Downloading X%", or "Restart to update" depending on state. Dismiss X button retained. Cleaned up unused variables and imports.
-
-**Affected files:** `apps/web/src/components/Sidebar.tsx`
-
----
-
-## 2026-03-19 — Add "Reset status badge" to thread context menu
-
-**Problem:** Thread status badges (e.g. "Pending Approval", "Working") can get stuck in a stale state when hook events arrive out of order or are missed entirely, with no way for the user to clear them.
-
-**Root cause:** Status badges are driven by two independent sources: `hookStatus` (real-time hook events) and `thread.activities` (server-synced approval/input request activities). Both can get stuck — hookStatus from missed events, activities from stale `approval.requested` without matching `approval.resolved`.
-
-**Fix:** Added a "Reset status badge" option to the thread right-click context menu. It clears the session event state machine's internal tracking via `clearThread()`, and the store's `hookStatus` + `activities` via `resetThreadStatus()`. The global `SessionEventState` instance is exposed via `set/getGlobalSessionEventState` so the Sidebar can access it.
-
-**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/store.ts`, `apps/web/src/routes/__root.tsx`, `apps/web/src/components/Sidebar.tsx`
-
----
-
-## 2026-03-19 — Fix terminal scroll jumping when output arrives while scrolled up
-
-**Problem:** When scrolled even slightly away from the bottom of the Claude Code terminal, new output caused the viewport to jump unexpectedly instead of preserving the user's scroll position.
-
-**Root cause:** Three issues in `ActiveTerminalView`:
-1. `scrollAwareWrite` relied on `scrollLockedRef` which was only set by wheel events — scrollbar drag, keyboard scroll, and sub-row pixel offsets never triggered scroll lock, so `terminal.write()` was called with no scroll protection.
-2. Scroll restoration used synchronous assignment + rAF, which raced with xterm.js's async rendering pipeline (`_innerRefresh` overwrites `scrollTop` after both).
-3. Resize handlers (ResizeObserver, window resize) only preserved scroll when scroll lock was active.
-
-**Fix:**
-- `scrollAwareWrite` now checks viewport position on every write instead of relying on the scroll lock flag. Uses `terminal.write(data, callback)` so scroll restoration runs after xterm finishes rendering.
-- Resize handlers always preserve scroll when user is scrolled up (not gated on `scrollLockedRef`).
-
-**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-19 — Fix "Working" badge stuck after cancelling Claude Code
-
-**Problem:** Pressing Escape to cancel work in Claude Code left the thread's sidebar badge stuck on "Working" indefinitely.
-
-**Root cause:** The interrupt detection in `handleOutput` required both `"⏎"` and `"Interrupted"` in the same output chunk (`data.includes("⏎") && data.includes("Interrupted")`). PTY streaming often splits the interrupt banner `"⏎ Interrupted"` across two chunks, so the pattern never matched. The Stop hook also doesn't reliably fire on all cancellation types.
-
-**Fix:** Replaced the dual-`includes` check with a proximity regex (`/⏎[^\n]{0,30}Interrupted/`) and added cross-chunk bridging — the tail of the previous output chunk is joined with the head of the current chunk so the pattern is detected even when split across two PTY writes.
-
-**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`
-
----
-
-## 2026-03-19 — Auto-focus thread terminal on Cmd+J open
-
-**Problem:** Opening the thread terminal drawer with Cmd+J did not focus the terminal, requiring an extra click.
-
-**Root cause:** `ThreadTerminalDrawer` hardcoded `autoFocus={false}` on all `TerminalViewport` instances, so the mount effect never called `terminal.focus()`.
-
-**Fix:** Set `autoFocus={true}` for the active terminal viewport (non-split), and `autoFocus={terminalId === resolvedActiveTerminalId}` in split view.
-
-**Affected files:** `apps/web/src/components/ThreadTerminalDrawer.tsx`
-
----
-
-## 2026-03-19 — Fix DiffPanel inline editor fails in worktree threads
-
-**Problem:** Clicking "Edit file" in the DiffPanel for a thread using a git worktree fails with "File not found", even though the file exists.
-
-**Root cause:** The `EditableFileView` and context menu used `projectCwd` (the base project directory) instead of `activeCwd` (which respects `worktreePath`). Diff file paths come from the worktree, but the file read RPC was sent with the original project cwd — where the file may not exist.
-
-**Fix:** Replaced all `projectCwd` usages with `activeCwd` for the file editor, edit button guard, and context menu guard. Removed the now-unused `projectCwd` variable.
-
-**Affected files:** `apps/web/src/components/DiffPanel.tsx`
-
----
-
-## 2026-03-19 — Fix flaky CheckpointReactor test timeout
-
-**Problem:** The `captures pre-turn baseline from project workspace root when thread worktree is unset` test in `CheckpointReactor.test.ts` intermittently timed out waiting for a git ref to be created.
-
-**Root cause:** The `waitForGitRefExists` call used the default 2000ms timeout, which was too tight for loaded machines where the async git checkpoint capture triggered by the `thread.turn.start` event could take longer.
-
-**Fix:** Increased the polling timeout from 2000ms to 5000ms for this specific assertion.
-
-**Affected files:** `apps/server/src/orchestration/Layers/CheckpointReactor.test.ts`
-
----
-
-## 2026-03-19 — DiffPanel: File Header Invisible in Light Mode
-
-**Problem:** The sticky file header bar in the diff panel had no background in light mode, so scrolling content showed through it making the filename and controls unreadable.
-
-**Root cause:** The sticky header only had `dark:bg-[#252a31]` — no light mode background was set, leaving it transparent.
-
-**Fix:** Added `bg-background` to the base classes of the sticky file header so it has a solid background in light mode. Dark mode continues using the custom `#252a31` override.
-
-**Affected files:** `apps/web/src/components/DiffPanel.tsx`
-
----
-
-## 2026-03-19 — Terminal Scroll Lock: Preserve Position While CC Is Working
-
-**Problem:** When Claude Code is actively working and outputting content, scrolling up to read terminal history was impossible — the viewport kept jumping back to the top/bottom on every new output or layout change.
-
-**Root cause:** `terminal.write()` and `fitAddon.fit()` in `ActiveTerminalView` had no scroll position preservation. New output or container resize (sidebar toggle, diff panel open/close) would reset the viewport position, especially when the terminal switches between normal and alternate screen buffers.
-
-**Fix:** Added a scroll lock mechanism to `ActiveTerminalView`:
-- Detects when the user scrolls up via wheel events and sets a `scrollLocked` flag
-- Wraps live output writes (`scrollAwareWrite`) to save/restore the viewport's `scrollTop` around `terminal.write()` calls, with a rAF safety net for async rendering
-- Preserves scroll position across `fitAddon.fit()` in both the ResizeObserver and window resize handlers
-- Auto-clears the lock when the user scrolls back to the bottom
-- Shows a floating "↓ New output" button so the user can jump back to the live view
-
-**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-19 — Git Quick Action: Default to Commit & Push, PR via Menu
-
-**Problem:** The git quick action button defaulted to "Commit, push & PR" which always created a PR, even when users often just want to commit and push.
-
-**Root cause:** `resolveQuickAction` returned `commit_push_pr` as the stacked action when working tree had changes, bundling PR creation into the primary button.
-
-**Fix:** Changed the quick action to "Commit & Push" (`commit_push`) by default. PR creation remains accessible via the dropdown options menu (Commit / Push / Create PR items). Updated tests to match.
-
-**Affected files:** `apps/web/src/components/GitActionsControl.logic.ts`, `apps/web/src/components/GitActionsControl.logic.test.ts`
-
----
-
-## 2026-03-19 — Diff Panel Redesign: Inline Editor, File Tree, GitKraken Theme
-
-**Problem:** The diff panel lacked a review workflow, had generic styling, and required switching to an external editor to fix issues found during review.
-
-**Root cause:** The original diff panel was a read-only viewer with no review state tracking, no file tree, and default `pierre-dark` syntax theme.
-
-**Fix:** Major diff panel redesign with multiple features:
-- **Viewed workflow**: Per-file checkbox to mark files as reviewed (collapse in place), progress counter, reset button
-- **Custom syntax theme**: `clui-dark` shiki theme with VS Code Dark+ token colors (keywords `#559CD6`, strings `#CE9178`, types `#3FC8B0`, brackets `#FFD700`)
-- **GitKraken diff backgrounds**: Hardcoded dark mode colors (additions `#315037`, deletions `#392428`, emphasis `#592A2D`)
-- **File tree sidebar**: Collapsible hierarchical tree showing folder structure, change type badges (A/M/D/R), viewed status
-- **Keyboard navigation**: `j`/`k` to navigate files, `v` to toggle viewed, `e` to edit
-- **Word-level diff**: `lineDiffType: "word"` for inline change highlighting
-- **Review progress bar**: Thin green bar filling as files are marked viewed
-- **Inline editor**: CodeMirror 6 editor (lazy-loaded) for editing files directly in the diff panel with `Cmd+S` save
-- **`projects.readFile` RPC**: New end-to-end RPC method for fetching file contents with language inference
-
-**Affected files:** `apps/web/src/components/DiffPanel.tsx`, `apps/web/src/components/DiffFileTree.tsx`, `apps/web/src/components/DiffInlineEditor.tsx`, `apps/web/src/lib/diffThemeClui.ts`, `apps/web/src/lib/diffEditorTheme.ts`, `apps/web/src/lib/diffRendering.ts`, `apps/web/src/components/DiffWorkerPoolProvider.tsx`, `apps/web/src/index.css`, `packages/contracts/src/project.ts`, `packages/contracts/src/ws.ts`, `packages/contracts/src/ipc.ts`, `apps/server/src/wsServer.ts`, `apps/web/src/wsNativeApi.ts`, `apps/web/src/lib/projectReactQuery.ts`
-
----
-
-## 2026-03-19 — Add `projects.readFile` RPC and TanStack Query hooks
-
-**Problem:** The DiffPanel inline editor needs to read file contents from the server to display original file content for editing, but no RPC method existed for reading workspace files.
-
-**Root cause:** Only `projects.writeFile` existed; no corresponding read method was implemented.
-
-**Fix:** Added `projects.readFile` RPC end-to-end: contract schemas (`ProjectReadFileInput`/`ProjectReadFileResult`), WS method tag, IPC type, server handler with path validation (reuses `resolveWorkspaceWritePath`), 1MB size limit, binary file detection, and language inference from file extension. Added client transport binding and `readFileQueryOptions` TanStack Query hook.
-
-**Affected files:** `packages/contracts/src/project.ts`, `packages/contracts/src/ws.ts`, `packages/contracts/src/ipc.ts`, `apps/server/src/wsServer.ts`, `apps/web/src/wsNativeApi.ts`, `apps/web/src/lib/projectReactQuery.ts`
-
----
-
-## 2026-03-19 — Fix "Working" badge disappearing during long thinking/subagent operations
-
-**Problem:** The sidebar "Working" badge would disappear after ~90 seconds even though Claude Code was still actively working (e.g., during ultrathink, long thinking, or subagent execution). The thread would show no badge at all despite Claude being mid-turn.
-
-**Root cause:** The `sessionEventState.ts` idle timeout (`WORKING_IDLE_TIMEOUT_MS = 90_000`) unconditionally cleared `hookStatus` to `null` after 90 seconds of no terminal output. During long-running operations that produce no output (thinking, subagent processing), the timeout would fire and remove the badge. The output recovery heuristic could restore it, but only when new output arrived — which could be minutes later.
-
-**Fix:** Modified the idle timeout callback to check `turnInProgress` and `terminalStatus` before clearing. When a turn is still in progress and the terminal is active, the timer re-arms itself instead of clearing the badge. The badge only clears when the turn ends (completion/interrupt/dormant) or the terminal becomes inactive.
-
-**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`
-
----
-
-## 2026-03-19 — Fix stale "Pending Approval" badge overriding real-time "Working" status
-
-**Problem:** The sidebar badge would show "Pending Approval" even after the user approved and Claude was actively working. The badge would eventually switch to "Working" but with a noticeable delay.
-
-**Root cause:** Two independent badge systems exist — activity-based (`derivePendingApprovals` from persisted server activities) and hook-based (`hookStatus` from real-time session events). In `resolveThreadStatusPill`, the activity-based check had higher priority than the hook-based check. When the user approved a permission, `hookStatus` transitioned to "working" immediately, but the `approval.resolved` activity could arrive late. During the gap, the stale activity-based "Pending Approval" overrode the real-time "Working" hookStatus.
-
-**Fix:** Reordered badge priority in both `resolveThreadStatusPill` (Sidebar.logic.ts) and `threadStatusPill` (threadStatus.ts) so real-time hook status (`claudeTerminalStatusPill`) is checked before activity-based pending approvals. When `hookStatus` is set (non-null), it's always the most authoritative signal. When `hookStatus` is null (idle at prompt), activity-based checks serve as the persistence fallback for reconnection scenarios.
-
-**Affected files:** `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/lib/threadStatus.ts`
-
----
-
-## 2026-03-19 — Fix 5 additional badge state machine edge cases
-
-**Problems identified via comprehensive verification of the badge state machine:**
-
-1. **Stale hookStatus after reconnect**: On WebSocket reconnect, `sessionState.clearAll()` wiped the state machine internals (timers, turnInProgress, grace periods) but the Zustand store preserved stale `hookStatus` values, causing permanently wrong badges with no recovery path.
-
-2. **Dormant terminal sort pollution**: `handleHookStatus` only guarded against dormant/new terminals for "working" hooks, not for "pendingApproval", "needsInput", or "error". Stale hooks for dormant terminals would set `hookStatus` and incorrectly sort the thread to tier 0 (needs action).
-
-3. **False positive interrupt detection**: `data.includes("Interrupted")` matched any terminal output containing the word "Interrupted", including normal prose from Claude's responses. This could falsely clear the "Working" badge mid-turn.
-
-4. **Inconsistent badge labels**: Activity-based user input showed "Awaiting Input" while hook-based showed "Needs Input" for the same state, with different colors (indigo vs amber).
-
-5. **Missed unseen completion for background threads**: `latestTurn.completedAt` was only updated via full snapshot sync (deferred for background threads), so `hasUnseenCompletion` never triggered — the completion badge would vanish after `hookStatus` cleared with no fallback.
-
-**Fixes:**
-
-1. Clear all `hookStatus` values in the store immediately after `sessionState.clearAll()` on reconnect.
-2. Moved the dormant/new terminal guard to apply to all non-completed hooks (before: only "working").
-3. Narrowed interrupt detection to require the `⏎` character (Claude Code's specific interrupt output format).
-4. Unified label to "Needs Input" with amber color in both systems.
-5. Eagerly patch `latestTurn.completedAt` for background threads when the "completed" hook fires.
-
-**Affected files:** `apps/web/src/routes/__root.tsx`, `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts`, `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.logic.test.ts`
-
----
-
-## 2026-03-19 — Fix invisible text and dark highlighting in light mode terminal
-
-**Problem:** When light mode is selected in the app, xterm.js terminal text becomes invisible on ANSI-colored backgrounds (e.g. diff highlighting from Claude Code). Green/red backgrounds for added/removed lines are too dark, and dark foreground text disappears against them. Selection highlighting is also hard to see.
-
-**Root cause:** The light theme ANSI colors in `terminalTheme.ts` were very dark (e.g. green `#4d6b3a`, red `#8b3a3a`) — appropriate as foreground on white but unreadable when CLI tools use them as background colors. Claude Code's diff output uses ANSI background colors, so dark text on dark backgrounds = invisible. Selection background used a subtle green tint that was hard to distinguish.
-
-**Fix:** Brightened all ANSI colors in both light themes (muted-earth, classic-pastel). Normal colors moved from ~30% to ~45% lightness, bright variants from ~35% to ~55% lightness. Changed selection background from green-tinted to blue-tinted with higher opacity for better visibility. Added a hint in the Appearance settings section telling users to run `/theme` inside Claude Code to match the app's resolved theme.
-
-**Affected files:** `apps/web/src/lib/terminalTheme.ts`, `apps/web/src/routes/_chat.settings.tsx`
-
----
-
-## 2026-03-19 — Add close button and Escape key to DiffPanel
-
-**Problem:** The diff panel could only be closed by clicking the diff toggle button in the toolbar, which was unintuitive. No close affordance existed within the panel itself.
-
-**Fix:** Added an X close button to the DiffPanel header (after the stacked/split toggle group) and an Escape keydown handler on the panel root. Pressing Escape while any element within the diff panel is focused will close it. The root div uses `tabIndex={-1}` so clicking anywhere in the panel makes it focusable for keyboard events.
-
-**Affected files:** `apps/web/src/components/DiffPanel.tsx`
-
----
-
-## 2026-03-19 — Fix thread terminal drawer stealing focus from Claude Code terminal
-
-**Problem:** When switching to a thread that has the thread terminal drawer open, focus lands in the drawer terminal instead of the Claude Code terminal. Users expect focus to always go to the Claude Code terminal on thread switch.
-
-**Root cause:** `ThreadTerminalDrawer` rendered `TerminalViewport` with `autoFocus={true}` hardcoded (both single and split view). On mount, both `ActiveTerminalView` (Claude Code) and `TerminalViewport` (drawer) called `terminal.focus()` via `requestAnimationFrame`. The drawer's focus call fired last, winning the race.
-
-**Fix:** Changed `autoFocus` to `false` on the drawer's `TerminalViewport` in both the single-terminal and split-view paths. The drawer terminal no longer auto-focuses on mount; users click into it when needed. The Claude Code terminal always wins focus on thread switch.
-
-**Affected files:** `apps/web/src/components/ThreadTerminalDrawer.tsx`
-
----
-
-## 2026-03-19 — Fix "Pending Approval" badge not showing in sidebar
-
-**Problem:** The "Pending Approval" badge in the sidebar would intermittently not appear for background threads until the user clicked on the thread. Sometimes it showed, sometimes not.
-
-**Root cause:** Two issues: (1) The activity-based badge path (`derivePendingApprovals(thread.activities)`) was dead code — no server code ever dispatched `thread.activity.append` with `approval.requested` kind. The only working path was the hookStatus-based path (`claudeTerminalStatusPill`), which is ephemeral client-side state lost on page refresh/reconnection. (2) For background threads, domain events are deferred — even if activities were dispatched, the full snapshot sync wouldn't run until the user navigated to that thread.
-
-**Fix:** Two-part fix:
-1. **Server (wsServer.ts):** Dispatch `thread.activity.append` commands with `approval.requested` / `approval.resolved` activities when permission-request, post-tool-use, stop, and user-prompt-submit hooks fire. Activities are now persistent in the server's read model and included in snapshots, surviving reconnection.
-2. **Client (__root.tsx):** Eagerly patch thread activities in the store when `thread.activity-appended` domain events arrive for background threads (same pattern as the existing session status eager patching), so the sidebar badge appears immediately without waiting for a full snapshot sync.
-
-**Affected files:** `apps/server/src/wsServer.ts`, `apps/web/src/routes/__root.tsx`
-
----
-
-## 2026-03-19 — Fix sidebar thread sorting with badge-driven tiered sort
-
-**Problem:** Thread ordering in the sidebar was unpredictable. Clicking an old dormant thread made it jump to the top. Working threads would drop below idle threads. Threads that just finished were hidden below actively working ones. The sort was purely `updatedAt`-based — no awareness of thread state, and `session-set` events bumped `updatedAt` on every lifecycle change (terminal resume, reconnect).
-
-**Root cause:** Two issues: (1) The in-memory projector and ProjectionPipeline both bumped `thread.updatedAt` unconditionally for every `thread.session-set` event, including terminal resume/reconnect — not just new user turns. Clicking an old thread resumes its terminal → `session-set` → `updatedAt` bumped → thread jumps to top. (2) Streaming `message-sent` events continuously bumped the working thread's `updatedAt`, keeping it above threads that had completed and needed user attention.
-
-**Fix:** Two-part fix:
-1. **Server (projector.ts, ProjectionPipeline.ts):** Only bump `updatedAt` for `session-set` when a genuinely new turn begins (`session.status === "running"` AND `activeTurnId` differs from previous). Session lifecycle events no longer affect sort order.
-2. **Client (Sidebar.logic.ts, Sidebar.tsx):** Replaced flat `updatedAt` sort with a badge-driven tiered comparator (`createThreadSortComparator`). Tiers mirror badge priority so what the user sees matches where the thread sits:
-   - Tier 0: Needs Action (Pending Approval, Needs Input, Error)
-   - Tier 1: Unseen Completion (turn finished, user hasn't visited)
-   - Tier 2: Active Work (Working/Running)
-   - Tier 3: Idle (sorted by `updatedAt` within tier)
-   Key property: merely viewing/clicking a thread never changes its tier — only real activity can promote it. Follows the Telegram/Linear model where status drives position.
-
-**Affected files:** `apps/server/src/orchestration/projector.ts`, `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.logic.test.ts`, `apps/web/src/components/Sidebar.tsx`
-
----
-
-## 2026-03-19 — Fix thread title regeneration on compact/resume
-
-**Problem:** After compacting context or resuming a thread, the thread title would be regenerated, overwriting the existing title.
-
-**Root cause:** `autoTitledThreads` is an in-memory `Set` in `wsServer.ts` that tracks which threads have been auto-titled. On server restart, this set is empty, so any prompt submit (including those triggered by compact/resume) would re-trigger title generation. Additionally, the in-memory projector lacked the manual-title guard that the SQL projection pipeline had.
-
-**Fix:**
-- Seed `autoTitledThreads` from the projection snapshot on startup — any thread with a title other than "New thread" is marked as already titled.
-- Added manual-title guard to the in-memory projector (`projector.ts`) to skip auto-title updates when `titleSource` is "manual", matching the existing guard in `ProjectionPipeline.ts`.
-
-**Affected files:**
-- `apps/server/src/wsServer.ts`
-- `apps/server/src/orchestration/projector.ts`
-
----
-
-## 2026-03-19 — Add "Viewed" file review workflow and GitKraken diff colors
-
-**Problem:** The diff panel had no way to track review progress across files, and dark mode diff colors used generic `color-mix()` values that lacked contrast.
-
-**Root cause:** Missing review state management and theme-specific CSS for the shadow DOM `FileDiff` component.
-
-**Fix:**
-- Added `viewedFiles` state with toggle/reset callbacks; viewed files collapse (conditional rendering) and sort to the bottom of the list.
-- Added per-file review header with checkbox, file path (basename emphasized), and +/- stats computed from hunks.
-- Added review progress counter ("3/8 viewed") and reset button in the panel header.
-- Split `DIFF_PANEL_UNSAFE_CSS` into `DIFF_CSS_LIGHT` (existing color-mix approach) and `DIFF_CSS_DARK` (hardcoded GitKraken colors), selected by `resolvedTheme`.
-- Added `.dark` scoped overrides in `index.css` for diff viewport and file card backgrounds.
-
-**Affected files:**
-- `apps/web/src/components/DiffPanel.tsx`
-- `apps/web/src/index.css`
-
----
-
-## 2026-03-19 — Change git toolbar quick action from "Commit & Push" to "Commit, Push & PR"
-
-**Problem:** The git quick action button in the toolbar only performed "Commit & Push" (`commit_push`) when there were working tree changes, requiring an extra step to create a PR.
-
-**Root cause:** `resolveQuickAction` returned `commit_push` as the default action for dirty working trees.
-
-**Fix:** Changed the quick action to `commit_push_pr` with label "Commit, push & PR" so the full commit-push-PR flow runs in one click. Updated the icon mapping to show the GitHub PR icon for this action.
-
-**Affected files:**
-- `apps/web/src/components/GitActionsControl.logic.ts`
-- `apps/web/src/components/GitActionsControl.tsx`
-- `apps/web/src/components/GitActionsControl.logic.test.ts`
-
----
-
-## 2026-03-18 — Add window drag region to active thread toolbar
-
-**Problem:** In Electron, the window could only be dragged from the sidebar header when a thread was active. The main toolbar at the top had no drag region, forcing users to reach for the sidebar to reposition the window.
-
-**Root cause:** `TerminalToolbar` did not apply the `drag-region` CSS class, unlike other top-bar areas (`_chat.index.tsx`, `Sidebar.tsx`, `DiffPanel.tsx`).
-
-**Fix:** Conditionally add the `drag-region` class to the toolbar container when running in Electron. All interactive elements (buttons, inputs, toggles) remain clickable via existing CSS `no-drag` rules.
-
-**Affected files:**
-- `apps/web/src/components/TerminalToolbar.tsx`
-
----
-
-## 2026-03-18 — Default git toolbar quick action to Commit & Push
-
-**Problem:** The git toolbar button defaulted to "Commit, push & PR" on non-default branches without an open PR, and "Push & create PR" when ahead. Users wanted "Commit & Push" / "Push" as the default instead.
-
-**Root cause:** `resolveQuickAction` in `GitActionsControl.logic.ts` conditionally chose `commit_push_pr` as the quick action when no open PR existed and the branch wasn't the default.
-
-**Fix:** Simplified `resolveQuickAction` to always return `commit_push` (Commit & Push / Push) as the default action, removing the automatic PR creation from the quick action. PR creation remains available via the dropdown menu.
-
-**Affected files:**
-- `apps/web/src/components/GitActionsControl.logic.ts`
-- `apps/web/src/components/GitActionsControl.logic.test.ts`
-
----
-
-## 2026-03-18 — Fix speech-to-text: replace MediaRecorder with raw PCM capture
-
-**Problem:** Speech-to-text produced no transcription output. Speaking into the microphone resulted in silence — nothing was ever written to the terminal.
-
-**Root cause:** The audio capture pipeline used `MediaRecorder` → webm/opus blob → `AudioContext.decodeAudioData()` → Float32Array. This roundtrip is unreliable:
-1. `MediaRecorder` encodes audio into webm/opus codec format.
-2. `new AudioContext({ sampleRate: 16000 }).decodeAudioData()` does not reliably resample across browsers and Electron — the spec says the context "may" honor the requested sample rate.
-3. The `getUserMedia({ sampleRate: 16000 })` constraint is ignored by most browsers, so audio arrives at 44.1/48kHz but is treated as 16kHz, producing garbage input for Whisper.
-
-**Fix:** Rewrote `useAudioCapture` to capture raw PCM directly via `ScriptProcessorNode`, bypassing `MediaRecorder` entirely:
-- `getUserMedia` requests mono audio at the system's native sample rate (no fake 16kHz constraint).
-- `ScriptProcessorNode` copies raw Float32Array PCM chunks on each audio process event.
-- On stop, chunks are concatenated and explicitly resampled from the native rate (44.1k/48k) to 16kHz using linear interpolation.
-- No encoding/decoding roundtrip — the Float32Array goes straight to the Whisper worker.
-
-**Affected files:**
-- `apps/web/src/hooks/useAudioCapture.ts`: Complete rewrite — raw PCM capture with explicit resampling.
-
----
-
-## 2026-03-18 — Fix speech-to-text: microphone permissions, status deadlock, error display
-
-**Problem:** Voice input did nothing when clicked. Three compounding issues:
-1. Electron never granted microphone permission — no `setPermissionRequestHandler` on the session, so `getUserMedia()` was silently denied. On macOS, `systemPreferences.askForMediaAccess("microphone")` was never called, so the OS permission dialog never appeared.
-2. When the Whisper model wasn't ready, `startRecording` set status to `"notInstalled"` but the function only proceeded on `"idle"`, creating a permanent deadlock — the mic button became unresponsive until page refresh.
-3. Errors (permission denied, model not loaded) were captured in the speech store but never displayed in the UI.
-
-**Root cause:** Missing Electron permission plumbing, a status state machine bug, and missing error UI.
-
-**Fix:**
-- Added `setPermissionRequestHandler` in Electron's `createWindow()` to grant `"media"` permission, with macOS-specific `askForMediaAccess("microphone")` call.
-- Fixed `startRecording` and `toggle` in `useSpeechToText` to also proceed from `"notInstalled"` status, and clear errors on retry.
-- Added descriptive error messages for permission denial and model-not-loaded states.
-- `SpeechControl` now reads the error store, shows errors in the mic tooltip, and tints the mic icon red on error.
-- Falls through to download popover when status is `"notInstalled"`.
-
-**Affected files:**
-- `apps/desktop/src/main.ts`: Added `systemPreferences` import, `setPermissionRequestHandler` with macOS `askForMediaAccess`.
-- `apps/web/src/hooks/useSpeechToText.ts`: Fixed status deadlock, added permission error detection, clear errors on retry.
-- `apps/web/src/components/SpeechControl.tsx`: Added error display in tooltip, red tint on error, handle `"notInstalled"` status.
-
----
-
-## 2026-03-18 — Fix YOLO mode lost on dormant session resume
-
-**Problem:** When a session running in "Bypass permissions" (YOLO) mode goes dormant and is later resumed (auto-resume or manual Resume button), the `dangerouslySkipPermissions` flag was not passed to the `claude.start()` call. The session would resume in safe/default permission mode despite the toggle still being on in the UI.
-
-**Root cause:** `DormantTerminalView.handleResume` in `ThreadTerminalView.tsx` did not read `yoloMode` from `terminalStateStore`. The toolbar's resume path (`TerminalToolbar.handleResume`) correctly passed the flag, but the dormant view's resume path was missing it entirely.
-
-**Fix:** Added `yoloMode` selector from `useTerminalStateStore` in `DormantTerminalView` and forwarded `dangerouslySkipPermissions` in the resume `claude.start()` call, matching the toolbar's behavior.
-
-**Affected files:** `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-18 — Add YOLO mode toggle to toolbar (mid-session permission bypass)
-
-**Problem:** YOLO mode (auto-accept all tool calls) could only be set at session start via the checkbox on the launch screen. There was no way to toggle it on a running session without manually restarting.
-
-**Fix:** Added a YOLO mode toggle button to `TerminalToolbar` with a confirmation popover explaining the behavior. When toggled, the session is restarted with `--resume` + `--dangerously-skip-permissions`, preserving conversation context while changing the permission mode. The YOLO state is persisted per-thread in `terminalStateStore` so it survives navigation and is respected by Resume/New Session buttons. The start screen checkbox now reads from/writes to the same store, keeping both UIs in sync.
-
-**Affected files:** `apps/web/src/terminalStateStore.ts`, `apps/web/src/components/TerminalToolbar.tsx`, `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-18 — Fix sidebar thread sorting: clicking old threads no longer jumps to top
-
-**Problem:** Thread ordering in the sidebar was unpredictable. Clicking an old dormant thread made it jump to the top (even without sending any input). Working threads would drop below idle threads. The sort was purely `updatedAt`-based, and `session-set` events bumped `updatedAt` on every session lifecycle change (terminal resume, reconnect), not just on meaningful user activity.
-
-**Root cause:** The in-memory projector and ProjectionPipeline both bumped `thread.updatedAt` unconditionally for every `thread.session-set` event. This includes terminal resume/reconnect (status → "ready"), not just new user turns (status → "running"). Clicking an old thread resumes its terminal → `session-set` fires → `updatedAt` bumped → thread jumps to top. Similarly, other threads getting spurious `session-set` bumps would push actively working threads down.
-
-**Fix:** Changed both the in-memory projector (`projector.ts`) and the SQLite projection pipeline (`ProjectionPipeline.ts`) to only bump `updatedAt` for `session-set` when a genuinely new turn begins: `session.status === "running"` AND `activeTurnId` differs from the previous turn. Session lifecycle events (resume, reconnect, idle transitions) no longer affect sort order. Also extracted a shared `compareThreadsForSidebar` comparator in `Sidebar.logic.ts` for the two sort call-sites. Follows the standard messaging-app pattern (Slack, WhatsApp, iMessage, Telegram): only new message/turn activity affects list position; viewing never reorders.
-
-**Affected files:** `apps/server/src/orchestration/projector.ts`, `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/web/src/components/Sidebar.logic.ts`, `apps/web/src/components/Sidebar.tsx`
-
----
-
-## 2026-03-18 — Fix Whisper speech-to-text: key-repeat auto-stop, hallucinations, slow transcription
-
-**Problem:** Holding Cmd+Shift+V auto-stops recording immediately, producing phantom text like "ultrathink you". Transcription with whisper-small is extremely slow (30-60s+ for short clips). Long audio recordings may hang or never complete.
-
-**Root cause:**
-1. The `keydown` handler in `_chat.tsx` didn't filter `event.repeat`, so holding the shortcut rapidly toggled start→stop→start→stop.
-2. Sub-second recordings cause Whisper to hallucinate common phrases ("you", "Thank you", etc.) on near-silence, which combined with the voice prefix to produce "ultrathink you".
-3. The Whisper worker used default WASM fp32 inference with no quantization — the slowest possible path.
-4. No chunked processing for long audio, causing the model to choke on recordings >30s.
-
-**Fix:**
-- `_chat.tsx`: Added `event.repeat` guard to prevent key-repeat from toggling speech.
-- `useSpeechToText.ts`: Added minimum audio duration guard (0.7s / 11,200 samples at 16kHz) — rejects too-short recordings before transcription. Added hallucination phrase filter (Set of known Whisper phantom outputs).
-- `whisperWorker.ts`: Added WebGPU detection with fp32 fallback, q8 quantization for WASM (massive speedup). Added `chunk_length_s: 30` and `stride_length_s: 5` for chunked processing of long recordings.
-
-**Affected files:** `apps/web/src/routes/_chat.tsx`, `apps/web/src/hooks/useSpeechToText.ts`, `apps/web/src/workers/whisperWorker.ts`
-
----
-
-## 2026-03-18 — Filter terminal query responses leaking as visible text
-
-**Problem:** Garbage escape sequences (`^[]11;rgb:0c0c/0c0c/0c0c^[\^[[16;1R`) appear in terminal threads and keep reappearing after deletion.
-
-**Root cause:** Claude Code CLI queries the terminal for background color (OSC 11) and cursor position (DSR/CPR). xterm.js correctly generates response sequences, but the `onData` handler forwards them back to the PTY as raw input. The shell then echoes these responses as visible text.
-
-**Fix:** Added `stripTerminalResponses()` utility that filters out OSC responses (`\x1b]...\x1b\\` or `\x1b]...\x07`) and CPR responses (`\x1b[row;colR`) from xterm.js `onData` before forwarding to the server. Applied to all three terminal input handlers.
-
-**Affected files:**
-- `apps/web/src/lib/terminalInputFilter.ts` (new): Regex-based filter for terminal query responses.
-- `apps/web/src/lib/terminalInputFilter.test.ts` (new): 8 test cases covering OSC 10/11, CPR, mixed input.
-- `apps/web/src/components/ThreadTerminalView.tsx`: Filter `onData` before forwarding to PTY.
-- `apps/web/src/components/ProjectTerminalDrawer.tsx`: Same filter applied.
-- `apps/web/src/components/ThreadTerminalDrawer.tsx`: Same filter applied.
-
----
-
-## 2026-03-18 — Detect API errors (529/429/5xx) and clear stuck "Working" badge
-
-**Problem:** When Claude Code hits an API error (e.g. 529 overloaded, 429 rate limit), the sidebar badge stays stuck on "Working" because the CLI doesn't fire a `/hooks/stop` callback on API errors. The only recovery was the 90-second idle timeout.
-
-**Root cause:** The hook-based status system relies on Claude Code firing stop hooks to transition out of "working" state. API errors are printed to terminal output but don't trigger any hook, leaving `hookStatus` stuck.
-
-**Fix:** Added regex-based detection of `API Error: 429|5xx` patterns in terminal output (alongside existing `Interrupted` detection). When matched while `hookStatus` is `"working"`, immediately transitions to `"error"` status, clears `turnInProgress`, and stops the idle timer.
-
-**Affected files:**
-- `apps/web/src/lib/sessionEventState.ts`: Added `API_ERROR_RE` regex and error detection in `handleOutput`.
-- `apps/web/src/lib/sessionEventState.test.ts`: Added tests for 529, 429, and non-working-state scenarios.
-
----
-
-## 2026-03-18 — Fix duplicate terminal content when switching back to active thread
-
-**Problem:** When switching away from an active Claude Code thread and switching back, the terminal content (banner, prompt, output) appeared duplicated — the same lines rendered twice.
-
-**Root cause:** The scrollback delta from `getScrollback(sinceOffset)` and live `output` events buffered during the async RPC overlap in content. Both are written to xterm.js with no deduplication, causing the visible duplication.
-
-**Fix:** Added a monotonic byte `offset` field to `ClaudeOutputEvent`. The server includes the scrollback buffer offset after each chunk is appended. On the client, after flushing the scrollback delta (which updates `lastServerOffset`), buffered output events with `offset <= lastServerOffset` are skipped since the delta already covered them.
-
-**Affected files:**
-- `packages/contracts/src/claude-terminal.ts`: Added `offset: Schema.Number` to `ClaudeOutputEvent`.
-- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`: Include `entry.scrollbackBuffer.offset` in emitted output events.
-- `apps/web/src/components/ThreadTerminalView.tsx`: Skip buffered output events already covered by the scrollback delta.
-
----
-
-## 2026-03-18 — Persist Whisper model across releases
-
-**Problem:** Every app reload/release required re-downloading the Whisper speech model, even though the model files were still present in the browser's Cache API from a previous download.
-
-**Root cause:** `speechStore.modelDownloaded` starts as `false` on every app load (ephemeral Zustand state, no persistence). The UI always showed the download prompt regardless of whether the model was already cached.
-
-**Fix:** Added `isModelCached()` to `whisperManager` that probes the browser's Cache API for existing HuggingFace Transformers model files. `SpeechControl` now checks the cache on mount and silently auto-loads the model if found (instant from cache, no network).
-
-**Affected files:**
-- `apps/web/src/lib/whisperManager.ts`: Added `isModelCached()` that checks the `transformers-cache` Cache API store.
-- `apps/web/src/components/SpeechControl.tsx`: Added `useEffect` on mount to probe cache and auto-load.
-
----
-
-## 2026-03-18 — Fix false "Working" badge on new threads during typing
-
-**Problem:** Creating a new thread and typing the first prompt showed a "Working" badge even though Claude Code hadn't started processing anything. The badge appeared after ~8 seconds of the terminal being active.
-
-**Root cause:** The output recovery heuristic in `sessionEventState.ts` set `hookStatus = "working"` whenever ANY terminal output arrived on an active terminal with null hookStatus — including PTY keystroke echo, TUI redraws, and cursor movement. After the 8-second startup grace expired, every keystroke the user typed triggered the false badge. cmux has the [same issue](https://github.com/manaflow-ai/cmux/issues/1238).
-
-**Fix:** Added a `turnInProgress` flag per thread that gates the output recovery heuristic:
-- Set `true` when a real hook fires (`UserPromptSubmit` → "working", `PostToolUse` → "working", `PermissionRequest` → "needsInput"/"pendingApproval")
-- Set `false` when the turn ends (`Stop` → "completed", terminal exits/hibernates, "Interrupted" detected)
-- Output recovery ONLY fires when `turnInProgress === true`
-
-This means: new thread typing (no hooks yet) → `turnInProgress = false` → output recovery blocked → no false badge. Long tool execution where idle timer cleared hookStatus → `turnInProgress = true` → output recovery works correctly.
-
-**Affected files:** `apps/web/src/lib/sessionEventState.ts`, `apps/web/src/lib/sessionEventState.test.ts` (8 new tests)
-
----
-
-## 2026-03-18 — Extract session event state from EventRouter into testable module
-
-**Problem:** The EventRouter component in `__root.tsx` had 4 Maps and complex timer/grace period logic inside a `useEffect` closure, making it untestable. Flagged as P2 tech debt.
-
-**Root cause:** All session event state (completedAt, workingIdleTimers, workingIdleLastReset, terminalStartedAt) and their associated logic were tightly coupled to the React component lifecycle.
-
-**Fix:**
-- Extracted Maps and timer/grace logic into `apps/web/src/lib/sessionEventState.ts` as a standalone `createSessionEventState()` factory with injectable deps (including `now()` for testing).
-- Updated `__root.tsx` to create and use the extracted module, keeping notification dispatch and navigation in the component.
-- Added 16 unit tests in `sessionEventState.test.ts` covering startup grace, completion grace, idle timers, interrupt detection, and cleanup.
-
-**Affected files:** `apps/web/src/lib/sessionEventState.ts` (new), `apps/web/src/lib/sessionEventState.test.ts` (new), `apps/web/src/routes/__root.tsx`
-
----
-
-## 2026-03-18 — Fix double Claude Code banner on session resume
-
-**Problem:** When clicking on a finished/dormant thread and resuming, or switching away from an active thread and back, the Claude Code startup banner (`▐▛███▜▌ Claude Code v2.1.78`) appeared twice — old session content stacked on top of new content.
-
-**Root cause (two bugs):**
-1. **Server:** `ScrollbackRingBuffer` was never cleared when starting a new session on an existing thread entry. Old output persisted and accumulated with new session output.
-2. **Client:** When the server's ring buffer trimmed old lines and couldn't provide a delta, it fell through to full materialization — but the response was indistinguishable from a delta. The client appended full content on top of existing cached terminal content instead of resetting.
-
-**Fix:**
-- `ScrollbackRingBuffer.clear()` now also resets `_totalBytes` and `_droppedBytes` to zero, creating a clean epoch boundary.
-- `materializeSince()` returns `null` (force full reset) when `sinceOffset > _totalBytes`, detecting stale offsets from a previous session epoch.
-- `ClaudeSessionManager.startSession()` clears the scrollback buffer when reusing an existing session entry.
-- Added `reset` flag to `getScrollback` response so the client knows when it received full content instead of a delta (covers both session restart and ring buffer trim cases).
-- `ActiveTerminalView.flushIfReady()` uses the `reset` flag to clear the terminal (`\u001bc`) before writing, preventing stale content from persisting.
-
-**Affected files:** `packages/contracts/src/ipc.ts`, `apps/server/src/terminal/Services/ClaudeSession.ts`, `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`, `apps/server/src/wsServer.ts`, `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-18 — Fix false "Working" badge on finished/dormant threads
-
-**Problem:** Clicking a finished thread immediately showed a "Working" badge even though nothing was actively running. Additionally, threads that completed work sometimes stayed stuck on "Working" indefinitely.
-
-**Root cause (two bugs):**
-1. `DormantTerminalView` auto-resumed ALL dormant threads unconditionally — including threads where Claude finished its work and the CLI exited. The resumed CLI outputted startup text, and the output recovery heuristic (`__root.tsx`) interpreted it as "working" (since `terminalStatus === "active"` and `hookStatus === null`).
-2. After the "completed" hook fired and hookStatus was cleared to null, post-completion CLI output (prompt rendering) arriving after the 2-second `COMPLETED_GRACE_MS` window would re-trigger the output recovery heuristic, setting hookStatus back to "working" with no way to clear it except the 90-second idle timer.
-
-**Fix:**
-- Added `dormantReason` field to `Thread` ("hibernated" | "exited" | null) to distinguish LRU-evicted threads from CLI-exited threads. Only auto-resume hibernated threads.
-- Added 8-second startup grace period (`terminalStartedAt` map) to suppress output→"working" inference during CLI startup.
-- Increased `COMPLETED_GRACE_MS` from 2s to 8s to cover post-completion CLI output.
-- Stopped deleting `completedAt` entry in the output recovery path — keeps the grace window alive until a real "working" hook (new turn) clears it.
-- Real hook events (`UserPromptSubmit`, `PostToolUse`) clear both `terminalStartedAt` and `completedAt`, re-enabling output recovery for subsequent turns.
-
-**Affected files:** `apps/web/src/types.ts`, `apps/web/src/store.ts`, `apps/web/src/routes/__root.tsx`, `apps/web/src/components/ThreadTerminalView.tsx`, `apps/web/src/store.test.ts`, `apps/web/src/worktreeCleanup.test.ts`
-
----
-
-## 2026-03-18 — Fix voice input: transcription, push-to-talk UX, voice prefix
-
-**Problem:** Voice input recorded audio but transcribed text never reached the terminal. UX was a confusing toggle; no way to auto-prepend a prompt prefix like "ultrathink".
-
-**Root cause:** The whisper web worker dropped the `id` field from incoming messages, so the manager could never match transcription results to pending promises — they silently resolved nothing. The keyboard shortcut handler also just set store status without actually starting audio capture.
-
-**Fix:**
-- `apps/web/src/workers/whisperWorker.ts`: Pass `id` through in all `IncomingMessage`/`OutgoingMessage` types and every `postMessage` call.
-- `apps/web/src/hooks/useSpeechToText.ts`: Exposed separate `startRecording`/`stopRecording` (not just `toggle`). Added empty-transcription guard. Prepends configurable `voicePrefix` and appends `\n` to auto-submit. Listens for `clui:speech-toggle` custom event for keyboard shortcut support.
-- `apps/web/src/components/SpeechControl.tsx`: Replaced toggle UX with explicit start/stop buttons. Recording state shows a stop icon. Idle tooltip shows the active voice prefix. Active recording shows the prefix tag.
-- `apps/web/src/appSettings.ts`: Added `voicePrefix` setting (default: `"ultrathink"`).
-- `apps/web/src/routes/_chat.settings.tsx`: Added voice prefix input field in Speech-to-Text settings section.
-- `apps/web/src/routes/_chat.tsx`: Keybinding handler dispatches `clui:speech-toggle` custom event instead of directly manipulating store state.
-
-**Affected files:** `apps/web/src/workers/whisperWorker.ts`, `apps/web/src/hooks/useSpeechToText.ts`, `apps/web/src/components/SpeechControl.tsx`, `apps/web/src/appSettings.ts`, `apps/web/src/routes/_chat.settings.tsx`, `apps/web/src/routes/_chat.tsx`, `docs/CHANGELOG-DEV.md`
-
----
-
-## 2026-03-17 — Claude Code CLI check and settings cleanup
-
-**Problem:** Settings page contained dead t3code leftovers (Codex App Server binary/home path, assistant streaming toggle). New users had no way to know if Claude Code CLI was installed.
-
-**Root cause:** Settings were carried over from the t3code fork but never wired to any runtime code. The `providers` array in server config was always empty.
-
-**Fix:**
-- `apps/web/src/routes/_chat.settings.tsx`: Added "Claude Code CLI" section at top of settings with link to https://claude.com/product/claude-code for new users. Removed dead "Codex App Server" and "Responses" sections.
-- `apps/web/src/appSettings.ts`: Removed dead schema fields `codexBinaryPath`, `codexHomePath`, `enableAssistantStreaming`.
-
-**Affected files:** `apps/web/src/routes/_chat.settings.tsx`, `apps/web/src/appSettings.ts`, `docs/CHANGELOG-DEV.md`
-
----
-
-## 2026-03-17 — Speech-to-text (Whisper) voice input feature
-
-**Problem:** No voice input capability in the terminal toolbar; users had to type all input manually.
-
-**Root cause:** N/A — new feature.
-
-**Fix:** Implemented end-to-end speech-to-text pipeline using Whisper running locally in a Web Worker:
-- `packages/contracts`: Added `speech.toggle` keybinding command and `SpeechToggleShortcut` schema.
-- `apps/web/src/appSettings.ts`: Added `whisperModel` and `whisperLanguage` settings with defaults (`"small"`, `"en"`).
-- `apps/web/src/routes/_chat.settings.tsx`: Added Settings UI section for downloading/selecting the Whisper model.
-- `apps/web/src/workers/whisperWorker.ts`: Web Worker that loads and runs the Whisper ONNX model via `@huggingface/transformers`.
-- `apps/web/src/lib/whisperManager.ts`: Singleton manager wrapping the worker with `ensureModel`, `transcribe`, and `isModelReady` APIs.
-- `apps/web/src/hooks/useAudioCapture.ts`: Hook for microphone access, MediaRecorder, real-time audio level analysis, and PCM Float32Array output.
-- `apps/web/src/speechStore.ts`: Zustand store for speech UI state (`idle | recording | transcribing | downloading | notInstalled`), audio level, download progress.
-- `apps/web/src/hooks/useSpeechToText.ts`: Orchestration hook — on toggle: checks model readiness, starts/stops recording, transcribes audio, writes result to the active thread terminal.
-- `apps/web/src/components/SpeechControl.tsx`: Toolbar button with 5 visual states (idle, not-installed, downloading, recording with waveform bars, transcribing spinner).
-- `apps/web/src/index.css`: Added `pulse-mic` and `waveform-bar` keyframe animations.
-- `apps/web/src/components/TerminalToolbar.tsx`: Mounted `<SpeechControl>` in the terminal actions area.
-- `apps/web/src/routes/_chat.tsx`: Wired `isSpeechToggleShortcut` (⌘⇧V) into the global keydown handler.
-
-**Files:** `packages/contracts/src/keybindings.ts`, `apps/web/src/appSettings.ts`, `apps/web/src/routes/_chat.settings.tsx`, `apps/web/src/workers/whisperWorker.ts`, `apps/web/src/lib/whisperManager.ts`, `apps/web/src/hooks/useAudioCapture.ts`, `apps/web/src/speechStore.ts`, `apps/web/src/hooks/useSpeechToText.ts`, `apps/web/src/components/SpeechControl.tsx`, `apps/web/src/index.css`, `apps/web/src/components/TerminalToolbar.tsx`, `apps/web/src/routes/_chat.tsx`
-
----
-
-## 2026-03-17 — Enter key triggers Start Claude on new thread view
-
-**Problem:** When switching to a new thread, users had to click the "Start Claude" button with the mouse. Pressing Enter did nothing.
-
-**Fix:** Added a keydown listener to the `NewThreadView` container that triggers `handleStart` on Enter. The container auto-focuses on mount so Enter works immediately after thread switch. Input fields (branch name, prefix) are excluded so typing in them is unaffected.
-
-**Files:** `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-17 — Fix mouse wheel scrolling in alternate screen buffer (Claude Code TUI)
-
-**Problem:** Users cannot scroll within Claude Code's TUI conversation view when running in a thread terminal. Mouse wheel events do nothing — the output stays static even though there is more content above/below the visible area.
-
-**Root cause:** Claude Code runs in xterm.js alternate screen buffer mode (no scrollback). xterm.js v6 has a fallback that converts wheel events to arrow keys for alt-screen apps, but it silently eats wheel events when `CoreMouseService.consumeWheelEvent()` returns 0 — which happens when `_renderService.dimensions.device.cell.height` is undefined (common during WebGL context transitions after terminal detach/reattach). The event is canceled (`preventDefault` + `stopPropagation`) with no input sent to the PTY.
-
-**Fix:** Added a wheel event listener in capture phase on the terminal container in `ActiveTerminalView`. When the terminal is in alternate buffer mode, wheel events are intercepted before xterm.js's buggy fallback and reliably converted to arrow key escape sequences (`\x1b[A` / `\x1b[B`) sent directly to the PTY. Normal buffer mode is unaffected — events pass through to xterm.js for native scrollback scrolling.
-
-**Files:** `apps/web/src/components/ThreadTerminalView.tsx`
-
----
-
-## 2026-03-17 — Move update banner to sidebar bottom, make subtle, add dismiss
-
-**Problem:** The desktop update banner appeared at the top of the sidebar as a large, prominent Alert component that took up too much visual space.
-
-**Fix:** Moved the banner from inside `SidebarContent` (top) to just above `SidebarFooter` (bottom). Replaced the full `Alert` component with a compact inline row using smaller icons, truncated text, ghost button, and muted colors. Added a dismiss button (X icon) with local state to hide the banner.
-
-**Files:** `apps/web/src/components/Sidebar.tsx`
-
----
-
-## 2026-03-16 — Working badge recovery fix
-
-**Problem:** The "Working" sidebar badge would disappear while Claude was still actively working. A thread could be visibly producing output with no badge shown.
-
-**Root cause:** The 90-second idle timer in `__root.tsx` cleared `hookStatus` to `null` during gaps in terminal output (e.g., long tool executions). Once cleared, subsequent output could never restore it — the output handler only reset the timer when `hookStatus` was already `"working"`, creating a one-way door.
-
-**Fix:** Generalized the narrow "ompact" (compaction) recovery check to recover `hookStatus = "working"` on *any* output arriving on an active terminal with null hookStatus. The 2-second completion grace period prevents false recovery right after a Stop event.
-
-**File:** `apps/web/src/routes/__root.tsx` (output event handler, ~line 460)
-
-**Context:** Previously a narrow recovery existed only for context compaction output (checking for "ompact" in the data). That was added because compaction produced no hooks, making it look like Claude was done. The generalized fix covers compaction plus all other silent-gap scenarios.
+[Showing lines 1-645 of 662 (50.0KB limit). Use offset=646 to continue.]

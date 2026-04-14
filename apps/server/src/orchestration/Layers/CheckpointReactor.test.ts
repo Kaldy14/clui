@@ -206,6 +206,7 @@ describe("CheckpointReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
+        harness: "claudeCode",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         branch: null,

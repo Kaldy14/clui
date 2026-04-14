@@ -161,6 +161,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           model: command.model,
+          harness: command.harness,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
           branch: command.branch,
@@ -194,11 +195,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (command.harness !== undefined && thread.terminalStatus !== "new") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Harness can only be changed before the thread has started.",
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -212,6 +219,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
+          ...(command.harness !== undefined ? { harness: command.harness } : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           ...(command.titleSource !== undefined ? { titleSource: command.titleSource } : {}),

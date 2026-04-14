@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind } from "@clui/contracts";
+import { DEFAULT_CODING_HARNESS, type CodingHarness, type ProviderKind } from "@clui/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "clui:app-settings:v1";
@@ -31,6 +31,9 @@ export type WhisperModelTier = (typeof WHISPER_MODEL_TIERS)[number]["id"];
 
 const AppSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  defaultCodingHarness: Schema.Literals(["claudeCode", "pi"]).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_CODING_HARNESS)),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -65,6 +68,8 @@ export interface AppModelOption {
   name: string;
   isCustom: boolean;
 }
+
+export const CODING_HARNESS_OPTIONS = ["claudeCode", "pi"] as const satisfies readonly CodingHarness[];
 
 const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
 
