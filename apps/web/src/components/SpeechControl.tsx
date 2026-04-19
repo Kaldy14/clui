@@ -1,3 +1,4 @@
+import { type ThreadId } from "@clui/contracts";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DownloadIcon, Loader2Icon, MicIcon, SettingsIcon, SquareIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -10,8 +11,14 @@ import { Button } from "./ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export function SpeechControl({ threadId }: { threadId: string }) {
-  const { startRecording, stopRecording } = useSpeechToText(threadId);
+export function SpeechControl({
+  threadId,
+  harness,
+}: {
+  threadId: ThreadId;
+  harness: "claudeCode" | "pi";
+}) {
+  const { startRecording, stopRecording } = useSpeechToText(threadId, harness);
   const status = useSpeechStore((s) => s.status);
   const modelDownloaded = useSpeechStore((s) => s.modelDownloaded);
   const audioLevel = useSpeechStore((s) => s.audioLevel);
@@ -177,7 +184,7 @@ export function SpeechControl({ threadId }: { threadId: string }) {
 
 // ── Download popover shown when no model is installed ────────────────
 
-function SpeechDownloadPopover({ threadId: _threadId }: { threadId: string }) {
+function SpeechDownloadPopover({ threadId: _threadId }: { threadId: ThreadId }) {
   const navigate = useNavigate();
   const [downloading, setDownloading] = useState(false);
   const downloadProgress = useSpeechStore((s) => s.downloadProgress);

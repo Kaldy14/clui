@@ -1,4 +1,12 @@
-import { EDITORS, type EditorId, type KeybindingCommand, type ProjectId, type ProjectScript, type ThreadId } from "@clui/contracts";
+import {
+  EDITORS,
+  type EditorId,
+  type KeybindingCommand,
+  type ProjectId,
+  type ProjectPrompt,
+  type ProjectScript,
+  type ThreadId,
+} from "@clui/contracts";
 import { isElectron } from "../env";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -17,6 +25,7 @@ import { stripDiffSearchParams } from "../diffRouteSearch";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../keybindings";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { submitThreadPrompt } from "../lib/threadInput";
 import { claudeTerminalStatusPill } from "../lib/threadStatus";
 import { isMacPlatform, isWindowsPlatform, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -33,6 +42,7 @@ import GitActionsControl from "./GitActionsControl";
 import { SpeechControl } from "./SpeechControl";
 import type { Icon } from "./Icons";
 import { CursorIcon, VisualStudioCode, Zed } from "./Icons";
+import ProjectPromptsControl, { type NewProjectPromptInput } from "./ProjectPromptsControl";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import { Button } from "./ui/button";
 import { Group, GroupSeparator } from "./ui/group";
@@ -40,6 +50,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Toggle } from "./ui/toggle";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { toastManager } from "./ui/toast";
 
 // ── Status Badge ──────────────────────────────────────────────────────
 
@@ -324,11 +335,100 @@ export default function TerminalToolbar({
   const navigate = useNavigate();
   const isGitRepo = gitCwd !== null;
 
-  // ── Project Scripts ──
+  // ── Project prompts + scripts ──
   const { data: serverConfig } = useQuery(serverConfigQueryOptions());
   const keybindings = useMemo(() => serverConfig?.keybindings ?? [], [serverConfig?.keybindings]);
+  const prompts = useMemo(() => project?.prompts ?? [], [project?.prompts]);
   const scripts = useMemo(() => project?.scripts ?? [], [project?.scripts]);
+  const [lastInvokedPromptId, setLastInvokedPromptId] = useState<string | null>(null);
   const [lastInvokedScriptId, setLastInvokedScriptId] = useState<string | null>(null);
+  const canSendPrompt = thread?.terminalStatus === "active";
+
+  const persistProjectMetadata = useCallback(
+    async (input: {
+      prompts?: ProjectPrompt[];
+      scripts?: ProjectScript[];
+      keybindingUpdate?: { key: string; command: KeybindingCommand };
+    }) => {
+      const api = readNativeApi();
+      if (!api || !project) return;
+      await api.orchestration.dispatchCommand({
+        type: "project.meta.update",
+        commandId: newCommandId(),
+        projectId: project.id,
+        ...(input.prompts !== undefined ? { prompts: input.prompts } : {}),
+        ...(input.scripts !== undefined ? { scripts: input.scripts } : {}),
+      });
+      if (input.keybindingUpdate) {
+        await api.server.upsertKeybinding({
+          key: input.keybindingUpdate.key,
+          command: input.keybindingUpdate.command,
+        });
+      }
+    },
+    [project],
+  );
+
+  const handleRunPrompt = useCallback(
+    async (projectPrompt: ProjectPrompt) => {
+      if (!thread) return;
+      if (thread.terminalStatus !== "active") {
+        toastManager.add({
+          type: "info",
+          title: "Resume the thread first",
+          description: "Custom prompts can only be sent while the thread is active.",
+        });
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) return;
+      setLastInvokedPromptId(projectPrompt.id);
+      try {
+        await submitThreadPrompt(api, thread.harness, threadId, projectPrompt.prompt);
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to send prompt",
+          description: error instanceof Error ? error.message : "The prompt could not be submitted.",
+        });
+      }
+    },
+    [thread, threadId],
+  );
+
+  const handleAddPrompt = useCallback(
+    async (input: NewProjectPromptInput) => {
+      const newPrompt: ProjectPrompt = {
+        id: crypto.randomUUID().slice(0, 8),
+        name: input.name,
+        prompt: input.prompt,
+      };
+      await persistProjectMetadata({ prompts: [...prompts, newPrompt] });
+    },
+    [prompts, persistProjectMetadata],
+  );
+
+  const handleUpdatePrompt = useCallback(
+    async (promptId: string, input: NewProjectPromptInput) => {
+      await persistProjectMetadata({
+        prompts: prompts.map((projectPrompt) =>
+          projectPrompt.id === promptId
+            ? { ...projectPrompt, name: input.name, prompt: input.prompt }
+            : projectPrompt,
+        ),
+      });
+    },
+    [prompts, persistProjectMetadata],
+  );
+
+  const handleDeletePrompt = useCallback(
+    async (promptId: string) => {
+      await persistProjectMetadata({
+        prompts: prompts.filter((projectPrompt) => projectPrompt.id !== promptId),
+      });
+    },
+    [prompts, persistProjectMetadata],
+  );
 
   const handleRunScript = useCallback(
     (script: ProjectScript) => {
@@ -337,26 +437,6 @@ export default function TerminalToolbar({
       runProjectScriptInTerminal(script, threadId, project, thread?.worktreePath);
     },
     [project, threadId, thread?.worktreePath],
-  );
-
-  const persistProjectScripts = useCallback(
-    async (nextScripts: ProjectScript[], keybindingUpdate?: { key: string; command: KeybindingCommand }) => {
-      const api = readNativeApi();
-      if (!api || !project) return;
-      await api.orchestration.dispatchCommand({
-        type: "project.meta.update",
-        commandId: newCommandId(),
-        projectId: project.id,
-        scripts: nextScripts,
-      });
-      if (keybindingUpdate) {
-        await api.server.upsertKeybinding({
-          key: keybindingUpdate.key,
-          command: keybindingUpdate.command,
-        });
-      }
-    },
-    [project],
   );
 
   const handleAddScript = useCallback(
@@ -378,12 +458,12 @@ export default function TerminalToolbar({
         ? [...scripts.map((s) => ({ ...s, runOnWorktreeCreate: false })), newScript]
         : [...scripts, newScript];
       const cmd = commandForProjectScript(scriptId);
-      await persistProjectScripts(
-        nextScripts,
-        input.keybinding ? { key: input.keybinding, command: cmd } : undefined,
-      );
+      await persistProjectMetadata({
+        scripts: nextScripts,
+        ...(input.keybinding ? { keybindingUpdate: { key: input.keybinding, command: cmd } } : {}),
+      });
     },
-    [scripts, persistProjectScripts],
+    [scripts, persistProjectMetadata],
   );
 
   const handleUpdateScript = useCallback(
@@ -406,20 +486,22 @@ export default function TerminalToolbar({
         return s;
       });
       const cmd = commandForProjectScript(scriptId);
-      await persistProjectScripts(
-        nextScripts,
-        input.keybinding != null ? { key: input.keybinding, command: cmd } : undefined,
-      );
+      await persistProjectMetadata({
+        scripts: nextScripts,
+        ...(input.keybinding != null
+          ? { keybindingUpdate: { key: input.keybinding, command: cmd } }
+          : {}),
+      });
     },
-    [scripts, persistProjectScripts],
+    [scripts, persistProjectMetadata],
   );
 
   const handleDeleteScript = useCallback(
     async (scriptId: string) => {
       const nextScripts = scripts.filter((s) => s.id !== scriptId);
-      await persistProjectScripts(nextScripts);
+      await persistProjectMetadata({ scripts: nextScripts });
     },
-    [scripts, persistProjectScripts],
+    [scripts, persistProjectMetadata],
   );
 
   const diffShortcutLabel = useMemo(
@@ -525,7 +607,20 @@ export default function TerminalToolbar({
         <TerminalStatusBadge thread={thread} />
 
         {/* Voice input */}
-        <SpeechControl threadId={threadId} />
+        <SpeechControl threadId={threadId} harness={thread.harness} />
+
+        {/* Project prompts */}
+        {project && (
+          <ProjectPromptsControl
+            prompts={prompts}
+            preferredPromptId={lastInvokedPromptId}
+            disabled={!canSendPrompt}
+            onRunPrompt={handleRunPrompt}
+            onAddPrompt={handleAddPrompt}
+            onUpdatePrompt={handleUpdatePrompt}
+            onDeletePrompt={handleDeletePrompt}
+          />
+        )}
 
         {/* Project scripts / actions */}
         {project && (

@@ -3,6 +3,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  ProjectPrompt as ContractProjectPrompt,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -26,6 +27,7 @@ export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_THREAD_TERMINAL_COUNT = 4;
 export type ProjectScript = ContractProjectScript;
+export type ProjectPrompt = ContractProjectPrompt;
 
 export const PROJECT_TERMINAL_THREAD_PREFIX = "__project_terminal__:";
 
@@ -95,6 +97,7 @@ export interface Project {
   model: string;
   expanded: boolean;
   scripts: ProjectScript[];
+  prompts?: ProjectPrompt[];
 }
 
 /** Why the terminal went dormant — "hibernated" (LRU eviction, safe to auto-resume)

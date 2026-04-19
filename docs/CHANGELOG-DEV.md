@@ -4,6 +4,35 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-19 — Thread toolbar now supports saved custom prompts
+
+**Problem:** The thread toolbar only exposed runnable project actions/scripts, so there was no quick way to save reusable natural-language prompts and fire them from the active thread without retyping them.
+
+**Root cause:** Project metadata and the toolbar UI had support for persistent top-bar actions, but there was no parallel prompt model, persistence column, or toolbar control for named prompt snippets.
+
+**Fix:** Added project-scoped saved prompts with create/edit/delete UI in the thread toolbar, persisted them through orchestration project metadata and projection storage, and wired prompt execution to submit the saved prompt directly into the active thread session. Also routed voice input through the harness-aware prompt submission helper so prompt-like submissions consistently target the current thread harness.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/server/src/persistence/Services/ProjectionProjects.ts`
+- `apps/server/src/persistence/Layers/ProjectionProjects.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations/025_ProjectionProjectsPrompts.ts`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/components/ProjectPromptsControl.tsx`
+- `apps/web/src/components/SpeechControl.tsx`
+- `apps/web/src/hooks/useSpeechToText.ts`
+- `apps/web/src/lib/threadInput.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/types.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-19 — Sticky pi input mirror is now configurable in Settings and defaults on
 
 **Problem:** The sticky pi input mirror was always enabled, with no way to turn it off for users who prefer an unmodified terminal-only reading experience.

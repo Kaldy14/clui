@@ -190,6 +190,7 @@ function mapProjectsFromReadModel(
           ? persistedExpandedProjectCwds.has(project.workspaceRoot)
           : true),
       scripts: project.scripts.map((script) => ({ ...script })),
+      prompts: project.prompts.map((prompt) => ({ ...prompt })),
     };
     if (existing && !projectChanged(existing, newProject)) {
       return existing;
@@ -379,6 +380,35 @@ function projectChanged(existing: Project, incoming: Project): boolean {
   if (existing.model !== incoming.model) return true;
   if (existing.expanded !== incoming.expanded) return true;
   if (existing.scripts.length !== incoming.scripts.length) return true;
+  if ((existing.prompts?.length ?? 0) !== (incoming.prompts?.length ?? 0)) return true;
+
+  for (let index = 0; index < existing.scripts.length; index += 1) {
+    const left = existing.scripts[index];
+    const right = incoming.scripts[index];
+    if (!left || !right) return true;
+    if (
+      left.id !== right.id ||
+      left.name !== right.name ||
+      left.command !== right.command ||
+      left.icon !== right.icon ||
+      left.runOnWorktreeCreate !== right.runOnWorktreeCreate ||
+      left.terminalTarget !== right.terminalTarget
+    ) {
+      return true;
+    }
+  }
+
+  const existingPrompts = existing.prompts ?? [];
+  const incomingPrompts = incoming.prompts ?? [];
+  for (let index = 0; index < existingPrompts.length; index += 1) {
+    const left = existingPrompts[index];
+    const right = incomingPrompts[index];
+    if (!left || !right) return true;
+    if (left.id !== right.id || left.name !== right.name || left.prompt !== right.prompt) {
+      return true;
+    }
+  }
+
   return false;
 }
 

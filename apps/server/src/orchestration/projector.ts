@@ -184,6 +184,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModel: payload.defaultModel,
             scripts: payload.scripts,
+            prompts: payload.prompts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -216,6 +217,7 @@ export function projectEvent(
                     ? { defaultModel: payload.defaultModel }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                  ...(payload.prompts !== undefined ? { prompts: payload.prompts } : {}),
                   updatedAt: payload.updatedAt,
                 }
               : project,

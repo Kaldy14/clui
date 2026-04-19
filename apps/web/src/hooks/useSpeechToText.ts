@@ -1,8 +1,10 @@
+import { type CodingHarness, type ThreadId } from "@clui/contracts";
 import { useEffect, useCallback } from "react";
 
 import { getAppSettingsSnapshot } from "../appSettings";
 import { useAudioCapture } from "./useAudioCapture";
 import whisperManager from "../lib/whisperManager";
+import { submitThreadPrompt } from "../lib/threadInput";
 import { readNativeApi } from "../nativeApi";
 import { useSpeechStore } from "../speechStore";
 
@@ -37,7 +39,7 @@ interface UseSpeechToTextReturn {
   toggle: () => void;
 }
 
-export function useSpeechToText(threadId: string): UseSpeechToTextReturn {
+export function useSpeechToText(threadId: ThreadId, harness: CodingHarness): UseSpeechToTextReturn {
   const { startRecording: startAudio, stopRecording: stopAudio, audioLevel } = useAudioCapture();
   const setAudioLevel = useSpeechStore((s) => s.setAudioLevel);
   const setStatus = useSpeechStore((s) => s.setStatus);
@@ -101,10 +103,15 @@ export function useSpeechToText(threadId: string): UseSpeechToTextReturn {
           return;
         }
         const prefix = settings.voicePrefix?.trim();
-        const data = prefix ? `${prefix} ${trimmed}\n` : `${trimmed}\n`;
-        await readNativeApi()?.claude.write({ threadId, data }).catch((err) => {
-          setError(err instanceof Error ? err.message : "Failed to send transcription to terminal");
-        });
+        const prompt = prefix ? `${prefix} ${trimmed}` : trimmed;
+        const api = readNativeApi();
+        if (!api) {
+          setError("Failed to send transcription to terminal");
+        } else {
+          await submitThreadPrompt(api, harness, threadId, prompt).catch((err) => {
+            setError(err instanceof Error ? err.message : "Failed to send transcription to terminal");
+          });
+        }
         setStatus("idle");
         setActiveThreadId(null);
       } catch (err) {
@@ -113,7 +120,7 @@ export function useSpeechToText(threadId: string): UseSpeechToTextReturn {
         setActiveThreadId(null);
       }
     })();
-  }, [stopAudio, setStatus, setError, setActiveThreadId, threadId]);
+  }, [harness, stopAudio, setStatus, setError, setActiveThreadId, threadId]);
 
   const toggle = useCallback(() => {
     const store = useSpeechStore.getState();

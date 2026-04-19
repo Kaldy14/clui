@@ -6,7 +6,7 @@
  *
  * @module ProjectionProjectRepository
  */
-import { IsoDateTime, ProjectId, ProjectScript } from "@clui/contracts";
+import { IsoDateTime, ProjectId, ProjectPrompt, ProjectScript } from "@clui/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
@@ -18,6 +18,7 @@ export const ProjectionProject = Schema.Struct({
   workspaceRoot: Schema.String,
   defaultModel: Schema.NullOr(Schema.String),
   scripts: Schema.Array(ProjectScript),
+  prompts: Schema.Array(ProjectPrompt),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),

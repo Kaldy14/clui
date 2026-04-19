@@ -143,12 +143,20 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const ProjectPrompt = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+});
+export type ProjectPrompt = typeof ProjectPrompt.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
+  prompts: Schema.Array(ProjectPrompt).pipe(Schema.withDecodingDefault(() => [])),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -371,6 +379,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  prompts: Schema.optional(Schema.Array(ProjectPrompt)),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
@@ -703,6 +712,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
+  prompts: Schema.Array(ProjectPrompt).pipe(Schema.withDecodingDefault(() => [])),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -713,6 +723,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  prompts: Schema.optional(Schema.Array(ProjectPrompt)),
   updatedAt: IsoDateTime,
 });
 
