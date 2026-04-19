@@ -127,6 +127,7 @@ export interface Thread {
   terminalStatus: TerminalStatus;
   dormantReason: DormantReason;
   claudeSessionId: string | null;
+  piSessionFile: string | null;
   scrollbackSnapshot: string | null;
   titleSource: TitleSource;
   bookmarked: boolean;

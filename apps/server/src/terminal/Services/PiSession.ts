@@ -30,6 +30,7 @@ export interface PiSessionManagerShape {
     cols: number;
     rows: number;
     fresh?: boolean;
+    resumeSessionFile?: string;
   }) => Effect.Effect<void, PiSessionError>;
   readonly hibernateSession: (threadId: string) => Effect.Effect<string, PiSessionError>;
   readonly getScrollback: (
@@ -45,6 +46,7 @@ export interface PiSessionManagerShape {
     rows: number,
   ) => Effect.Effect<void, PiSessionError>;
   readonly getSessionStatus: (threadId: string) => Effect.Effect<TerminalStatus>;
+  readonly getSessionFile: (threadId: string) => Effect.Effect<string | null>;
   readonly reconcileActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;
   readonly subscribe: (listener: (event: PiSessionEvent) => void) => Effect.Effect<() => void>;

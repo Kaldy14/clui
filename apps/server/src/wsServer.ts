@@ -979,6 +979,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           threadId: ThreadId.makeUnsafe(thread.id),
           terminalStatus: "dormant",
           claudeSessionId: thread.claudeSessionId,
+          piSessionFile: thread.piSessionFile,
           scrollbackSnapshot: thread.scrollbackSnapshot,
           updatedAt: new Date().toISOString(),
         }),
@@ -1088,6 +1089,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         threadId: ThreadId.makeUnsafe(event.threadId),
         terminalStatus: "active",
         claudeSessionId: null,
+        piSessionFile: null,
         scrollbackSnapshot: null,
         updatedAt: new Date().toISOString(),
       });
@@ -1100,6 +1102,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         threadId: ThreadId.makeUnsafe(event.threadId),
         terminalStatus: "active",
         claudeSessionId: event.claudeSessionId,
+        piSessionFile: null,
         scrollbackSnapshot: null,
         updatedAt: new Date().toISOString(),
       });
@@ -1114,6 +1117,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         threadId: ThreadId.makeUnsafe(event.threadId),
         terminalStatus: "dormant",
         claudeSessionId: claudeSessionId,
+        piSessionFile: null,
         scrollbackSnapshot: scrollbackResult.scrollback,
         updatedAt: new Date().toISOString(),
       });
@@ -1140,25 +1144,46 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     if (event.type === "started") {
+      const piSessionFile = yield* piSessionManager.getSessionFile(event.threadId);
       yield* orchestrationEngine.dispatch({
         type: "thread.terminal.statusChanged",
         commandId: CommandId.makeUnsafe(crypto.randomUUID()),
         threadId: ThreadId.makeUnsafe(event.threadId),
         terminalStatus: "active",
         claudeSessionId: null,
+        piSessionFile,
         scrollbackSnapshot: null,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (event.type === "sessionFile") {
+      const terminalStatus = yield* piSessionManager.getSessionStatus(event.threadId);
+      yield* orchestrationEngine.dispatch({
+        type: "thread.terminal.statusChanged",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: ThreadId.makeUnsafe(event.threadId),
+        terminalStatus,
+        claudeSessionId: null,
+        piSessionFile: event.sessionFile,
+        scrollbackSnapshot:
+          terminalStatus === "dormant"
+            ? (yield* piSessionManager.getScrollback(event.threadId)).scrollback
+            : null,
         updatedAt: new Date().toISOString(),
       });
     }
 
     if (event.type === "hibernated" || event.type === "exited") {
       const scrollbackResult = yield* piSessionManager.getScrollback(event.threadId);
+      const piSessionFile = yield* piSessionManager.getSessionFile(event.threadId);
       yield* orchestrationEngine.dispatch({
         type: "thread.terminal.statusChanged",
         commandId: CommandId.makeUnsafe(crypto.randomUUID()),
         threadId: ThreadId.makeUnsafe(event.threadId),
         terminalStatus: "dormant",
         claudeSessionId: null,
+        piSessionFile,
         scrollbackSnapshot: scrollbackResult.scrollback,
         updatedAt: new Date().toISOString(),
       });
@@ -1500,7 +1525,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case WS_METHODS.piStart: {
-        const { threadId, cwd: requestedCwd, cols, rows, fresh } = stripRequestTag(request.body);
+        const {
+          threadId,
+          cwd: requestedCwd,
+          cols,
+          rows,
+          fresh,
+          resumeSessionFile,
+        } = stripRequestTag(request.body);
 
         const resolvedCwd = path.resolve(requestedCwd);
         const resolvedRoot = path.resolve(cwd);
@@ -1526,6 +1558,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           cols,
           rows,
           ...(fresh !== undefined ? { fresh } : {}),
+          ...(resumeSessionFile !== undefined ? { resumeSessionFile } : {}),
         });
       }
 

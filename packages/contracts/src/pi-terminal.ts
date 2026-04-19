@@ -15,6 +15,7 @@ export const PiStartInput = Schema.Struct({
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
   fresh: Schema.optional(Schema.Boolean),
+  resumeSessionFile: Schema.optional(TrimmedNonEmptyString),
 });
 export type PiStartInput = Schema.Codec.Encoded<typeof PiStartInput>;
 
@@ -82,6 +83,12 @@ const PiHookStatusEvent = Schema.Struct({
   hookStatus: Schema.NullOr(ClaudeHookStatus),
 });
 
+const PiSessionFileEvent = Schema.Struct({
+  ...PiSessionEventBase.fields,
+  type: Schema.Literal("sessionFile"),
+  sessionFile: Schema.NullOr(Schema.String),
+});
+
 export const PiSessionEvent = Schema.Union([
   PiOutputEvent,
   PiStartedEvent,
@@ -89,5 +96,6 @@ export const PiSessionEvent = Schema.Union([
   PiExitedEvent,
   PiErrorEvent,
   PiHookStatusEvent,
+  PiSessionFileEvent,
 ]);
 export type PiSessionEvent = typeof PiSessionEvent.Type;

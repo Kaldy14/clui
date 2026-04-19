@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { mkdir, readdir } from "node:fs/promises";
+import { existsSync, watch, type FSWatcher } from "node:fs";
+import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { ClaudeHookStatus, PiSessionEvent, TerminalStatus } from "@clui/contracts";
@@ -7,6 +8,7 @@ import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
 import { ServerConfig } from "../../config";
+import { PiSessionJsonlHookWatcher } from "../../PiSessionJsonlHook";
 import { PtyAdapter, type PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
 import {
   PiSessionError,
@@ -15,11 +17,18 @@ import {
   type PiSessionState,
 } from "../Services/PiSession";
 import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
-import { PiSessionJsonlHookWatcher } from "../../PiSessionJsonlHook";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
+const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+const CLUI_PI_THREAD_ID_ENV = "CLUI_PI_THREAD_ID";
+const CLUI_PI_SESSION_SYNC_DIR_ENV = "CLUI_PI_SESSION_SYNC_DIR";
+const PI_RUNTIME_AGENT_DIR_NAME = "pi-agent";
+const PI_LEGACY_THREAD_SESSION_DIR_NAME = "pi-sessions";
+const PI_SESSION_SYNC_DIR_NAME = "pi-session-sync";
+const PI_RUNTIME_EXTENSION_DIR_NAME = "pi-runtime";
+const PI_SESSION_SYNC_EXTENSION_FILENAME = "clui-pi-session-sync.js";
 
 class ScrollbackRingBuffer {
   private lines: string[] = [];
@@ -72,15 +81,27 @@ class ScrollbackRingBuffer {
   }
 }
 
+interface PiSessionSyncPayload {
+  readonly threadId: string;
+  readonly sessionFile: string | null;
+  readonly timestamp: string;
+  readonly reason?: string;
+}
+
 interface PiSessionEntry extends PiSessionState {
   scrollbackBuffer: ScrollbackRingBuffer;
   process: PtyProcess | null;
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hookStatus: ClaudeHookStatus | null;
-  /** Absolute path `<state>/pi-sessions/<threadId>` for JSONL hook watching. */
+  /** Absolute per-cwd pi session directory used for /resume current-folder. */
   sessionDir: string | null;
+  /** Absolute path to the active pi session JSONL file for this Clui thread. */
+  activeSessionFile: string | null;
   jsonlHookWatcher: PiSessionJsonlHookWatcher | null;
+  syncFilePath: string | null;
+  syncWatcher: FSWatcher | null;
+  syncDebounceTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface PiSessionManagerEvents {
@@ -95,6 +116,41 @@ interface PiSessionManagerOptions {
   maxActiveSessions?: number;
 }
 
+function encodePiSessionDirName(cwd: string): string {
+  return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+}
+
+function buildPiSessionSyncExtensionSource(): string {
+  return `
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+const syncDir = process.env.${CLUI_PI_SESSION_SYNC_DIR_ENV};
+const threadId = process.env.${CLUI_PI_THREAD_ID_ENV};
+
+function writePayload(ctx, reason) {
+  if (!syncDir || !threadId) return;
+  mkdirSync(syncDir, { recursive: true });
+  const payload = {
+    threadId,
+    sessionFile: ctx.sessionManager.getSessionFile() ?? null,
+    timestamp: new Date().toISOString(),
+    reason,
+  };
+  const target = path.join(syncDir, \`${"${threadId}"}.json\`);
+  const tmp = \`${"${target}"}.tmp\`;
+  writeFileSync(tmp, JSON.stringify(payload));
+  renameSync(tmp, target);
+}
+
+export default function (pi) {
+  pi.on("session_start", async (event, ctx) => {
+    writePayload(ctx, event.reason);
+  });
+}
+`.trimStart();
+}
+
 export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents> {
   private readonly sessions = new Map<string, PiSessionEntry>();
   private readonly threadLocks = new Map<string, Promise<void>>();
@@ -103,7 +159,12 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private readonly processKillGraceMs: number;
   private readonly historyLineLimit: number;
   private readonly maxActiveSessions: number;
+  private readonly agentRootDir: string;
   private readonly sessionsRootDir: string;
+  private readonly legacySessionsRootDir: string;
+  private readonly sessionSyncDir: string;
+  private readonly extensionFilePath: string;
+  private runtimeFilesPromise: Promise<void> | null = null;
   private readonly logger = createLogger("pi-session");
 
   constructor(options: PiSessionManagerOptions) {
@@ -112,7 +173,15 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     this.maxActiveSessions = options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
-    this.sessionsRootDir = path.join(options.stateDir, "pi-sessions");
+    this.agentRootDir = path.join(options.stateDir, PI_RUNTIME_AGENT_DIR_NAME);
+    this.sessionsRootDir = path.join(this.agentRootDir, "sessions");
+    this.legacySessionsRootDir = path.join(options.stateDir, PI_LEGACY_THREAD_SESSION_DIR_NAME);
+    this.sessionSyncDir = path.join(options.stateDir, PI_SESSION_SYNC_DIR_NAME);
+    this.extensionFilePath = path.join(
+      options.stateDir,
+      PI_RUNTIME_EXTENSION_DIR_NAME,
+      PI_SESSION_SYNC_EXTENSION_FILENAME,
+    );
   }
 
   async startSession(input: {
@@ -121,8 +190,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     cols: number;
     rows: number;
     fresh?: boolean;
+    resumeSessionFile?: string;
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
+      await this.ensureRuntimeFiles();
+
       const existing = this.sessions.get(input.threadId);
       if (existing?.process) {
         this.stopProcess(existing);
@@ -140,7 +212,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         unsubscribeExit: null,
         hookStatus: null,
         sessionDir: null,
+        activeSessionFile: null,
         jsonlHookWatcher: null,
+        syncFilePath: null,
+        syncWatcher: null,
+        syncDebounceTimer: null,
       };
 
       entry.cols = input.cols;
@@ -153,20 +229,42 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       }
       this.sessions.set(input.threadId, entry);
 
-      const sessionDir = path.join(this.sessionsRootDir, input.threadId);
+      const sessionDir = this.getSessionDirForCwd(input.cwd);
       entry.sessionDir = sessionDir;
       await mkdir(sessionDir, { recursive: true });
-      const existingSessions = await this.listSessionFiles(sessionDir);
 
-      const args: string[] = ["--session-dir", sessionDir];
-      if (!input.fresh && existingSessions.length > 0) {
+      const preferredSessionFile = input.resumeSessionFile ?? entry.activeSessionFile ?? undefined;
+      const resolvedSessionFile = input.fresh
+        ? null
+        : await this.resolveStartSessionFile(input.threadId, input.cwd, preferredSessionFile);
+      entry.activeSessionFile = resolvedSessionFile;
+
+      const existingSessions = await this.listSessionFiles(sessionDir);
+      const canContinueRecent =
+        !input.fresh && resolvedSessionFile == null && existingSessions.length === 1;
+
+      const args: string[] = [
+        "--session-dir",
+        sessionDir,
+        "--extension",
+        this.extensionFilePath,
+      ];
+      if (resolvedSessionFile) {
+        args.push("--session", resolvedSessionFile);
+      } else if (canContinueRecent) {
         args.push("-c");
       }
 
       try {
         await assertValidCwd(input.cwd);
+        await this.startSessionSyncWatcher(entry);
+        this.startJsonlHookWatcher(entry, entry.activeSessionFile);
 
         const spawnEnv = createSpawnEnv(process.env);
+        spawnEnv[PI_AGENT_DIR_ENV] = this.agentRootDir;
+        spawnEnv[CLUI_PI_THREAD_ID_ENV] = input.threadId;
+        spawnEnv[CLUI_PI_SESSION_SYNC_DIR_ENV] = this.sessionSyncDir;
+
         const ptyProcess = await Effect.runPromise(
           this.ptyAdapter.spawn({
             shell: "pi",
@@ -191,8 +289,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         this.logger.info("pi session started", {
           threadId: input.threadId,
           pid: ptyProcess.pid,
-          resumed: !input.fresh && existingSessions.length > 0,
+          resumed: resolvedSessionFile != null || canContinueRecent,
           sessionDir,
+          activeSessionFile: resolvedSessionFile,
         });
 
         this.emitEvent({
@@ -201,12 +300,20 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
           createdAt: new Date().toISOString(),
         });
 
-        this.startJsonlHookWatcher(entry, sessionDir);
+        const refreshTimer = setTimeout(() => {
+          void this.runWithThreadLock(input.threadId, async () => {
+            const current = this.sessions.get(input.threadId);
+            if (!current) return;
+            await this.refreshSessionSyncFile(current);
+          });
+        }, 150);
+        refreshTimer.unref?.();
 
         void this.reconcileActiveSessions(this.maxActiveSessions);
       } catch (error) {
         entry.status = "new";
         entry.process = null;
+        this.stopSessionSyncWatcher(entry);
         const message = error instanceof Error ? error.message : "Failed to start pi session";
         this.logger.error("failed to start pi session", {
           threadId: input.threadId,
@@ -235,7 +342,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       this.stopProcess(entry);
       entry.status = "dormant";
 
-      this.logger.info("pi session hibernated", { threadId });
+      this.logger.info("pi session hibernated", {
+        threadId,
+        activeSessionFile: entry.activeSessionFile,
+      });
       this.emitEvent({ type: "hibernated", threadId, createdAt: new Date().toISOString() });
       return scrollback;
     });
@@ -258,6 +368,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     if (!entry || !entry.process || entry.status !== "active") {
       throw new Error(`No active session for thread: ${threadId}`);
     }
+
     entry.process.write(data);
     entry.lastInteractedAt = Date.now();
   }
@@ -288,6 +399,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   getSessionStatus(threadId: string): TerminalStatus {
     const entry = this.sessions.get(threadId);
     return entry?.status ?? "new";
+  }
+
+  getSessionFile(threadId: string): string | null {
+    const entry = this.sessions.get(threadId);
+    return entry?.activeSessionFile ?? null;
   }
 
   async reconcileActiveSessions(maxActive: number): Promise<void> {
@@ -360,6 +476,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   dispose(): void {
     for (const entry of this.sessions.values()) {
+      this.stopSessionSyncWatcher(entry);
       this.stopJsonlHookWatcher(entry);
       this.stopProcess(entry);
     }
@@ -369,12 +486,141 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.threadLocks.clear();
   }
 
+  private async ensureRuntimeFiles(): Promise<void> {
+    if (!this.runtimeFilesPromise) {
+      this.runtimeFilesPromise = (async () => {
+        await mkdir(this.sessionsRootDir, { recursive: true });
+        await mkdir(this.sessionSyncDir, { recursive: true });
+        await mkdir(path.dirname(this.extensionFilePath), { recursive: true });
+        await writeFile(this.extensionFilePath, buildPiSessionSyncExtensionSource(), "utf8");
+      })();
+    }
+    await this.runtimeFilesPromise;
+  }
+
+  private getSessionDirForCwd(cwd: string): string {
+    return path.join(this.sessionsRootDir, encodePiSessionDirName(cwd));
+  }
+
+  private async resolveStartSessionFile(
+    threadId: string,
+    cwd: string,
+    explicitSessionFile?: string,
+  ): Promise<string | null> {
+    if (explicitSessionFile) {
+      const resolved = path.resolve(explicitSessionFile);
+      if (existsSync(resolved)) {
+        return resolved;
+      }
+      this.logger.warn("pi session resume file missing; falling back", {
+        threadId,
+        sessionFile: resolved,
+      });
+    }
+
+    const migrated = await this.migrateLegacyThreadSessions(threadId, cwd);
+    if (migrated) {
+      return migrated;
+    }
+
+    return null;
+  }
+
+  private async migrateLegacyThreadSessions(threadId: string, cwd: string): Promise<string | null> {
+    const legacyDir = path.join(this.legacySessionsRootDir, threadId);
+    if (!existsSync(legacyDir)) return null;
+
+    const targetDir = this.getSessionDirForCwd(cwd);
+    await mkdir(targetDir, { recursive: true });
+
+    const legacyFiles = await this.listJsonlFilesRecursive(legacyDir);
+    let migratedCount = 0;
+    let mostRecent: { file: string; mtimeMs: number } | null = null;
+
+    for (const legacyFile of legacyFiles) {
+      const header = await this.readSessionHeader(legacyFile);
+      if (!header || header.cwd !== cwd) continue;
+
+      const targetFile = path.join(targetDir, path.basename(legacyFile));
+      if (!existsSync(targetFile)) {
+        try {
+          await copyFile(legacyFile, targetFile);
+          migratedCount++;
+        } catch {
+          // ignore individual copy failures; fallback continues best-effort
+        }
+      }
+
+      const candidateFile = existsSync(targetFile) ? targetFile : legacyFile;
+      try {
+        const candidateStat = await stat(candidateFile);
+        if (!mostRecent || candidateStat.mtimeMs >= mostRecent.mtimeMs) {
+          mostRecent = { file: candidateFile, mtimeMs: candidateStat.mtimeMs };
+        }
+      } catch {
+        // ignore stat failures
+      }
+    }
+
+    if (migratedCount > 0) {
+      this.logger.info("migrated legacy pi sessions into shared per-cwd store", {
+        threadId,
+        cwd,
+        migratedCount,
+        targetDir,
+      });
+    }
+
+    return mostRecent?.file ?? null;
+  }
+
+  private async listJsonlFilesRecursive(rootDir: string): Promise<string[]> {
+    const results: string[] = [];
+    const stack = [rootDir];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+      let entries;
+      try {
+        entries = await readdir(current, { withFileTypes: true, encoding: "utf8" });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+          results.push(fullPath);
+        }
+      }
+    }
+    return results;
+  }
+
+  private async readSessionHeader(
+    filePath: string,
+  ): Promise<{ cwd: string } | null> {
+    try {
+      const content = await readFile(filePath, "utf8");
+      const firstLine = content.split("\n", 1)[0]?.trim();
+      if (!firstLine) return null;
+      const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+      if (parsed.type !== "session" || typeof parsed.cwd !== "string") {
+        return null;
+      }
+      return { cwd: parsed.cwd };
+    } catch {
+      return null;
+    }
+  }
+
   private async listSessionFiles(sessionDir: string): Promise<string[]> {
     try {
-      const entries = await readdir(sessionDir, { withFileTypes: true });
+      const entries = await readdir(sessionDir, { withFileTypes: true, encoding: "utf8" });
       return entries
         .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-        .map((entry) => entry.name)
+        .map((entry) => path.join(sessionDir, entry.name))
         .toSorted();
     } catch {
       return [];
@@ -404,26 +650,117 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     });
   }
 
-  private startJsonlHookWatcher(entry: PiSessionEntry, sessionDir: string): void {
-    this.stopJsonlHookWatcher(entry);
-    const watcher = new PiSessionJsonlHookWatcher({
-      threadId: entry.threadId,
-      sessionDir,
-      logger: this.logger,
-      emitHookStatus: (event) => {
-        if (event.type !== "hookStatus" || event.hookStatus == null) return;
-        const current = this.sessions.get(event.threadId);
-        if (!current) return;
-        this.applyHookStatusIfChanged(current, event.hookStatus);
-      },
-    });
-    entry.jsonlHookWatcher = watcher;
-    watcher.start();
+  private startJsonlHookWatcher(entry: PiSessionEntry, sessionFile: string | null): void {
+    if (!entry.jsonlHookWatcher) {
+      entry.jsonlHookWatcher = new PiSessionJsonlHookWatcher({
+        threadId: entry.threadId,
+        logger: this.logger,
+        emitHookStatus: (event) => {
+          if (event.type !== "hookStatus" || event.hookStatus == null) return;
+          const current = this.sessions.get(event.threadId);
+          if (!current) return;
+          this.applyHookStatusIfChanged(current, event.hookStatus);
+        },
+      });
+    }
+    entry.jsonlHookWatcher.start(sessionFile);
   }
 
   private stopJsonlHookWatcher(entry: PiSessionEntry): void {
     entry.jsonlHookWatcher?.stop();
-    entry.jsonlHookWatcher = null;
+  }
+
+  private async startSessionSyncWatcher(entry: PiSessionEntry): Promise<void> {
+    this.stopSessionSyncWatcher(entry);
+    entry.syncFilePath = path.join(this.sessionSyncDir, `${entry.threadId}.json`);
+    try {
+      await rm(entry.syncFilePath, { force: true });
+    } catch {
+      // ignore stale file cleanup failures
+    }
+    try {
+      entry.syncWatcher = watch(this.sessionSyncDir, { persistent: false }, (_eventType, fileName) => {
+        if (fileName && fileName.toString() !== path.basename(entry.syncFilePath!)) return;
+        this.scheduleSessionSyncRefresh(entry);
+      });
+    } catch (error) {
+      this.logger.warn("failed to watch pi session sync dir", {
+        threadId: entry.threadId,
+        syncDir: this.sessionSyncDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private stopSessionSyncWatcher(entry: PiSessionEntry): void {
+    if (entry.syncDebounceTimer) {
+      clearTimeout(entry.syncDebounceTimer);
+      entry.syncDebounceTimer = null;
+    }
+    entry.syncWatcher?.close();
+    entry.syncWatcher = null;
+    entry.syncFilePath = null;
+  }
+
+  private scheduleSessionSyncRefresh(entry: PiSessionEntry): void {
+    if (entry.syncDebounceTimer) clearTimeout(entry.syncDebounceTimer);
+    entry.syncDebounceTimer = setTimeout(() => {
+      entry.syncDebounceTimer = null;
+      void this.runWithThreadLock(entry.threadId, async () => {
+        const current = this.sessions.get(entry.threadId);
+        if (!current) return;
+        await this.refreshSessionSyncFile(current);
+      });
+    }, 80);
+    entry.syncDebounceTimer.unref?.();
+  }
+
+  private async refreshSessionSyncFile(entry: PiSessionEntry): Promise<void> {
+    if (!entry.syncFilePath || !existsSync(entry.syncFilePath)) return;
+
+    let payload: PiSessionSyncPayload;
+    try {
+      const raw = await readFile(entry.syncFilePath, "utf8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (parsed.threadId !== entry.threadId) return;
+      payload = {
+        threadId: entry.threadId,
+        sessionFile: typeof parsed.sessionFile === "string" ? parsed.sessionFile : null,
+        timestamp:
+          typeof parsed.timestamp === "string" ? parsed.timestamp : new Date().toISOString(),
+        ...(typeof parsed.reason === "string" ? { reason: parsed.reason } : {}),
+      };
+    } catch (error) {
+      this.logger.warn("failed to parse pi session sync file", {
+        threadId: entry.threadId,
+        syncFilePath: entry.syncFilePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    const nextSessionFile = payload.sessionFile ? path.resolve(payload.sessionFile) : null;
+    if (nextSessionFile === entry.activeSessionFile) return;
+
+    entry.activeSessionFile = nextSessionFile;
+    if (entry.jsonlHookWatcher) {
+      entry.jsonlHookWatcher.setSessionFile(nextSessionFile);
+    } else {
+      this.startJsonlHookWatcher(entry, nextSessionFile);
+    }
+
+    this.logger.info("pi session file updated", {
+      threadId: entry.threadId,
+      sessionFile: nextSessionFile,
+      reason: payload.reason,
+    });
+
+    this.emitEvent({
+      type: "sessionFile",
+      threadId: entry.threadId,
+      createdAt: payload.timestamp,
+      sessionFile: nextSessionFile,
+    });
   }
 
   private resetHookStatus(entry: PiSessionEntry): void {
@@ -436,12 +773,14 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.clearKillEscalationTimer(entry.process);
     entry.process = null;
     entry.status = "dormant";
+    this.stopSessionSyncWatcher(entry);
     this.resetHookStatus(entry);
 
     this.logger.info("pi session exited", {
       threadId: entry.threadId,
       exitCode: event.exitCode,
       signal: event.signal,
+      activeSessionFile: entry.activeSessionFile,
     });
 
     this.emitEvent({
@@ -453,6 +792,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   }
 
   private stopProcess(entry: PiSessionEntry): void {
+    this.stopSessionSyncWatcher(entry);
     this.stopJsonlHookWatcher(entry);
     const ptyProcess = entry.process;
     if (!ptyProcess) {
@@ -546,7 +886,8 @@ export const PiSessionManagerLive = Layer.effect(
           catch: (cause) =>
             new PiSessionError({ message: "Failed to hibernate pi session", cause }),
         }),
-      getScrollback: (threadId, sinceOffset) => Effect.sync(() => runtime.getScrollback(threadId, sinceOffset)),
+      getScrollback: (threadId, sinceOffset) =>
+        Effect.sync(() => runtime.getScrollback(threadId, sinceOffset)),
       writeToSession: (threadId, data) =>
         Effect.try({
           try: () => runtime.writeToSession(threadId, data),
@@ -564,6 +905,7 @@ export const PiSessionManagerLive = Layer.effect(
           catch: (cause) => new PiSessionError({ message: "Failed to resize pi session", cause }),
         }),
       getSessionStatus: (threadId) => Effect.sync(() => runtime.getSessionStatus(threadId)),
+      getSessionFile: (threadId) => Effect.sync(() => runtime.getSessionFile(threadId)),
       reconcileActiveSessions: (maxActive) => Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
       hibernateAll: () => Effect.promise(() => runtime.hibernateAll()),
       subscribe: (listener) =>

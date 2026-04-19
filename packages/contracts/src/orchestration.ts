@@ -317,6 +317,9 @@ export const OrchestrationThread = Schema.Struct({
   claudeSessionId: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(() => null),
   ),
+  piSessionFile: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   terminalStatus: TerminalStatus.pipe(
     Schema.withDecodingDefault(() => "new" as const),
   ),
@@ -620,6 +623,7 @@ const ThreadTerminalStatusChangedCommand = Schema.Struct({
   threadId: ThreadId,
   terminalStatus: TerminalStatus,
   claudeSessionId: Schema.NullOr(Schema.String),
+  piSessionFile: Schema.NullOr(Schema.String),
   scrollbackSnapshot: Schema.NullOr(Schema.String),
   updatedAt: IsoDateTime,
 });
@@ -852,6 +856,7 @@ export const ThreadTerminalStatusChangedPayload = Schema.Struct({
   threadId: ThreadId,
   terminalStatus: TerminalStatus,
   claudeSessionId: Schema.NullOr(Schema.String),
+  piSessionFile: Schema.NullOr(Schema.String),
   scrollbackSnapshot: Schema.NullOr(Schema.String),
   updatedAt: IsoDateTime,
 });

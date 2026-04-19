@@ -9,7 +9,7 @@ Clui wraps terminal-native coding agents in a proper desktop app with project or
 - **Projects with threads** — organize coding sessions by project. Each thread gets its own branch/worktree.
 - **Selectable coding harnesses** — every thread persists its harness (`claudeCode` or `pi`), and Settings can choose the default for new threads.
 - **Real terminal, not a chat UI** — xterm.js + node-pty. What you see is what the underlying CLI actually outputs.
-- **Resume anywhere** — dormant threads save scrollback to SQLite. Claude threads resume via `claude --resume`; pi threads resume from a deterministic per-thread `--session-dir` with automatic `-c` reuse.
+- **Resume anywhere** — dormant threads save scrollback to SQLite. Claude threads resume via `claude --resume`; pi threads now use a pi-compatible shared session store under Clui state, so native pi `/resume` works while each Clui thread still reopens its own saved session file.
 - **Git workflow built in** — branch management, commit, push, and PR creation from the sidebar.
 - **Smart resource management** — configurable cap on active terminals with LRU hibernation. Hundreds of dormant threads, near-zero resource cost.
 - **Auto-update** — the app checks for updates and lets you download + install from within the sidebar.

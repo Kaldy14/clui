@@ -260,6 +260,7 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             claudeSessionId: null,
+            piSessionFile: null,
             terminalStatus: "new",
             scrollbackSnapshot: null,
             titleSource: "auto",
@@ -650,6 +651,7 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             terminalStatus: payload.terminalStatus,
             claudeSessionId: payload.claudeSessionId,
+            piSessionFile: payload.piSessionFile,
             scrollbackSnapshot: payload.scrollbackSnapshot,
           }),
         })),

@@ -8,7 +8,7 @@
 
 Fork t3code and replace its Agent SDK chat interface with embedded xterm.js terminals running coding-agent CLIs directly. Keep the project → thread sidebar, branch/worktree management, and git workflow. Each thread becomes a terminal session running its selected harness in the thread's worktree cwd.
 
-**Current status update (2026-04-13):** Clui now ships selectable per-thread coding harnesses (`claudeCode | pi`). Claude threads resume via `claude --resume <session_id>`. pi threads use a deterministic per-thread `--session-dir` under server state and auto-resume with `pi -c` when that directory already contains sessions.
+**Current status update (2026-04-13, amended 2026-04-19):** Clui now ships selectable per-thread coding harnesses (`claudeCode | pi`). Claude threads resume via `claude --resume <session_id>`. pi threads now store sessions in a pi-compatible shared agent directory under server state, preserve an explicit per-thread active session file, and inject a tiny runtime extension so native pi `/resume` works while each thread still reopens its own last-selected session.
 
 ---
 

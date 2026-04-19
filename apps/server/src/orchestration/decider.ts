@@ -670,6 +670,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           terminalStatus: command.terminalStatus,
           claudeSessionId: command.claudeSessionId,
+          piSessionFile: command.piSessionFile,
           scrollbackSnapshot: command.scrollbackSnapshot,
           updatedAt: command.updatedAt,
         },

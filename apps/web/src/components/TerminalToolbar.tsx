@@ -478,7 +478,13 @@ export default function TerminalToolbar({
     const rows = cached?.terminal.rows ?? 40;
     try {
       if (thread.harness === "pi") {
-        await api.pi.start({ threadId, cwd, cols, rows });
+        await api.pi.start({
+          threadId,
+          cwd,
+          cols,
+          rows,
+          ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
+        });
       } else {
         await api.claude.start({
           threadId,
@@ -680,6 +686,7 @@ export default function TerminalToolbar({
                           cols: 120,
                           rows: 40,
                           fresh: true,
+                          ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
                         });
                       } else {
                         void api.claude.start({

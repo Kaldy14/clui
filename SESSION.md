@@ -38,7 +38,7 @@ A fork of [t3code](https://github.com/pingdotgg/t3code) that replaces the Agent 
 - **App startup:** Zero PTYs spawn. All threads render as dormant with saved scrollback. Resume on-demand.
 - **Claude resume:** `claude --resume <session_id>` — Claude CLI handles conversation continuity natively
 - **Claude session ID:** Assigned upfront via `--session-id <uuid>` for new sessions, reused via `--resume <uuid>` for resumes. No regex extraction needed.
-- **pi resume:** deterministic per-thread `--session-dir <state>/pi-sessions/<threadId>`; if the directory already contains sessions, Clui starts pi with `-c` to continue that thread's existing session state.
+- **pi resume:** Clui now points pi at a pi-compatible shared agent dir under server state (`<state>/pi-agent/sessions/--<cwd>--/`) so native `/resume` works. Each thread also persists its own active `piSessionFile`, and Clui reopens that exact file with `pi --session <file>` on resume/restart.
 
 ### Coding Harnesses
 
@@ -658,7 +658,7 @@ Continue Clui implementation — Phase 11: Terminal Input Enhancement + Polish
 
 Read SESSION.md and PLAN.md first. They contain the full project context, architecture decisions, and completed phase details.
 
-Clui is a terminal multiplexer for terminal-native coding agents. Each thread is a real terminal running its selected harness via node-pty; current harnesses are Claude Code and pi. Phases 0–11 are complete: Agent SDK removed, DB schema, ClaudeSessionManager service, terminal UI (ThreadTerminalView with three-state routing), lifecycle management (LRU eviction, graceful shutdown, startup recovery, session resume via --session-id), polish (terminal toolbar, keyboard shortcuts, configurable font settings, git branch integration), testing (45+ new tests), Claude Code hooks integration (badge system with sidebar + toolbar badges, OS notifications), auto-title generation (extracts prompt from UserPromptSubmit hook, generates ≤60-char title, titleSource: auto/manual protection), git workflow UI restoration (GitActionsControl commit/push/PR toolbar, BranchToolbarBranchSelector in toolbar + NewThreadView, PullRequestThreadDialog, worktree creation on start with branch name input prefilled feature/ITE-, optimistic thread creation, Cmd+J/Cmd+Shift+J terminal drawer shortcuts, worktree cwd validation fix), and persisted coding harness support (`claudeCode | pi`) with default-harness settings plus per-thread pi session-dir resume.
+Clui is a terminal multiplexer for terminal-native coding agents. Each thread is a real terminal running its selected harness via node-pty; current harnesses are Claude Code and pi. Phases 0–11 are complete: Agent SDK removed, DB schema, ClaudeSessionManager service, terminal UI (ThreadTerminalView with three-state routing), lifecycle management (LRU eviction, graceful shutdown, startup recovery, session resume via --session-id), polish (terminal toolbar, keyboard shortcuts, configurable font settings, git branch integration), testing (45+ new tests), Claude Code hooks integration (badge system with sidebar + toolbar badges, OS notifications), auto-title generation (extracts prompt from UserPromptSubmit hook, generates ≤60-char title, titleSource: auto/manual protection), git workflow UI restoration (GitActionsControl commit/push/PR toolbar, BranchToolbarBranchSelector in toolbar + NewThreadView, PullRequestThreadDialog, worktree creation on start with branch name input prefilled feature/ITE-, optimistic thread creation, Cmd+J/Cmd+Shift+J terminal drawer shortcuts, worktree cwd validation fix), and persisted coding harness support (`claudeCode | pi`) with default-harness settings plus pi-compatible shared-session resume.
 
 Phase 11 scope (SESSION.md § Phase 11):
 
@@ -729,11 +729,11 @@ Implemented first-class persisted coding harness support across contracts, persi
 - Added app setting `defaultCodingHarness`; new threads inherit it.
 - New/unstarted threads can switch harnesses from the new-thread screen.
 - Added additive `pi.*` contracts, IPC, WebSocket methods, and client wiring alongside existing `claude.*` APIs.
-- Added `PiSessionManager`, which launches `pi` in a deterministic thread-scoped session directory and auto-resumes with `-c` when prior session state exists.
+- Added `PiSessionManager`, which launches `pi` with a pi-compatible shared session store under server state, persists each thread's active `piSessionFile`, and injects a runtime extension to report session switches (`/resume`, `/new`, `/fork`, import) back to Clui.
 - Routed start/resume/restart/hibernate flows by harness and hid Claude-only YOLO controls for pi threads.
 - Enforced invariant: harness changes are rejected once a thread has started.
 
-**Key design note:** pi resume intentionally does **not** persist a separate `piSessionRef`. Instead, the session identity is the thread-scoped session directory under server state. That keeps resume behavior stable across restarts without session-ID discovery/storage logic.
+**Key design note:** pi resume now persists a separate per-thread `piSessionFile`. Clui still keeps pi data under server state, but it uses pi's native per-cwd layout so `/resume` discovery behaves like stock pi while Clui can still reopen the exact session each thread last selected.
 
 **Primary files:**
 - `packages/contracts/src/orchestration.ts`
@@ -775,7 +775,7 @@ Implemented first-class persisted coding harness support across contracts, persi
 | `apps/web/src/routes/_chat.tsx` | Layout with Cmd+J/Cmd+Shift+J terminal shortcuts |
 | `apps/web/src/routes/_chat.$threadId.tsx` | Thread route with ThreadTerminalDrawerContainer |
 | `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | ClaudeSessionManager implementation |
-| `apps/server/src/terminal/Layers/PiSessionManager.ts` | PiSessionManager implementation with per-thread `--session-dir` resume |
+| `apps/server/src/terminal/Layers/PiSessionManager.ts` | PiSessionManager implementation with shared pi store, explicit `piSessionFile` resume, and runtime session-sync extension |
 | `apps/server/src/wsServer.ts` | WS routes + hook HTTP routes + harness routing + auto-title dispatch |
 
 ## Future Phases

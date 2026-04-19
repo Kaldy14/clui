@@ -369,6 +369,7 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   // Remaining scalars
   if (existing.scrollbackSnapshot !== incoming.scrollbackSnapshot) return true;
   if (existing.claudeSessionId !== incoming.claudeSessionId) return true;
+  if (existing.piSessionFile !== incoming.piSessionFile) return true;
   return false;
 }
 
@@ -538,6 +539,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         terminalStatus: existing?.terminalStatus ?? thread.terminalStatus ?? "new",
         dormantReason: existing?.dormantReason ?? null,
         claudeSessionId: thread.claudeSessionId ?? null,
+        piSessionFile: thread.piSessionFile ?? null,
         scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
         titleSource: thread.titleSource ?? "auto",
         bookmarked: thread.bookmarked ?? false,
@@ -698,6 +700,7 @@ export function addOptimisticThread(
     terminalStatus: "new",
     dormantReason: null,
     claudeSessionId: null,
+    piSessionFile: null,
     scrollbackSnapshot: null,
     titleSource: "auto",
     bookmarked: false,

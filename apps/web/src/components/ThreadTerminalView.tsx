@@ -45,6 +45,7 @@ function setWorktreeBranchPrefix(projectCwd: string, prefix: string): void {
 }
 
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
+type HarnessKind = Thread["harness"];
 
 function startHarnessSession(
   api: NativeApi,
@@ -58,6 +59,7 @@ function startHarnessSession(
       cols: input.cols,
       rows: input.rows,
       ...(input.fresh ? { fresh: true } : {}),
+      ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
     });
   }
 
@@ -73,32 +75,41 @@ function startHarnessSession(
 
 function getHarnessScrollback(
   api: NativeApi,
-  thread: Thread,
+  harness: HarnessKind,
   input: { threadId: ThreadId; sinceOffset?: number },
 ): Promise<{ threadId: string; scrollback: string | null; offset: number; reset?: boolean }> {
-  return thread.harness === "pi"
-    ? api.pi.getScrollback(input)
-    : api.claude.getScrollback(input);
+  return harness === "pi" ? api.pi.getScrollback(input) : api.claude.getScrollback(input);
 }
 
 function subscribeHarnessSessionEvents(
   api: NativeApi,
-  thread: Thread,
+  harness: HarnessKind,
   callback: (event: HarnessSessionEvent) => void,
 ): () => void {
-  return thread.harness === "pi" ? api.pi.onSessionEvent(callback) : api.claude.onSessionEvent(callback);
+  return harness === "pi" ? api.pi.onSessionEvent(callback) : api.claude.onSessionEvent(callback);
 }
 
-function writeHarnessData(api: NativeApi, thread: Thread, data: string): Promise<void> {
-  return thread.harness === "pi"
-    ? api.pi.write({ threadId: thread.id, data })
-    : api.claude.write({ threadId: thread.id, data });
+function writeHarnessData(
+  api: NativeApi,
+  harness: HarnessKind,
+  threadId: ThreadId,
+  data: string,
+): Promise<void> {
+  return harness === "pi"
+    ? api.pi.write({ threadId, data })
+    : api.claude.write({ threadId, data });
 }
 
-function resizeHarnessSession(api: NativeApi, thread: Thread, cols: number, rows: number): Promise<void> {
-  return thread.harness === "pi"
-    ? api.pi.resize({ threadId: thread.id, cols, rows })
-    : api.claude.resize({ threadId: thread.id, cols, rows });
+function resizeHarnessSession(
+  api: NativeApi,
+  harness: HarnessKind,
+  threadId: ThreadId,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return harness === "pi"
+    ? api.pi.resize({ threadId, cols, rows })
+    : api.claude.resize({ threadId, cols, rows });
 }
 
 // ── NewThreadView ─────────────────────────────────────────────────────
@@ -495,7 +506,7 @@ function DormantTerminalView({
       writePendingIfReady();
     });
 
-    void getHarnessScrollback(api, thread, { threadId }).then((result) => {
+    void getHarnessScrollback(api, thread.harness, { threadId }).then((result) => {
       if (disposed) return;
       pendingData = { scrollback: result.scrollback, offset: result.offset ?? null };
       writePendingIfReady();
@@ -509,7 +520,7 @@ function DormantTerminalView({
       // and we don't want stale scrollback accumulating in memory.
       claudeCache.dispose(threadId);
     };
-  }, [thread, threadId]);
+  }, [thread.harness, threadId]);
 
   // Focus the Resume button on mount so keyboard users have an obvious target.
   useEffect(() => {
@@ -596,6 +607,7 @@ function DormantTerminalView({
 function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: Thread }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const harness = thread.harness;
   const [showNewOutput, setShowNewOutput] = useState(false);
   const searchAddonRef = useRef<claudeCache.CachedTerminal["searchAddon"] | null>(null);
 
@@ -739,7 +751,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       eventBuffer.length = 0;
     };
 
-    const unsubscribe = subscribeHarnessSessionEvents(api, thread, (event) => {
+    const unsubscribe = subscribeHarnessSessionEvents(api, harness, (event) => {
       if (event.threadId !== threadId) return;
       if (!terminalReady) {
         eventBuffer.push(event);
@@ -755,7 +767,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const sinceOffset = entry.lastServerOffset > 0 ? entry.lastServerOffset : undefined;
     const scrollbackRequest =
       sinceOffset != null ? { threadId, sinceOffset } : { threadId };
-    void getHarnessScrollback(api, thread, scrollbackRequest)
+    void getHarnessScrollback(api, harness, scrollbackRequest)
       .then((result) => {
         if (disposed) return;
         pendingScrollback = { scrollback: result.scrollback, offset: result.offset ?? null, reset: result.reset ?? false };
@@ -801,14 +813,14 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (navigationData !== null) {
         event.preventDefault();
         event.stopPropagation();
-        void writeHarnessData(api, thread, navigationData).catch(() => undefined);
+        void writeHarnessData(api, harness, threadId, navigationData).catch(() => undefined);
         return false;
       }
 
       if (isTerminalClearShortcut(event)) {
         event.preventDefault();
         event.stopPropagation();
-        void writeHarnessData(api, thread, "\u000c").catch(() => undefined);
+        void writeHarnessData(api, harness, threadId, "\u000c").catch(() => undefined);
         return false;
       }
 
@@ -818,7 +830,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (event.type === "keydown" && event.key === "Enter" && (event.shiftKey || event.altKey) && !event.metaKey && !event.ctrlKey) {
         event.preventDefault();
         event.stopPropagation();
-        void writeHarnessData(api, thread, "\x1b[13;2u").catch(() => undefined);
+        void writeHarnessData(api, harness, threadId, "\x1b[13;2u").catch(() => undefined);
         return false;
       }
 
@@ -828,7 +840,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (event.type === "keydown" && event.key === "z" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
         event.preventDefault();
         event.stopPropagation();
-        void writeHarnessData(api, thread, "\x1a").catch(() => undefined);
+        void writeHarnessData(api, harness, threadId, "\x1a").catch(() => undefined);
         return false;
       }
 
@@ -842,7 +854,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       ) {
         event.preventDefault();
         event.stopPropagation();
-        void writeHarnessData(api, thread, "\x06").catch(() => undefined);
+        void writeHarnessData(api, harness, threadId, "\x06").catch(() => undefined);
         return false;
       }
 
@@ -855,13 +867,13 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const inputDisposable = terminal.onData((data) => {
       const filtered = stripTerminalResponses(data);
       if (filtered) {
-        void writeHarnessData(api, thread, filtered).catch(() => undefined);
+        void writeHarnessData(api, harness, threadId, filtered).catch(() => undefined);
       }
     });
 
     // Handle resize
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      void resizeHarnessSession(api, thread, cols, rows).catch(() => undefined);
+      void resizeHarnessSession(api, harness, threadId, cols, rows).catch(() => undefined);
     });
 
     // Defer fit + resize to after the browser has laid out the container.
@@ -875,7 +887,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // Always send resize after reattach — even if cols/rows look unchanged,
       // the PTY may have been started with default dimensions or the previous
       // attach may have sent wrong values.
-      void resizeHarnessSession(api, thread, terminal.cols, terminal.rows).catch(() => undefined);
+      void resizeHarnessSession(api, harness, threadId, terminal.cols, terminal.rows).catch(() => undefined);
       terminal.focus();
       // Signal that dimensions are now correct — safe to write content
       fitComplete = true;
@@ -938,7 +950,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       const key = deltaY < 0 ? "A" : "B"; // A = up, B = down
       const data = (prefix + key).repeat(Math.min(lines, 15));
 
-      void writeHarnessData(api, thread, data).catch(() => undefined);
+      void writeHarnessData(api, harness, threadId, data).catch(() => undefined);
     };
     el.addEventListener("wheel", onAltBufferWheel, { capture: true, passive: false });
 
@@ -1004,7 +1016,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // Detach but keep in cache for instant reattachment
       claudeCache.detach(threadId);
     };
-  }, [thread, threadId]);
+    // Keep the active xterm mounted across hook/status/sidebar updates.
+    // Re-running this effect detaches the focused terminal DOM and can hand
+    // focus back to the sidebar row while the user is typing.
+  }, [harness, threadId]);
 
   const handleSearchClose = useCallback(() => {
     setSearchOpen(false);

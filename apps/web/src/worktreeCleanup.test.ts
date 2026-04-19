@@ -28,6 +28,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     terminalStatus: "new",
     claudeSessionId: null,
+    piSessionFile: null,
     scrollbackSnapshot: null,
     titleSource: "auto" as const,
     bookmarked: false,

@@ -234,6 +234,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branch: null,
           worktreePath: null,
           claudeSessionId: null,
+          piSessionFile: null,
           terminalStatus: "new",
           scrollbackSnapshot: null,
           titleSource: "auto",

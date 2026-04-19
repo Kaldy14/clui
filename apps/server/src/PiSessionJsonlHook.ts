@@ -1,12 +1,12 @@
 /**
- * Watches pi's thread-scoped `--session-dir` for JSONL session updates and maps
- * persisted session lines to hookStatus events.
+ * Watches the active pi session JSONL file and maps persisted session lines to
+ * hookStatus events.
  *
  * Pi's SessionManager buffers the first user turn on disk until the first
  * assistant message exists (`_persist` / `hasAssistant` in @mariozechner/pi-coding-agent).
  * Clui pairs this watcher with `notifyPromptSubmitted` on `pi.write` newlines.
  */
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync, watch, type FSWatcher } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync, watch, type FSWatcher } from "node:fs";
 import path from "node:path";
 
 import type { ClaudeHookStatus, PiSessionEvent } from "@clui/contracts";
@@ -17,7 +17,6 @@ export interface PiJsonlHookLogger {
 
 export interface PiSessionJsonlHookWatcherOptions {
   readonly threadId: string;
-  readonly sessionDir: string;
   readonly logger: PiJsonlHookLogger;
   readonly emitHookStatus: (event: PiSessionEvent) => void;
 }
@@ -62,12 +61,12 @@ export function hookStatusFromSessionJsonlLine(line: string): ClaudeHookStatus |
 
 export class PiSessionJsonlHookWatcher {
   private readonly threadId: string;
-  private readonly sessionDir: string;
   private readonly logger: PiJsonlHookLogger;
   private readonly emitHookStatus: (event: PiSessionEvent) => void;
   private watcher: FSWatcher | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private activeFile: string | null = null;
+  private watchedDir: string | null = null;
   /** Byte offset in `activeFile` already processed. */
   private readOffset = 0;
   private lastEmitted: ClaudeHookStatus | null = null;
@@ -75,24 +74,13 @@ export class PiSessionJsonlHookWatcher {
 
   constructor(options: PiSessionJsonlHookWatcherOptions) {
     this.threadId = options.threadId;
-    this.sessionDir = options.sessionDir;
     this.logger = options.logger;
     this.emitHookStatus = options.emitHookStatus;
   }
 
-  start(): void {
+  start(sessionFile: string | null): void {
     this.stop();
-    this.pickActiveFileAndCatchUp();
-    try {
-      this.watcher = watch(this.sessionDir, { persistent: false }, () => {
-        this.scheduleRescan();
-      });
-    } catch (error) {
-      this.logger.warn("pi jsonl hook: failed to watch session dir", {
-        threadId: this.threadId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    this.setSessionFile(sessionFile);
   }
 
   stop(): void {
@@ -105,9 +93,53 @@ export class PiSessionJsonlHookWatcher {
       this.watcher = null;
     }
     this.activeFile = null;
+    this.watchedDir = null;
     this.readOffset = 0;
     this.lastEmitted = null;
     this.lineCarry = "";
+  }
+
+  setSessionFile(sessionFile: string | null): void {
+    const normalized = sessionFile ? path.resolve(sessionFile) : null;
+    if (this.activeFile === normalized && this.watcher) return;
+
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+
+    this.activeFile = normalized;
+    this.watchedDir = normalized ? path.dirname(normalized) : null;
+    this.readOffset = 0;
+    this.lastEmitted = null;
+    this.lineCarry = "";
+
+    if (!normalized || !this.watchedDir) {
+      return;
+    }
+
+    this.rescan();
+
+    try {
+      this.watcher = watch(this.watchedDir, { persistent: false }, (_eventType, fileName) => {
+        if (!this.activeFile) return;
+        if (fileName) {
+          const changed = path.join(this.watchedDir!, fileName.toString());
+          if (changed !== this.activeFile) return;
+        }
+        this.scheduleRescan();
+      });
+    } catch (error) {
+      this.logger.warn("pi jsonl hook: failed to watch session file", {
+        threadId: this.threadId,
+        sessionFile: normalized,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private scheduleRescan(): void {
@@ -119,6 +151,7 @@ export class PiSessionJsonlHookWatcher {
       } catch (error) {
         this.logger.warn("pi jsonl hook: rescan failed", {
           threadId: this.threadId,
+          sessionFile: this.activeFile,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -126,58 +159,8 @@ export class PiSessionJsonlHookWatcher {
     this.debounceTimer.unref?.();
   }
 
-  private listJsonlFiles(): string[] {
-    if (!existsSync(this.sessionDir)) return [];
-    let names: string[];
-    try {
-      names = readdirSync(this.sessionDir);
-    } catch {
-      return [];
-    }
-    return names.filter((n) => n.endsWith(".jsonl")).map((n) => path.join(this.sessionDir, n));
-  }
-
-  private pickLatestMtimeJsonl(): string | null {
-    const files = this.listJsonlFiles();
-    if (files.length === 0) return null;
-    let best: string | null = null;
-    let bestM = 0;
-    for (const f of files) {
-      try {
-        const m = statSync(f).mtimeMs;
-        if (m >= bestM) {
-          bestM = m;
-          best = f;
-        }
-      } catch {
-        /* skip */
-      }
-    }
-    return best;
-  }
-
-  private pickActiveFileAndCatchUp(): void {
-    const latest = this.pickLatestMtimeJsonl();
-    if (!latest) {
-      this.activeFile = null;
-      this.readOffset = 0;
-      return;
-    }
-    if (this.activeFile !== latest) {
-      this.activeFile = latest;
-      this.readOffset = 0;
-    }
-    this.rescan();
-  }
-
   private rescan(): void {
-    const latest = this.pickLatestMtimeJsonl();
-    if (!latest) return;
-
-    if (this.activeFile !== latest) {
-      this.activeFile = latest;
-      this.readOffset = 0;
-    }
+    if (!this.activeFile || !existsSync(this.activeFile)) return;
 
     let size = 0;
     try {
@@ -188,6 +171,8 @@ export class PiSessionJsonlHookWatcher {
 
     if (size < this.readOffset) {
       this.readOffset = 0;
+      this.lineCarry = "";
+      this.lastEmitted = null;
     }
     if (size === this.readOffset) return;
 

@@ -4,6 +4,63 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-19 — Pi `/resume` now works inside Clui and threads keep their exact pi session
+
+**Problem:** Running pi inside Clui broke native pi `/resume`. Current-folder mode said there were no sessions even when Clui had many pi JSONLs, and restarting a pi thread could only guess via the old thread-local `-c` behavior instead of reopening the exact session the user had selected with `/resume`, `/new`, `/fork`, or import.
+
+**Root cause:** Clui stored pi sessions in a thread-scoped `${stateDir}/pi-sessions/<threadId>` directory and resumed with `pi -c`. Native pi does not look there: `/resume` current-folder lists only direct `.jsonl` files from the active `sessionDir`, and `/resume` all scans `PI_CODING_AGENT_DIR/sessions/*/*.jsonl` in pi's own flat per-cwd layout. Clui also did not persist an explicit per-thread pi session file, so once a user switched sessions inside pi there was no reliable way to restore that exact choice after restart.
+
+**Fix:** Moved Clui's pi integration to a pi-compatible shared agent store under `${stateDir}/pi-agent`, with per-cwd session dirs matching pi's own naming scheme and `PI_CODING_AGENT_DIR` injected into the spawned pi process so native `/resume` and `/resume all` discover Clui-managed sessions. Added persisted `piSessionFile` thread metadata end-to-end (contracts, projections, web store/types, terminal status dispatch) so each thread reopens its exact selected pi session via `pi --session <file>`. Added a tiny runtime pi extension plus a thread-scoped sidecar watcher so Clui learns session switches immediately when the user runs `/resume`, `/new`, `/fork`, or import inside pi, and refactored the pi JSONL hook watcher to follow the active session file rather than whichever file in a shared directory was newest. Added legacy migration from the old `${stateDir}/pi-sessions/<threadId>` layout into the new shared per-cwd store, plus focused runtime/watcher tests.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/PiSessionJsonlHook.ts`
+- `apps/server/src/PiSessionJsonlHook.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/persistence/Services/ProjectionThreads.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/server/src/persistence/Migrations/005_Projections.ts`
+- `apps/server/src/persistence/Migrations/024_ProjectionThreadsPiSessionFile.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `README.md`
+- `PLAN.md`
+- `SESSION.md`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Active terminal no longer loses focus when sidebar status pills update
+
+**Problem:** While typing in an active thread terminal, sidebar status changes (for example working / completed / needs input updates) could steal focus away from xterm and hand it back to the sidebar thread row.
+
+**Root cause:** `ActiveTerminalView` subscribed its terminal attach lifecycle effect to the entire `thread` object. Every hook-status/sidebar badge update produces a new thread object, so the effect tore down and reattached the active xterm instance even though the terminal session itself had not changed. That cleanup removes the focused xterm DOM subtree, which lets focus fall back to the sidebar.
+
+**Fix:** Narrowed the active terminal transport helpers to depend only on the thread harness + thread id, then changed the active terminal effect to reinitialize only when that transport identity changes. Sidebar badge updates now re-render without detaching the focused terminal. The dormant scrollback bootstrap path was narrowed the same way so it also avoids unnecessary terminal resets on unrelated thread-object changes. To keep repo validation green against the already-introduced `piSessionFile` contract, I also filled in the missing server/web fixture fields and completed the missing `piSessionFile` plumbing in the pi session manager + WebSocket terminal-status dispatch path.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/store.test.ts`
+- `apps/web/src/worktreeCleanup.test.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
+- `apps/server/src/orchestration/commandInvariants.test.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-19 — Sidebar thread drag handle now keeps an absolute gutter with reserved hit area
 
 **Problem:** Dragging sidebar threads from the left grip was unreliable because the grip lived in an absolutely positioned hover-only gutter outside the actual row bounds. Moving straight up and down through that left gutter could leave the pointer outside the sortable thread items.

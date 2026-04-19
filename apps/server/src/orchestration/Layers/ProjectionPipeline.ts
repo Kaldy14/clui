@@ -427,6 +427,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
             claudeSessionId: null,
+            piSessionFile: null,
             terminalStatus: "new",
             scrollbackSnapshot: null,
             titleSource: "auto",
@@ -510,6 +511,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             ...existingRow.value,
             terminalStatus: event.payload.terminalStatus,
             claudeSessionId: event.payload.claudeSessionId,
+            piSessionFile: event.payload.piSessionFile,
             scrollbackSnapshot: event.payload.scrollbackSnapshot,
             updatedAt: event.payload.updatedAt,
           });

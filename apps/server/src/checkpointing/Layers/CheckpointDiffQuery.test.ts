@@ -50,6 +50,7 @@ function makeSnapshot(input: {
         branch: null,
         worktreePath: input.worktreePath,
         claudeSessionId: null,
+        piSessionFile: null,
         terminalStatus: "new",
         scrollbackSnapshot: null,
         titleSource: "auto" as const,

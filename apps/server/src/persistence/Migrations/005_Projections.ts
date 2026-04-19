@@ -26,6 +26,7 @@ export default Effect.gen(function* () {
       harness TEXT NOT NULL DEFAULT 'claudeCode',
       branch TEXT,
       worktree_path TEXT,
+      pi_session_file TEXT,
       latest_turn_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,

@@ -33,6 +33,7 @@ export const ProjectionThread = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   claudeSessionId: Schema.NullOr(Schema.String),
+  piSessionFile: Schema.NullOr(Schema.String),
   terminalStatus: TerminalStatus,
   scrollbackSnapshot: Schema.NullOr(Schema.String),
   titleSource: TitleSource,
