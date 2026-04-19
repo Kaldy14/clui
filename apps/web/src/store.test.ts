@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   markThreadUnread,
   reorderProjects,
+  setThreadArchived,
   syncServerReadModel,
   setTerminalStatus,
   setTerminalLifecycle,
@@ -35,6 +36,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     createdAt: "2026-02-13T00:00:00.000Z",
     updatedAt: "2026-02-13T00:00:00.000Z",
     lastInteractedAt: "2026-02-13T00:00:00.000Z",
+    archivedAt: null,
     latestTurn: null,
     branch: null,
     worktreePath: null,
@@ -64,6 +66,7 @@ function makeState(thread: Thread): AppState {
     threads: [thread],
     threadsHydrated: true,
     projectOrder: [],
+    threadOrderByProject: {},
   };
 }
 
@@ -87,6 +90,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     createdAt: "2026-02-27T00:00:00.000Z",
     updatedAt: "2026-02-27T00:00:00.000Z",
     lastInteractedAt: "2026-02-27T00:00:00.000Z",
+    archivedAt: null,
     deletedAt: null,
     messages: [],
     activities: [],
@@ -205,6 +209,7 @@ describe("store pure functions", () => {
         },
       ],
       projectOrder: [],
+      threadOrderByProject: {},
       threads: [],
       threadsHydrated: true,
     };
@@ -311,6 +316,7 @@ describe("store read model sync", () => {
         },
       ],
       projectOrder: [],
+      threadOrderByProject: {},
       threads: [],
       threadsHydrated: true,
     };
@@ -343,6 +349,40 @@ describe("store read model sync", () => {
   });
 });
 
+describe("archivedAt", () => {
+  it("syncServerReadModel preserves a pending local archivedAt update against a stale snapshot", () => {
+    const initialState = makeState(makeThread({ archivedAt: null }));
+    const threadId = initialState.threads[0]!.id;
+    const optimisticState = setThreadArchived(
+      initialState,
+      threadId,
+      "2026-04-19T10:00:00.000Z",
+    );
+    const staleReadModel = makeReadModel(makeReadModelThread({ archivedAt: null }));
+
+    const next = syncServerReadModel(optimisticState, staleReadModel);
+
+    expect(next.threads[0]?.archivedAt).toBe("2026-04-19T10:00:00.000Z");
+  });
+
+  it("syncServerReadModel accepts server archivedAt once the snapshot catches up", () => {
+    const initialState = makeState(makeThread({ archivedAt: null }));
+    const threadId = initialState.threads[0]!.id;
+    const optimisticState = setThreadArchived(
+      initialState,
+      threadId,
+      "2026-04-19T10:00:00.000Z",
+    );
+    const caughtUpReadModel = makeReadModel(
+      makeReadModelThread({ archivedAt: "2026-04-19T10:00:00.000Z" }),
+    );
+
+    const next = syncServerReadModel(optimisticState, caughtUpReadModel);
+
+    expect(next.threads[0]?.archivedAt).toBe("2026-04-19T10:00:00.000Z");
+  });
+});
+
 describe("dormantReason", () => {
   it("syncServerReadModel preserves client dormantReason", () => {
     const initialState = makeState(makeThread({ dormantReason: "hibernated" }));
@@ -359,6 +399,7 @@ describe("dormantReason", () => {
       threads: [],
       threadsHydrated: false,
       projectOrder: [],
+      threadOrderByProject: {},
     };
     const readModel = makeReadModel(makeReadModelThread({}));
 
@@ -368,7 +409,9 @@ describe("dormantReason", () => {
   });
 
   it("setTerminalStatus clears dormantReason to null", () => {
-    const initialState = makeState(makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }));
+    const initialState = makeState(
+      makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }),
+    );
     const threadId = initialState.threads[0]!.id;
 
     const next = setTerminalStatus(initialState, threadId, "active");
@@ -388,7 +431,9 @@ describe("dormantReason", () => {
   });
 
   it("setTerminalLifecycle preserves dormantReason when param is undefined", () => {
-    const initialState = makeState(makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }));
+    const initialState = makeState(
+      makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }),
+    );
     const threadId = initialState.threads[0]!.id;
 
     const next = setTerminalLifecycle(initialState, threadId, "dormant", null, undefined);
@@ -397,7 +442,9 @@ describe("dormantReason", () => {
   });
 
   it("setTerminalLifecycle can explicitly set dormantReason to null", () => {
-    const initialState = makeState(makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }));
+    const initialState = makeState(
+      makeThread({ dormantReason: "hibernated", terminalStatus: "dormant" }),
+    );
     const threadId = initialState.threads[0]!.id;
 
     const next = setTerminalLifecycle(initialState, threadId, "active", null, null);

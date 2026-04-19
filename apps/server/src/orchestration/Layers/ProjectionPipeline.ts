@@ -435,6 +435,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             lastInteractedAt: event.payload.createdAt,
+            archivedAt: null,
             deletedAt: null,
           });
           return;
@@ -462,6 +463,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               : {}),
             ...(!skipTitle && event.payload.titleSource !== undefined ? { titleSource: event.payload.titleSource } : {}),
             ...(event.payload.bookmarked !== undefined ? { bookmarked: event.payload.bookmarked } : {}),
+            ...(event.payload.archivedAt !== undefined ? { archivedAt: event.payload.archivedAt } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

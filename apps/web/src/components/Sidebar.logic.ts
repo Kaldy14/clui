@@ -22,7 +22,13 @@ export interface ThreadStatusPill {
 
 type ThreadStatusInput = Pick<
   Thread,
-  "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session" | "terminalStatus" | "hookStatus"
+  | "interactionMode"
+  | "latestTurn"
+  | "lastVisitedAt"
+  | "proposedPlans"
+  | "session"
+  | "terminalStatus"
+  | "hookStatus"
 >;
 
 export function hasUnseenCompletion(thread: Pick<Thread, "latestTurn" | "lastVisitedAt">): boolean {
@@ -39,85 +45,6 @@ export function hasUnseenCompletion(thread: Pick<Thread, "latestTurn" | "lastVis
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
-}
-
-// ── Thread sort ─────────────────────────────────────────────────────────
-
-/**
- * Badge-driven tiered sort for sidebar threads.
- *
- * The sort tier mirrors the badge priority so what the user sees (badge)
- * matches where the thread sits in the list:
- *
- *   Tier 0 — NEEDS ACTION  (Pending Approval, Needs Input, Error)
- *   Tier 1 — UNSEEN RESULT (Completed turn the user hasn't visited)
- *   Tier 2 — ACTIVE WORK   (Working / Running)
- *   Tier 3 — IDLE          (everything else)
- *
- * Within each tier threads sort by `lastInteractedAt` desc (user interaction
- * only — not bumped by hook events, completions, or background activity),
- * with ID as tiebreaker.
- *
- * Key property: merely *viewing* a thread never changes its tier — only
- * real activity (new turn, message, hook status) can promote a thread.
- * Clicking an idle thread resumes its terminal (terminalStatus → active)
- * but hookStatus stays null at the prompt, so it remains Tier 3.
- */
-
-export interface ThreadSortContext {
-  pendingApprovalByThreadId: ReadonlyMap<string, boolean>;
-  pendingUserInputByThreadId: ReadonlyMap<string, boolean>;
-}
-
-type ThreadSortInput = Pick<
-  Thread,
-  "id" | "updatedAt" | "lastInteractedAt" | "hookStatus" | "terminalStatus" | "session" | "latestTurn" | "lastVisitedAt"
->;
-
-function threadSortTier(
-  thread: ThreadSortInput,
-  hasPendingApprovals: boolean,
-  hasPendingUserInput: boolean,
-): number {
-  // Tier 0: Needs user action — most urgent
-  // Activity-based flags only count for non-active terminals; for active
-  // terminals hookStatus (below) is the authoritative real-time source.
-  if (thread.terminalStatus !== "active") {
-    if (hasPendingApprovals) return 0;
-    if (hasPendingUserInput) return 0;
-  }
-  if (thread.hookStatus === "pendingApproval" || thread.hookStatus === "needsInput") return 0;
-  if (thread.hookStatus === "error") return 0;
-
-  // Tier 1: Unseen completion — check your results
-  if (hasUnseenCompletion(thread)) return 1;
-
-  // Tier 2: Active work — Claude is busy, wait
-  if (thread.hookStatus === "working") return 2;
-  if (thread.session?.status === "running") return 2;
-
-  // Tier 3: Idle — nothing happening
-  return 3;
-}
-
-export function createThreadSortComparator(ctx: ThreadSortContext) {
-  return (a: ThreadSortInput, b: ThreadSortInput): number => {
-    const tierA = threadSortTier(
-      a,
-      ctx.pendingApprovalByThreadId.get(a.id) === true,
-      ctx.pendingUserInputByThreadId.get(a.id) === true,
-    );
-    const tierB = threadSortTier(
-      b,
-      ctx.pendingApprovalByThreadId.get(b.id) === true,
-      ctx.pendingUserInputByThreadId.get(b.id) === true,
-    );
-    if (tierA !== tierB) return tierA - tierB;
-
-    const byDate = new Date(b.lastInteractedAt).getTime() - new Date(a.lastInteractedAt).getTime();
-    if (byDate !== 0) return byDate;
-    return b.id.localeCompare(a.id);
-  };
 }
 
 export function resolveThreadStatusPill(input: {

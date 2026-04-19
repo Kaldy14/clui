@@ -541,9 +541,11 @@ function DormantTerminalView({
     }
   }, [thread, threadId, cwd, yoloMode]);
 
-  // Auto-resume on mount. Cooldown guard prevents infinite loops when
-  // --resume fails (stale session → immediate exit → remount cycle).
+  // Auto-resume on mount for normal dormant threads. Archived threads must
+  // stay paused when opened so the user sees the dormant snapshot + Resume
+  // action instead of immediately restarting the harness.
   useEffect(() => {
+    if (thread.archivedAt !== null) return;
     const lastAttempt = autoResumeLastAttempt.get(threadId) ?? 0;
     if (!resuming && cwd && Date.now() - lastAttempt > AUTO_RESUME_COOLDOWN_MS) {
       pruneAutoResumeMap();

@@ -332,6 +332,7 @@ export const OrchestrationThread = Schema.Struct({
   updatedAt: IsoDateTime,
   /** Only bumped when the user actively interacts (new turn starts). Used for sidebar sort. */
   lastInteractedAt: IsoDateTime.pipe(Schema.withDecodingDefault(() => "")),
+  archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(Schema.withDecodingDefault(() => [])),
@@ -409,6 +410,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),
   bookmarked: Schema.optional(Schema.Boolean),
+  archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -739,6 +741,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),
   bookmarked: Schema.optional(Schema.Boolean),
+  archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   updatedAt: IsoDateTime,
 });
 

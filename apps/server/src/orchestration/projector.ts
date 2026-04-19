@@ -267,6 +267,7 @@ export function projectEvent(
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             lastInteractedAt: payload.createdAt,
+            archivedAt: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -315,6 +316,7 @@ export function projectEvent(
               ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
               ...(!skipTitle && payload.titleSource !== undefined ? { titleSource: payload.titleSource } : {}),
               ...(payload.bookmarked !== undefined ? { bookmarked: payload.bookmarked } : {}),
+              ...(payload.archivedAt !== undefined ? { archivedAt: payload.archivedAt } : {}),
               updatedAt: payload.updatedAt,
             }),
           };

@@ -16,7 +16,7 @@ import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { clearBranchUpdatePending, updateThread, useStore } from "../store";
+import { clearBranchUpdatePending, markArchiveUpdatePending, updateThread, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
@@ -172,6 +172,7 @@ function EventRouter() {
   const lastConfigIssuesSignatureRef = useRef<string | null>(null);
   const deferredThreadIdsRef = useRef(new Set<string>());
   const syncSnapshotRef = useRef<(() => Promise<void>) | null>(null);
+  const cancelQueuedSnapshotSyncRef = useRef<(() => void) | null>(null);
 
   pathnameRef.current = pathname;
 
@@ -239,6 +240,11 @@ function EventRouter() {
         trailing: true,
       },
     );
+
+    cancelQueuedSnapshotSyncRef.current = () => {
+      pending = false;
+      domainEventFlushThrottler.cancel();
+    };
 
     const getCurrentThreadId = (): string | null => {
       const match = pathnameRef.current.match(/^\/([^/]+)/);
@@ -341,24 +347,30 @@ function EventRouter() {
       // where a stale in-flight snapshot could overwrite an optimistic update.
       // Title/bookmarked are only patched for background threads.
       if (event.type === "thread.meta-updated") {
-        const { threadId, title, titleSource, bookmarked, branch, worktreePath, harness } = event.payload;
+        const { threadId, title, titleSource, bookmarked, branch, worktreePath, harness, archivedAt } =
+          event.payload;
 
         if (branch !== undefined || worktreePath !== undefined) {
           clearBranchUpdatePending(threadId);
+        }
+        if (archivedAt !== undefined) {
+          markArchiveUpdatePending(threadId);
         }
 
         const hasBranchPatch = branch !== undefined || worktreePath !== undefined;
         const hasTitlePatch =
           !isCurrentThread && (title !== undefined || bookmarked !== undefined);
         const hasHarnessPatch = harness !== undefined;
+        const hasArchivePatch = archivedAt !== undefined;
 
-        if (hasBranchPatch || hasTitlePatch || hasHarnessPatch) {
+        if (hasBranchPatch || hasTitlePatch || hasHarnessPatch || hasArchivePatch) {
           useStore.setState((state) => {
             const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => ({
               ...t,
               ...(branch !== undefined ? { branch } : {}),
               ...(worktreePath !== undefined ? { worktreePath } : {}),
               ...(harness !== undefined ? { harness } : {}),
+              ...(archivedAt !== undefined ? { archivedAt } : {}),
               ...(!isCurrentThread && title !== undefined ? { title } : {}),
               ...(!isCurrentThread && titleSource !== undefined ? { titleSource } : {}),
               ...(!isCurrentThread && bookmarked !== undefined ? { bookmarked } : {}),
@@ -368,12 +380,34 @@ function EventRouter() {
         }
       }
 
-      // Only trigger expensive full snapshot sync for the currently viewed thread
-      // or for project-level events that affect the sidebar/navigation.
-      if (isCurrentThread || isProjectEvent) {
+      const isExplicitUnarchiveEvent =
+        event.type === "thread.meta-updated" && event.payload.archivedAt === null;
+      const targetThread =
+        event.aggregateKind === "thread"
+          ? useStore.getState().threads.find((thread) => thread.id === event.aggregateId)
+          : null;
+      const isArchivedThread = targetThread?.archivedAt !== null;
+      const suppressArchivedThreadSync =
+        event.aggregateKind === "thread" &&
+        isArchivedThread &&
+        !isExplicitUnarchiveEvent &&
+        event.type !== "thread.meta-updated" &&
+        event.type !== "thread.deleted";
+
+      if ((isExplicitUnarchiveEvent || suppressArchivedThreadSync) && event.aggregateKind === "thread") {
+        deferredThreadIdsRef.current.delete(event.aggregateId);
+      }
+
+      // Trigger a full snapshot sync for the currently viewed thread, for
+      // project-level events, and for explicit unarchive transitions. Archived
+      // threads otherwise stay on their event-driven paused snapshot view and
+      // must not re-enter the deferred/current-thread snapshot path on select.
+      if (suppressArchivedThreadSync) {
+        return;
+      }
+      if (isCurrentThread || isProjectEvent || isExplicitUnarchiveEvent) {
         domainEventFlushThrottler.maybeExecute();
       } else if (event.aggregateKind === "thread") {
-        // For background threads, defer the sync until the user navigates there.
         deferredThreadIdsRef.current.add(event.aggregateId);
       }
     });
@@ -612,6 +646,7 @@ function EventRouter() {
       syncSnapshotRef.current = null;
       domainEventFlushThrottler.cancel();
       sessionState.clearAll();
+      cancelQueuedSnapshotSyncRef.current = null;
       unsubDomainEvent();
       unsubTerminalEvent();
       unsubClaudeSessionEvent();
@@ -630,10 +665,21 @@ function EventRouter() {
   useEffect(() => {
     // When the user switches threads, flush any deferred sync through the
     // proper syncSnapshot mutex so it respects sequence tracking and the
-    // syncing/pending guard.
+    // syncing/pending guard. Archived threads are intentionally excluded:
+    // selecting an archived thread should keep it in its paused snapshot view
+    // instead of triggering a background-thread refresh path.
     const match = pathname.match(/^\/([^/]+)/);
     const threadId = match ? match[1] : null;
-    if (threadId && deferredThreadIdsRef.current.has(threadId)) {
+    if (!threadId) return;
+
+    const thread = useStore.getState().threads.find((entry) => entry.id === threadId);
+    if (thread?.archivedAt !== null) {
+      cancelQueuedSnapshotSyncRef.current?.();
+      deferredThreadIdsRef.current.delete(threadId);
+      return;
+    }
+
+    if (deferredThreadIdsRef.current.has(threadId)) {
       deferredThreadIdsRef.current.delete(threadId);
       if (syncSnapshotRef.current) {
         void syncSnapshotRef.current();

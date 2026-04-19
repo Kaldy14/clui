@@ -4,6 +4,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type CodingHarness,
   type ProviderKind,
+  ProjectId,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
@@ -16,9 +17,15 @@ import {
   resolveModelSlug,
   resolveModelSlugForProvider,
 } from "@clui/shared/model";
+import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread, type DormantReason } from "./types";
-import { Debouncer } from "@tanstack/react-pacer";
+import {
+  type ThreadOrderByProject,
+  hydrateThreadOrderByProjectFromPersistence,
+  pruneThreadOrderByProject,
+  reorderThreadsWithinProject,
+} from "./lib/threadOrdering";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -28,6 +35,8 @@ export interface AppState {
   threadsHydrated: boolean;
   /** Custom project display order — array of ProjectId strings. */
   projectOrder: string[];
+  /** Per-project manual thread ordering, layered under the default createdAt sort. */
+  threadOrderByProject: ThreadOrderByProject;
 }
 
 const PERSISTED_STATE_KEY = "clui:renderer-state:v8";
@@ -50,9 +59,11 @@ const initialState: AppState = {
   threads: [],
   threadsHydrated: false,
   projectOrder: [],
+  threadOrderByProject: {},
 };
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
+const persistedThreadOrderByProjectCwd = new Map<string, string[]>();
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -64,9 +75,11 @@ function readPersistedState(): AppState {
     const parsed = JSON.parse(raw) as {
       expandedProjectCwds?: string[];
       projectOrderCwds?: string[];
+      threadOrderByProjectCwd?: Record<string, string[]>;
     };
     persistedExpandedProjectCwds.clear();
     persistedProjectOrderCwds.length = 0;
+    persistedThreadOrderByProjectCwd.clear();
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
@@ -75,6 +88,18 @@ function readPersistedState(): AppState {
     for (const cwd of parsed.projectOrderCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwds.includes(cwd)) {
         persistedProjectOrderCwds.push(cwd);
+      }
+    }
+    for (const [cwd, threadIds] of Object.entries(parsed.threadOrderByProjectCwd ?? {})) {
+      if (typeof cwd !== "string" || cwd.length === 0 || !Array.isArray(threadIds)) continue;
+      const uniqueThreadIds = threadIds.filter(
+        (threadId, index): threadId is string =>
+          typeof threadId === "string" &&
+          threadId.length > 0 &&
+          threadIds.indexOf(threadId) === index,
+      );
+      if (uniqueThreadIds.length > 0) {
+        persistedThreadOrderByProjectCwd.set(cwd, uniqueThreadIds);
       }
     }
     return { ...initialState };
@@ -88,6 +113,13 @@ let legacyKeysCleanedUp = false;
 function persistState(state: AppState): void {
   if (typeof window === "undefined") return;
   try {
+    const threadOrderByProjectCwd: Record<string, string[]> = {};
+    for (const project of state.projects) {
+      const threadOrder = state.threadOrderByProject[project.id];
+      if (!threadOrder || threadOrder.length === 0) continue;
+      threadOrderByProjectCwd[project.cwd] = [...threadOrder];
+    }
+
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -95,6 +127,7 @@ function persistState(state: AppState): void {
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
         projectOrderCwds: state.projects.map((project) => project.cwd),
+        threadOrderByProjectCwd,
       }),
     );
     if (!legacyKeysCleanedUp) {
@@ -312,9 +345,13 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.interactionMode !== incoming.interactionMode) return true;
   if (existing.titleSource !== incoming.titleSource) return true;
   if (existing.bookmarked !== incoming.bookmarked) return true;
+  if (existing.archivedAt !== incoming.archivedAt) return true;
   // Session check
   if ((existing.session?.updatedAt ?? null) !== (incoming.session?.updatedAt ?? null)) return true;
-  if ((existing.session?.orchestrationStatus ?? null) !== (incoming.session?.orchestrationStatus ?? null))
+  if (
+    (existing.session?.orchestrationStatus ?? null) !==
+    (incoming.session?.orchestrationStatus ?? null)
+  )
     return true;
   // Array length heuristics — if lengths differ, something changed
   if (existing.messages.length !== incoming.messages.length) return true;
@@ -352,7 +389,9 @@ function projectChanged(existing: Project, incoming: Project): boolean {
 // local values until the server catches up.
 
 const pendingBranchUpdates = new Map<string, number>();
+const pendingArchiveUpdates = new Map<string, number>();
 const BRANCH_UPDATE_GUARD_MS = 5_000;
+const ARCHIVE_UPDATE_GUARD_MS = 5_000;
 
 export function markBranchUpdatePending(threadId: string): void {
   pendingBranchUpdates.set(threadId, Date.now());
@@ -372,6 +411,20 @@ function hasPendingBranchUpdate(threadId: string): boolean {
   return true;
 }
 
+export function markArchiveUpdatePending(threadId: string): void {
+  pendingArchiveUpdates.set(threadId, Date.now());
+}
+
+function hasPendingArchiveUpdate(threadId: string): boolean {
+  const ts = pendingArchiveUpdates.get(threadId);
+  if (ts === undefined) return false;
+  if (Date.now() - ts > ARCHIVE_UPDATE_GUARD_MS) {
+    pendingArchiveUpdates.delete(threadId);
+    return false;
+  }
+  return true;
+}
+
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
@@ -379,6 +432,10 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     readModel.projects.filter((project) => project.deletedAt === null),
     state.projects,
   );
+  const baseThreadOrderByProject =
+    Object.keys(state.threadOrderByProject).length > 0
+      ? state.threadOrderByProject
+      : hydrateThreadOrderByProjectFromPersistence(projects, persistedThreadOrderByProjectCwd);
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   let anyThreadChanged = false;
   const threads = readModel.threads
@@ -397,6 +454,15 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         pendingBranchUpdates.delete(thread.id);
       }
       const preserveLocalBranch = existing != null && hasPendingBranchUpdate(thread.id);
+
+      if (
+        existing &&
+        pendingArchiveUpdates.has(thread.id) &&
+        thread.archivedAt === existing.archivedAt
+      ) {
+        pendingArchiveUpdates.delete(thread.id);
+      }
+      const preserveLocalArchivedAt = existing != null && hasPendingArchiveUpdate(thread.id);
 
       const newThread: Thread = {
         id: thread.id,
@@ -458,6 +524,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
         branch: preserveLocalBranch ? existing.branch : thread.branch,
         worktreePath: preserveLocalBranch ? existing.worktreePath : thread.worktreePath,
+        archivedAt: preserveLocalArchivedAt ? existing.archivedAt : (thread.archivedAt ?? null),
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
           turnId: checkpoint.turnId,
           completedAt: checkpoint.completedAt,
@@ -484,11 +551,13 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     });
   const finalThreads =
     anyThreadChanged || threads.length !== state.threads.length ? threads : state.threads;
+  const threadOrderByProject = pruneThreadOrderByProject(baseThreadOrderByProject, finalThreads);
   return {
     ...state,
     projects,
     threads: finalThreads,
     threadsHydrated: true,
+    threadOrderByProject,
   };
 }
 
@@ -619,6 +688,7 @@ export function addOptimisticThread(
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
     lastInteractedAt: input.createdAt,
+    archivedAt: null,
     latestTurn: null,
     lastVisitedAt: input.createdAt,
     branch: input.branch,
@@ -638,6 +708,37 @@ export function addOptimisticThread(
 
 export function setProjectOrder(state: AppState, order: string[]): AppState {
   return { ...state, projectOrder: order };
+}
+
+export function reorderThreadsInProject(
+  state: AppState,
+  projectId: ProjectId,
+  draggedThreadId: ThreadId,
+  targetThreadId: ThreadId,
+): AppState {
+  const threadOrderByProject = reorderThreadsWithinProject({
+    projectId,
+    threads: state.threads,
+    threadOrderByProject: state.threadOrderByProject,
+    draggedThreadId,
+    targetThreadId,
+  });
+  return threadOrderByProject === state.threadOrderByProject
+    ? state
+    : { ...state, threadOrderByProject };
+}
+
+export function setThreadArchived(
+  state: AppState,
+  threadId: ThreadId,
+  archivedAt: string | null,
+): AppState {
+  markArchiveUpdatePending(threadId);
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.archivedAt === archivedAt) return thread;
+    return { ...thread, archivedAt };
+  });
+  return threads === state.threads ? state : { ...state, threads };
 }
 
 export function setThreadHarness(
@@ -710,11 +811,17 @@ interface AppStore extends AppState {
   toggleProject: (projectId: Project["id"]) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
+  reorderThreadsInProject: (
+    projectId: Project["id"],
+    draggedThreadId: ThreadId,
+    targetThreadId: ThreadId,
+  ) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
   setThreadHarness: (threadId: ThreadId, harness: CodingHarness) => void;
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
+  setThreadArchived: (threadId: ThreadId, archivedAt: string | null) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
   /** Bump lastInteractedAt to now. Called once on turnStart (user sent a message). */
   bumpLastInteractedAt: (threadId: ThreadId) => void;
@@ -722,7 +829,12 @@ interface AppStore extends AppState {
   resetThreadStatus: (threadId: ThreadId) => void;
   setTerminalStatus: (threadId: ThreadId, terminalStatus: TerminalStatus) => void;
   /** Atomically update terminalStatus, hookStatus, and dormantReason in a single render. */
-  setTerminalLifecycle: (threadId: ThreadId, terminalStatus: TerminalStatus, hookStatus: ClaudeHookStatus | null, dormantReason?: DormantReason) => void;
+  setTerminalLifecycle: (
+    threadId: ThreadId,
+    terminalStatus: TerminalStatus,
+    hookStatus: ClaudeHookStatus | null,
+    dormantReason?: DormantReason,
+  ) => void;
   addOptimisticThread: (input: {
     id: ThreadId;
     projectId: Project["id"];
@@ -745,6 +857,8 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectId, targetProjectId) =>
     set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
+  reorderThreadsInProject: (projectId, draggedThreadId, targetThreadId) =>
+    set((state) => reorderThreadsInProject(state, projectId, draggedThreadId, targetThreadId)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
@@ -755,8 +869,15 @@ export const useStore = create<AppStore>((set) => ({
   removeThread: (threadId) =>
     set((state) => {
       const threads = state.threads.filter((t) => t.id !== threadId);
-      return threads.length === state.threads.length ? state : { ...state, threads };
+      if (threads.length === state.threads.length) return state;
+      return {
+        ...state,
+        threads,
+        threadOrderByProject: pruneThreadOrderByProject(state.threadOrderByProject, threads),
+      };
     }),
+  setThreadArchived: (threadId, archivedAt) =>
+    set((state) => setThreadArchived(state, threadId, archivedAt)),
   setHookStatus: (threadId, hookStatus) =>
     set((state) => {
       const threads = updateThread(state.threads, threadId, (thread) => {
@@ -789,7 +910,9 @@ export const useStore = create<AppStore>((set) => ({
   setTerminalStatus: (threadId, terminalStatus) =>
     set((state) => setTerminalStatus(state, threadId, terminalStatus)),
   setTerminalLifecycle: (threadId, terminalStatus, hookStatus, dormantReason) =>
-    set((state) => setTerminalLifecycle(state, threadId, terminalStatus, hookStatus, dormantReason)),
+    set((state) =>
+      setTerminalLifecycle(state, threadId, terminalStatus, hookStatus, dormantReason),
+    ),
 }));
 
 // Persist state changes with debouncing to avoid localStorage thrashing

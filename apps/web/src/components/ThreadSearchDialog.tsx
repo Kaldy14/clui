@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { GitBranchIcon, SearchIcon } from "lucide-react";
+import { ArchiveIcon, GitBranchIcon, SearchIcon } from "lucide-react";
 import type { ProjectId, ThreadId } from "@clui/contracts";
 import { useStore } from "../store";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
@@ -177,6 +177,12 @@ function ThreadSearchResultRow({
           <span className="min-w-0 flex-1 truncate text-xs font-medium">
             {matchField === "title" ? highlightMatch(thread.title, query) : thread.title}
           </span>
+          {thread.archivedAt && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground/70">
+              <ArchiveIcon className="size-2.5" />
+              Archived
+            </span>
+          )}
           {thread.branch && (
             <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground/70">
               <GitBranchIcon className="size-2.5" />
