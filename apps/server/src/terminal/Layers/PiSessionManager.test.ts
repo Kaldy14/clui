@@ -112,18 +112,29 @@ describe("PiSessionManagerRuntime", () => {
     }
   });
 
-  it("spawns pi with a shared per-cwd session dir and pi agent dir override", async () => {
+  it("spawns pi with a shared per-cwd session dir without overriding the user's pi agent dir", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);
     const ptyAdapter = new FakePtyAdapter();
     runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
 
-    await runtime.startSession({
-      threadId: "thread-1",
-      cwd,
-      cols: 100,
-      rows: 30,
-    });
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = path.join(stateDir, "user-agent-dir");
+
+    try {
+      await runtime.startSession({
+        threadId: "thread-1",
+        cwd,
+        cols: 100,
+        rows: 30,
+      });
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+    }
 
     const spawnInput = ptyAdapter.spawnInputs[0]!;
     expect(spawnInput.shell).toBe("pi");
@@ -133,7 +144,7 @@ describe("PiSessionManagerRuntime", () => {
       "--extension",
       path.join(stateDir, "pi-runtime", "clui-pi-session-sync.js"),
     ]);
-    expect(spawnInput.env.PI_CODING_AGENT_DIR).toBe(path.join(stateDir, "pi-agent"));
+    expect(spawnInput.env.PI_CODING_AGENT_DIR).toBe(path.join(stateDir, "user-agent-dir"));
     expect(spawnInput.env.CLUI_PI_THREAD_ID).toBe("thread-1");
     expect(spawnInput.env.CLUI_PI_SESSION_SYNC_DIR).toBe(path.join(stateDir, "pi-session-sync"));
 
@@ -175,6 +186,36 @@ describe("PiSessionManagerRuntime", () => {
       sessionFile,
     ]);
     expect(runtime.getSessionFile("thread-1")).toBe(sessionFile);
+  });
+
+  it("does not implicitly continue another cwd session when starting a brand new pi thread", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+
+    const existingSessionFile = path.join(encodedCwdDir(stateDir, cwd), "existing.jsonl");
+    await mkdir(path.dirname(existingSessionFile), { recursive: true });
+    await writeFile(
+      existingSessionFile,
+      `{"type":"session","version":3,"id":"sess-existing","timestamp":"2026-04-19T00:00:00.000Z","cwd":${JSON.stringify(cwd)}}\n`,
+      "utf8",
+    );
+
+    await runtime.startSession({
+      threadId: "thread-2",
+      cwd,
+      cols: 120,
+      rows: 40,
+    });
+
+    expect(ptyAdapter.spawnInputs[0]!.args).toEqual([
+      "--session-dir",
+      encodedCwdDir(stateDir, cwd),
+      "--extension",
+      path.join(stateDir, "pi-runtime", "clui-pi-session-sync.js"),
+    ]);
+    expect(runtime.getSessionFile("thread-2")).toBeNull();
   });
 
   it("migrates legacy thread-scoped sessions into the shared per-cwd store", async () => {

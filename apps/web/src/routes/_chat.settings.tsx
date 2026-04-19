@@ -1,7 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
-import { type CodingHarness, type ProviderKind } from "@clui/contracts";
+import {
+  DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+  MAX_ACTIVE_HARNESS_SESSION_CAP,
+  MIN_ACTIVE_HARNESS_SESSION_CAP,
+  type CodingHarness,
+  type ProviderKind,
+} from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
 import {
@@ -19,7 +25,7 @@ import whisperManager from "../lib/whisperManager";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
@@ -141,9 +147,13 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
+  const queryClient = useQueryClient();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [maxActiveHarnessSessionsInput, setMaxActiveHarnessSessionsInput] = useState("");
+  const [serverSettingsError, setServerSettingsError] = useState<string | null>(null);
+  const [isSavingServerSettings, setIsSavingServerSettings] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -160,6 +170,14 @@ function SettingsRouteView() {
   useEffect(() => {
     setWhisperModelReady(whisperManager.isModelReady(settings.whisperModel as WhisperModelTier));
   }, [settings.whisperModel]);
+
+  useEffect(() => {
+    const currentCap = serverConfigQuery.data?.settings.maxActiveHarnessSessions;
+    if (typeof currentCap === "number") {
+      setMaxActiveHarnessSessionsInput(String(currentCap));
+      setServerSettingsError(null);
+    }
+  }, [serverConfigQuery.data?.settings.maxActiveHarnessSessions]);
 
   // Scroll to section when navigated with hash (e.g. /settings#speech-to-text)
   useEffect(() => {
@@ -204,6 +222,39 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [keybindingsConfigPath]);
+
+  const saveServerSettings = useCallback(() => {
+    const nextCap = Number.parseInt(maxActiveHarnessSessionsInput, 10);
+    if (
+      !Number.isInteger(nextCap) ||
+      nextCap < MIN_ACTIVE_HARNESS_SESSION_CAP ||
+      nextCap > MAX_ACTIVE_HARNESS_SESSION_CAP
+    ) {
+      setServerSettingsError(
+        `Enter a whole number between ${MIN_ACTIVE_HARNESS_SESSION_CAP} and ${MAX_ACTIVE_HARNESS_SESSION_CAP}.`,
+      );
+      return;
+    }
+
+    setServerSettingsError(null);
+    setIsSavingServerSettings(true);
+    const api = ensureNativeApi();
+    void api.server
+      .updateSettings({ maxActiveHarnessSessions: nextCap })
+      .then((nextSettings) => {
+        queryClient.setQueryData(serverQueryKeys.config(), (previous) =>
+          previous ? { ...previous, settings: nextSettings } : previous,
+        );
+      })
+      .catch((error) => {
+        setServerSettingsError(
+          error instanceof Error ? error.message : "Unable to save server settings.",
+        );
+      })
+      .finally(() => {
+        setIsSavingServerSettings(false);
+      });
+  }, [maxActiveHarnessSessionsInput, queryClient]);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -268,6 +319,18 @@ function SettingsRouteView() {
     },
     [settings, updateSettings],
   );
+
+  const configuredMaxActiveHarnessSessions =
+    serverConfigQuery.data?.settings.maxActiveHarnessSessions ??
+    DEFAULT_ACTIVE_HARNESS_SESSION_CAP;
+  const parsedMaxActiveHarnessSessions = Number.parseInt(maxActiveHarnessSessionsInput, 10);
+  const hasValidMaxActiveHarnessSessions =
+    Number.isInteger(parsedMaxActiveHarnessSessions) &&
+    parsedMaxActiveHarnessSessions >= MIN_ACTIVE_HARNESS_SESSION_CAP &&
+    parsedMaxActiveHarnessSessions <= MAX_ACTIVE_HARNESS_SESSION_CAP;
+  const hasPendingServerSettingsChange =
+    hasValidMaxActiveHarnessSessions &&
+    parsedMaxActiveHarnessSessions !== configuredMaxActiveHarnessSessions;
 
   return (
     <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -349,6 +412,74 @@ function SettingsRouteView() {
                     </button>
                   );
                 })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Session hibernation</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Limit how many active thread PTY sessions Clui keeps per harness before it hibernates the least recently used one. Claude Code and pi each use their own cap.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <label htmlFor="max-active-harness-sessions" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Active sessions per harness</span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Input
+                      id="max-active-harness-sessions"
+                      type="number"
+                      min={MIN_ACTIVE_HARNESS_SESSION_CAP}
+                      max={MAX_ACTIVE_HARNESS_SESSION_CAP}
+                      value={maxActiveHarnessSessionsInput}
+                      onChange={(event) => {
+                        setMaxActiveHarnessSessionsInput(event.target.value);
+                        setServerSettingsError(null);
+                      }}
+                      className="w-28"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {MIN_ACTIVE_HARNESS_SESSION_CAP}–{MAX_ACTIVE_HARNESS_SESSION_CAP} active sessions per harness
+                    </span>
+                  </div>
+                </label>
+
+                <p className="text-xs text-muted-foreground">
+                  Current setting: {configuredMaxActiveHarnessSessions}. When a harness goes over the cap, Clui hibernates the oldest active thread and resumes it on demand later.
+                </p>
+
+                {serverSettingsError ? (
+                  <p className="text-xs text-destructive">{serverSettingsError}</p>
+                ) : null}
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={
+                      isSavingServerSettings ||
+                      maxActiveHarnessSessionsInput === String(configuredMaxActiveHarnessSessions)
+                    }
+                    onClick={() => {
+                      setMaxActiveHarnessSessionsInput(String(configuredMaxActiveHarnessSessions));
+                      setServerSettingsError(null);
+                    }}
+                  >
+                    Reset
+                  </Button>
+                  <Button
+                    size="xs"
+                    disabled={
+                      isSavingServerSettings ||
+                      serverConfigQuery.isLoading ||
+                      !hasPendingServerSettingsChange
+                    }
+                    onClick={saveServerSettings}
+                  >
+                    {isSavingServerSettings ? "Saving…" : "Save session cap"}
+                  </Button>
+                </div>
               </div>
             </section>
 

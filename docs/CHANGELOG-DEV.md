@@ -4,6 +4,115 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-19 — Pi harness now preserves the user's global `~/.pi/agent` config again
+
+**Problem:** After the recent pi `/resume` integration changes, pi threads launched from Clui stopped seeing the user's normal global pi setup such as extensions, skills, themes, auth, and settings from `~/.pi/agent`.
+
+**Root cause:** Clui started exporting `PI_CODING_AGENT_DIR` to a Clui-managed state directory so pi session discovery could be isolated. In pi, that environment variable controls the entire global agent root, not just sessions, so resource loading moved away from the user's real `~/.pi/agent` tree.
+
+**Fix:** Stopped overriding `PI_CODING_AGENT_DIR` when spawning pi from Clui. Clui now keeps using its explicit `--session-dir` plus runtime extension/sidecar for thread session tracking, while pi continues to resolve global config from the user's normal environment (including any user-defined `PI_CODING_AGENT_DIR`, or `~/.pi/agent` by default). Added regression coverage to ensure Clui no longer stomps a pre-existing `PI_CODING_AGENT_DIR` value.
+
+**Affected files:**
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — New pi threads no longer auto-resume an unrelated old session
+
+**Problem:** Creating a brand new pi thread could reopen an older pi conversation from the same project instead of starting with a clean session.
+
+**Root cause:** Clui's initial pi thread start path did not mark brand new threads as `fresh`, and the server still had a fallback that implicitly continued the only `.jsonl` session in the shared per-cwd pi session directory. That made a new thread inherit prior per-folder pi state even though the user had created a separate thread.
+
+**Fix:** Marked first-run pi thread launches as `fresh` in the web terminal start path, and removed the server-side implicit `pi -c` fallback so Clui only resumes pi when a thread is explicitly tied to a `piSessionFile` (or a legacy thread session is migrated). Added a regression test covering the single-existing-session case so brand new pi threads stay isolated.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Legacy terminal lifecycle events no longer crash startup after `piSessionFile` was added
+
+**Problem:** Starting the dev server crashed during orchestration event replay with `Decode error in OrchestrationEventStore.readFromSequence:rowToEvent: Missing key at ["payload"]["piSessionFile"]`.
+
+**Root cause:** Older persisted `thread.terminal-status-changed` events were written before `piSessionFile` existed, but the event payload schema was changed to require `claudeSessionId`, `piSessionFile`, and `scrollbackSnapshot` keys. Event-store replay decodes historical rows against the latest schema, so replaying legacy rows failed before startup could finish.
+
+**Fix:** Made `ThreadTerminalStatusChanged` command and event payload decoding backward-compatible by defaulting missing `claudeSessionId`, `piSessionFile`, and `scrollbackSnapshot` fields to `null`. Added regression coverage in both contracts decoding tests and the server orchestration event store replay tests for legacy rows missing `piSessionFile`.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/orchestration.test.ts`
+- `apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Active session hibernation cap is now configurable from Settings
+
+**Problem:** Clui hard-coded the active thread PTY cap to 10 per harness, so users could not tune when dormant-thread hibernation kicks in for Claude Code and pi.
+
+**Root cause:** Both session managers baked `DEFAULT_MAX_ACTIVE_SESSIONS = 10` into their runtimes with no persisted server setting, no WebSocket API to update the cap, and no Settings UI to expose it.
+
+**Fix:** Added persisted server settings with a new `maxActiveHarnessSessions` cap, exposed it through `server.getConfig` plus a new `server.updateSettings` RPC, and taught both Claude and pi session managers to load the saved cap at startup and apply live changes immediately via `setMaxActiveSessions()`. Added a Settings page control for editing the per-harness cap and updated server tests to cover reading and writing the new setting.
+
+**Affected files:**
+- `packages/contracts/src/server.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/ipc.ts`
+- `apps/server/src/serverSettings.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/server/src/terminal/Services/ClaudeSession.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Backend startup works again on Node/Electron runtimes and pi session migration now actually runs
+
+**Problem:** The freshly built `0.0.19` app could not start the backend. Startup died before serving the app, and recent `piSessionFile` schema changes also depended on a migration that was present on disk but never registered.
+
+**Root cause:** `apps/server/src/persistence/NodeSqliteClient.ts` assumed `node:sqlite` statements expose `statement.columns()`, but the Node runtime used here does not provide that API, so even simple startup queries like `PRAGMA` crashed immediately with `statement.columns is not a function`. Separately, migration `024_ProjectionThreadsPiSessionFile.ts` existed but was missing from `apps/server/src/persistence/Migrations.ts`, so upgraded databases would not receive the new `pi_session_file` column.
+
+**Fix:** Reworked the Node SQLite client to infer row-producing statements without relying on `statement.columns()`, while still supporting `SELECT`, `PRAGMA`, and `RETURNING` queries on Node/Electron runtimes. Also registered migration `024_ProjectionThreadsPiSessionFile` so existing databases are upgraded before thread snapshot queries touch `pi_session_file`. Verified by starting the backend with a fresh temp `CLUI_STATE_DIR` and by running `bun lint`, `bun typecheck`, and `bun run build`.
+
+**Affected files:**
+- `apps/server/src/persistence/NodeSqliteClient.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Release version bumped to `0.0.19` and build scripts now run raw TypeScript with Bun
+
+**Problem:** Preparing the next app build required bumping the release version from `0.0.18`, but the normal build path still failed before the server package finished building.
+
+**Root cause:** Release package versions and the lockfile were still on `0.0.18`, and several package scripts/docs still launched raw `.ts` entrypoints with `node` even though this repo expects Bun to execute TypeScript directly. That broke `@clui/server`'s build script and left related release/build commands inconsistent.
+
+**Fix:** Bumped the release package versions to `0.0.19`, refreshed `bun.lock`, switched the server build and root release/build helper scripts from `node` to `bun`, updated related script usage/help text and release docs, and verified the repo with `bun lint`, `bun typecheck`, and `bun run build`.
+
+**Affected files:**
+- `apps/desktop/package.json`
+- `apps/server/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `package.json`
+- `bun.lock`
+- `docs/RELEASING.md`
+- `scripts/update-release-package-versions.ts`
+- `scripts/merge-mac-update-manifests.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-19 — Pi `/resume` now works inside Clui and threads keep their exact pi session
 
 **Problem:** Running pi inside Clui broke native pi `/resume`. Current-folder mode said there were no sessions even when Clui had many pi JSONLs, and restarting a pi thread could only guess via the old thread-local `-c` behavior instead of reopening the exact session the user had selected with `/resume`, `/new`, `/fork`, or import.

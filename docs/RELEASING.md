@@ -43,7 +43,7 @@ All changes for the release should be merged to `main`. CI should be green.
 The current version is in `apps/desktop/package.json`. The finalize step auto-bumps after release, but if you need to set a specific version before tagging:
 
 ```bash
-node scripts/update-release-package-versions.ts 1.2.3
+bun scripts/update-release-package-versions.ts 1.2.3
 bunx oxfmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
 bun install --lockfile-only --ignore-scripts
 ```

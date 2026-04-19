@@ -48,6 +48,7 @@ export interface PiSessionManagerShape {
   readonly getSessionStatus: (threadId: string) => Effect.Effect<TerminalStatus>;
   readonly getSessionFile: (threadId: string) => Effect.Effect<string | null>;
   readonly reconcileActiveSessions: (maxActive: number) => Effect.Effect<void>;
+  readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;
   readonly subscribe: (listener: (event: PiSessionEvent) => void) => Effect.Effect<() => void>;
   readonly destroySession: (threadId: string) => Effect.Effect<void>;

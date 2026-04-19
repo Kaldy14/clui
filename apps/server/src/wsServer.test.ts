@@ -10,8 +10,10 @@ import { createServer } from "./wsServer";
 import WebSocket from "ws";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { makeServerRuntimeServicesLayer } from "./serverLayers";
+import { getServerSettingsPath } from "./serverSettings";
 
 import {
+  DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
   DEFAULT_TERMINAL_ID,
   EDITORS,
   ORCHESTRATION_WS_METHODS,
@@ -46,6 +48,10 @@ import {
   ClaudeSessionManager,
   type ClaudeSessionManagerShape,
 } from "./terminal/Services/ClaudeSession.ts";
+import {
+  PiSessionManager,
+  type PiSessionManagerShape,
+} from "./terminal/Services/PiSession.ts";
 
 interface PendingMessages {
   queue: unknown[];
@@ -199,9 +205,28 @@ const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   resizeSession: () => Effect.void,
   getSessionStatus: () => Effect.succeed("new" as const),
   reconcileActiveSessions: () => Effect.void,
+  setMaxActiveSessions: () => Effect.void,
   hibernateAll: () => Effect.void,
   subscribe: () => Effect.succeed(() => {}),
   getClaudeSessionId: () => Effect.succeed(null),
+  destroySession: () => Effect.void,
+  purgeInactiveSessions: () => Effect.succeed(0),
+  dispose: Effect.void,
+};
+
+const defaultPiSessionManager: PiSessionManagerShape = {
+  startSession: () => Effect.void,
+  hibernateSession: () => Effect.succeed(""),
+  getScrollback: () => Effect.succeed({ scrollback: null, offset: 0, reset: false }),
+  writeToSession: () => Effect.void,
+  notifyPromptSubmitted: () => Effect.void,
+  resizeSession: () => Effect.void,
+  getSessionStatus: () => Effect.succeed("new" as const),
+  getSessionFile: () => Effect.succeed(null),
+  reconcileActiveSessions: () => Effect.void,
+  setMaxActiveSessions: () => Effect.void,
+  hibernateAll: () => Effect.void,
+  subscribe: () => Effect.succeed(() => {}),
   destroySession: () => Effect.void,
   purgeInactiveSessions: () => Effect.succeed(0),
   dispose: Effect.void,
@@ -402,6 +427,7 @@ describe("WebSocket Server", () => {
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
       claudeSessionManager?: ClaudeSessionManagerShape;
+      piSessionManager?: PiSessionManagerShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -439,6 +465,9 @@ describe("WebSocket Server", () => {
         ClaudeSessionManager,
         options.claudeSessionManager ?? defaultClaudeSessionManager,
       ),
+      options.piSessionManager
+        ? Layer.succeed(PiSessionManager, options.piSessionManager)
+        : Layer.empty,
     );
 
     const runtimeLayer = Layer.merge(
@@ -761,6 +790,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
+      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -787,6 +817,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
+      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
@@ -823,6 +854,7 @@ describe("WebSocket Server", () => {
       ],
       providers: [],
       availableEditors: expect.any(Array),
+      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
@@ -858,6 +890,7 @@ describe("WebSocket Server", () => {
       issues: Array<{ kind: string; index?: number; message: string }>;
       providers: ReadonlyArray<unknown>;
       availableEditors: unknown;
+      settings: { maxActiveHarnessSessions: number };
     };
     expect(result.cwd).toBe("/my/workspace");
     expect(result.keybindingsConfigPath).toBe(keybindingsPath);
@@ -877,7 +910,76 @@ describe("WebSocket Server", () => {
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
     expect(result.providers).toEqual([]);
+    expect(result.settings).toEqual({ maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP });
     expectAvailableEditors(result.availableEditors);
+  });
+
+  it("reads persisted session cap from server settings", async () => {
+    const stateDir = makeTempDir("clui-state-server-settings-");
+    fs.writeFileSync(
+      getServerSettingsPath(stateDir),
+      JSON.stringify({ maxActiveHarnessSessions: 7 }),
+      "utf8",
+    );
+
+    server = await createTestServer({ cwd: "/my/workspace", stateDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({
+      settings: { maxActiveHarnessSessions: 7 },
+    });
+  });
+
+  it("updates server settings and applies the active session cap to both harness managers", async () => {
+    const stateDir = makeTempDir("clui-state-update-server-settings-");
+    const claudeCaps: number[] = [];
+    const piCaps: number[] = [];
+
+    server = await createTestServer({
+      cwd: "/my/workspace",
+      stateDir,
+      claudeSessionManager: {
+        ...defaultClaudeSessionManager,
+        setMaxActiveSessions: (maxActive) => {
+          claudeCaps.push(maxActive);
+          return Effect.void;
+        },
+      },
+      piSessionManager: {
+        ...defaultPiSessionManager,
+        setMaxActiveSessions: (maxActive) => {
+          piCaps.push(maxActive);
+          return Effect.void;
+        },
+      },
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.serverUpdateSettings, {
+      maxActiveHarnessSessions: 7,
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({ maxActiveHarnessSessions: 7 });
+    expect(claudeCaps).toEqual([7]);
+    expect(piCaps).toEqual([7]);
+    expect(
+      JSON.parse(fs.readFileSync(getServerSettingsPath(stateDir), "utf8")) as {
+        maxActiveHarnessSessions: number;
+      },
+    ).toEqual({ maxActiveHarnessSessions: 7 });
   });
 
   it("pushes server.configUpdated issues when keybindings file changes", async () => {
@@ -978,6 +1080,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
+      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -1026,6 +1129,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
+      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,
@@ -1675,6 +1779,7 @@ describe("WebSocket Server", () => {
         },
         getSessionStatus: () => Effect.succeed("new" as const),
         reconcileActiveSessions: () => Effect.void,
+        setMaxActiveSessions: () => Effect.void,
         hibernateAll: () => Effect.void,
         subscribe: () => Effect.succeed(() => {}),
         getClaudeSessionId: () => Effect.succeed(null),

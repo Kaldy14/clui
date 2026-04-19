@@ -53,12 +53,13 @@ function startHarnessSession(
   input: { cwd: string; cols: number; rows: number; fresh?: boolean; yoloMode?: boolean },
 ): Promise<void> {
   if (thread.harness === "pi") {
+    const shouldStartFresh = input.fresh || thread.terminalStatus === "new";
     return api.pi.start({
       threadId: thread.id,
       cwd: input.cwd,
       cols: input.cols,
       rows: input.rows,
-      ...(input.fresh ? { fresh: true } : {}),
+      ...(shouldStartFresh ? { fresh: true } : {}),
       ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
     });
   }

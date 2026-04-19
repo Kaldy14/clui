@@ -201,6 +201,7 @@ export function createWsNativeApi(): NativeApi {
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+      updateSettings: (input) => transport.request(WS_METHODS.serverUpdateSettings, input),
       purgeInactiveSessions: (input) =>
         transport.request(WS_METHODS.serverPurgeInactiveSessions, input),
     },

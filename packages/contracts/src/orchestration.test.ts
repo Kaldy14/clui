@@ -5,6 +5,7 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
   ProjectCreateCommand,
@@ -25,6 +26,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
+const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 
 const baseThread = {
   id: "thread-1",
@@ -304,5 +306,35 @@ it.effect("rejects OrchestrationThread with invalid terminalStatus", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes legacy thread.terminal-status-changed events with missing piSessionFile", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "evt-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.terminal-status-changed",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-1",
+      causationEventId: null,
+      correlationId: "cmd-1",
+      payload: {
+        threadId: "thread-1",
+        terminalStatus: "active",
+        claudeSessionId: "sess-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      metadata: {},
+    });
+
+    assert.strictEqual(parsed.type, "thread.terminal-status-changed");
+    if (parsed.type === "thread.terminal-status-changed") {
+      assert.strictEqual(parsed.payload.claudeSessionId, "sess-1");
+      assert.strictEqual(parsed.payload.piSessionFile, null);
+      assert.strictEqual(parsed.payload.scrollbackSnapshot, null);
+    }
   }),
 );

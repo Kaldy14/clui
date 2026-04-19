@@ -58,6 +58,7 @@ export interface ClaudeSessionManagerShape {
   readonly reconcileActiveSessions: (
     maxActive: number,
   ) => Effect.Effect<void>;
+  readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;
   readonly subscribe: (
     listener: (event: ClaudeSessionEvent) => void,

@@ -1,4 +1,4 @@
-import { CommandId, EventId, ProjectId } from "@clui/contracts";
+import { CommandId, EventId, ProjectId, ThreadId } from "@clui/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -62,6 +62,67 @@ layer("OrchestrationEventStore", (it) => {
       assert.equal(replayed.length, 1);
       assert.equal(replayed[0]?.type, "project.created");
       assert.equal(replayed[0]?.metadata.adapterKey, "codex");
+    }),
+  );
+
+  it.effect("replays legacy terminal status events missing piSessionFile", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.makeUnsafe("evt-store-legacy-terminal")},
+          ${"thread"},
+          ${ThreadId.makeUnsafe("thread-legacy-terminal")},
+          ${0},
+          ${"thread.terminal-status-changed"},
+          ${now},
+          ${CommandId.makeUnsafe("cmd-store-legacy-terminal")},
+          ${null},
+          ${null},
+          ${"server"},
+          ${JSON.stringify({
+            threadId: "thread-legacy-terminal",
+            terminalStatus: "active",
+            claudeSessionId: "sess-legacy",
+            updatedAt: now,
+          })},
+          ${"{}"}
+        )
+      `;
+
+      const insertedRows = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence
+        FROM orchestration_events
+        WHERE event_id = ${EventId.makeUnsafe("evt-store-legacy-terminal")}
+      `;
+      const insertedSequence = insertedRows[0]?.sequence ?? 0;
+
+      const replayed = yield* Stream.runCollect(
+        eventStore.readFromSequence(Math.max(0, insertedSequence - 1), 1),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+      assert.equal(replayed.length, 1);
+      assert.equal(replayed[0]?.type, "thread.terminal-status-changed");
+      if (replayed[0]?.type === "thread.terminal-status-changed") {
+        assert.equal(replayed[0].payload.piSessionFile, null);
+        assert.equal(replayed[0].payload.scrollbackSnapshot, null);
+      }
     }),
   );
 

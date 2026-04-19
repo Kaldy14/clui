@@ -622,9 +622,15 @@ const ThreadTerminalStatusChangedCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   terminalStatus: TerminalStatus,
-  claudeSessionId: Schema.NullOr(Schema.String),
-  piSessionFile: Schema.NullOr(Schema.String),
-  scrollbackSnapshot: Schema.NullOr(Schema.String),
+  claudeSessionId: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  piSessionFile: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   updatedAt: IsoDateTime,
 });
 
@@ -855,9 +861,15 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
 export const ThreadTerminalStatusChangedPayload = Schema.Struct({
   threadId: ThreadId,
   terminalStatus: TerminalStatus,
-  claudeSessionId: Schema.NullOr(Schema.String),
-  piSessionFile: Schema.NullOr(Schema.String),
-  scrollbackSnapshot: Schema.NullOr(Schema.String),
+  claudeSessionId: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  piSessionFile: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   updatedAt: IsoDateTime,
 });
 export type ThreadTerminalStatusChangedPayload = typeof ThreadTerminalStatusChangedPayload.Type;

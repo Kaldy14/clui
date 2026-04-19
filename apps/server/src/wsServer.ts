@@ -65,6 +65,7 @@ import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuer
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
+import { loadServerSettings, saveServerSettings } from "./serverSettings";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
@@ -304,6 +305,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     host,
     logWebSocketEvents,
     autoBootstrapProjectFromCwd,
+    stateDir,
   } = serverConfig;
   const availableEditors = resolveAvailableEditors();
 
@@ -1589,8 +1591,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* piSessionManager.resizeSession(threadId, cols, rows);
       }
 
-      case WS_METHODS.serverGetConfig:
+      case WS_METHODS.serverGetConfig: {
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const settings = yield* Effect.promise(() => loadServerSettings(stateDir));
         return {
           cwd,
           keybindingsConfigPath,
@@ -1598,12 +1601,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: [],
           availableEditors,
+          settings,
         };
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.serverUpdateSettings: {
+        const body = stripRequestTag(request.body);
+        const settings = yield* Effect.promise(() => saveServerSettings(stateDir, body));
+
+        yield* claudeSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
+        yield* piSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
+
+        return settings;
       }
 
       case WS_METHODS.serverPurgeInactiveSessions: {

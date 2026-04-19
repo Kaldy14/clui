@@ -5,6 +5,7 @@ import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
 import { buildHookSettingsJson } from "../../hooks/hookSettings";
+import { loadServerSettings } from "../../serverSettings";
 import { PtyAdapter, type PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
 import {
   ClaudeSessionError,
@@ -123,7 +124,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private readonly ptyAdapter: PtyAdapterShape;
   private readonly processKillGraceMs: number;
   private readonly historyLineLimit: number;
-  private readonly maxActiveSessions: number;
+  private maxActiveSessions: number;
   private readonly hookConfig: HookConfig | null;
   private readonly dangerouslySkipPermissions: boolean;
   private readonly logger = createLogger("claude-session");
@@ -370,6 +371,11 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     }
   }
 
+  async setMaxActiveSessions(maxActive: number): Promise<void> {
+    this.maxActiveSessions = maxActive;
+    await this.reconcileActiveSessions(maxActive);
+  }
+
   async hibernateAll(): Promise<void> {
     const activeSessions = [...this.sessions.values()].filter(
       (entry) => entry.status === "active" && entry.process !== null,
@@ -549,6 +555,7 @@ export const ClaudeSessionManagerLive = Layer.effect(
 
     // Resolve hook config from ServerConfig
     const serverConfig = yield* ServerConfig;
+    const settings = yield* Effect.promise(() => loadServerSettings(serverConfig.stateDir));
     const hookConfig: HookConfig = {
       serverPort: serverConfig.port,
     };
@@ -557,6 +564,7 @@ export const ClaudeSessionManagerLive = Layer.effect(
       Effect.sync(() => new ClaudeSessionManagerRuntime({
         ptyAdapter,
         hookConfig,
+        maxActiveSessions: settings.maxActiveHarnessSessions,
         dangerouslySkipPermissions: serverConfig.dangerouslySkipPermissions,
       })),
       (r) => Effect.sync(() => r.dispose()),
@@ -593,6 +601,8 @@ export const ClaudeSessionManagerLive = Layer.effect(
         Effect.sync(() => runtime.getSessionStatus(threadId)),
       reconcileActiveSessions: (maxActive) =>
         Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
+      setMaxActiveSessions: (maxActive) =>
+        Effect.promise(() => runtime.setMaxActiveSessions(maxActive)),
       hibernateAll: () =>
         Effect.promise(() => runtime.hibernateAll()),
       subscribe: (listener) =>

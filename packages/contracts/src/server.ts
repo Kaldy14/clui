@@ -1,5 +1,5 @@
-import { Schema } from "effect";
-import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
+import { Option, Schema } from "effect";
+import { IsoDateTime, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
@@ -45,6 +45,17 @@ export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
 const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 
+export const DEFAULT_ACTIVE_HARNESS_SESSION_CAP = 10;
+export const MIN_ACTIVE_HARNESS_SESSION_CAP = 1;
+export const MAX_ACTIVE_HARNESS_SESSION_CAP = 100;
+
+export const ServerSettings = Schema.Struct({
+  maxActiveHarnessSessions: PositiveInt.check(
+    Schema.isLessThanOrEqualTo(MAX_ACTIVE_HARNESS_SESSION_CAP),
+  ).pipe(Schema.withConstructorDefault(() => Option.some(DEFAULT_ACTIVE_HARNESS_SESSION_CAP))),
+});
+export type ServerSettings = typeof ServerSettings.Type;
+
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
@@ -52,8 +63,12 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  settings: ServerSettings,
 });
 export type ServerConfig = typeof ServerConfig.Type;
+
+export const ServerUpdateSettingsInput = ServerSettings;
+export type ServerUpdateSettingsInput = typeof ServerUpdateSettingsInput.Type;
 
 export const ServerUpsertKeybindingInput = KeybindingRule;
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;

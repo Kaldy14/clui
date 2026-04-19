@@ -25,6 +25,11 @@ import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
+interface PreparedStatementInfo {
+  readonly statement: StatementSync;
+  readonly producesRows: boolean;
+}
+
 export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
 export type TypeId = "~local/sqlite-node/SqliteClient";
@@ -60,6 +65,56 @@ const makeWithDatabase = (
       ? Statement.defaultTransforms(options.transformResultNames).array
       : undefined;
 
+    const stripLeadingSqlComments = (sql: string): string => {
+      let remaining = sql.trimStart();
+
+      while (remaining.length > 0) {
+        if (remaining.startsWith("--")) {
+          const newlineIndex = remaining.indexOf("\n");
+          remaining = newlineIndex === -1 ? "" : remaining.slice(newlineIndex + 1).trimStart();
+          continue;
+        }
+
+        if (remaining.startsWith("/*")) {
+          const commentEnd = remaining.indexOf("*/");
+          remaining = commentEnd === -1 ? "" : remaining.slice(commentEnd + 2).trimStart();
+          continue;
+        }
+
+        break;
+      }
+
+      return remaining;
+    };
+
+    const inferStatementProducesRows = (sql: string, statement: StatementSync): boolean => {
+      const columns = (statement as { columns?: () => ReadonlyArray<unknown> }).columns;
+      if (typeof columns === "function") {
+        return columns.call(statement).length > 0;
+      }
+
+      const normalized = stripLeadingSqlComments(sql).replace(/;+\s*$/u, "");
+      const upper = normalized.toUpperCase();
+      const firstKeyword = upper.match(/^[A-Z]+/u)?.[0];
+
+      switch (firstKeyword) {
+        case "SELECT":
+        case "PRAGMA":
+        case "EXPLAIN":
+        case "VALUES":
+          return true;
+        case "INSERT":
+        case "UPDATE":
+        case "DELETE":
+        case "REPLACE":
+          return /\bRETURNING\b/u.test(upper);
+        case "WITH":
+          return /\bRETURNING\b/u.test(upper) || /\bSELECT\b/u.test(upper);
+        default:
+          return false;
+      }
+    };
+
     const makeConnection = Effect.gen(function* () {
       const scope = yield* Effect.scope;
       const db = openDatabase();
@@ -68,15 +123,12 @@ const makeWithDatabase = (
         Effect.sync(() => db.close()),
       );
 
-      const statementReaderCache = new WeakMap<StatementSync, boolean>();
-      const hasRows = (statement: StatementSync): boolean => {
-        const cached = statementReaderCache.get(statement);
-        if (cached !== undefined) {
-          return cached;
-        }
-        const value = statement.columns().length > 0;
-        statementReaderCache.set(statement, value);
-        return value;
+      const prepareStatement = (sql: string): PreparedStatementInfo => {
+        const statement = db.prepare(sql);
+        return {
+          statement,
+          producesRows: inferStatementProducesRows(sql, statement),
+        };
       };
 
       const prepareCache = yield* Cache.make({
@@ -84,23 +136,25 @@ const makeWithDatabase = (
         timeToLive: options.prepareCacheTTL ?? Duration.minutes(10),
         lookup: (sql: string) =>
           Effect.try({
-            try: () => db.prepare(sql),
+            try: () => prepareStatement(sql),
             catch: (cause) => new SqlError({ cause, message: "Failed to prepare statement" }),
           }),
       });
 
       const runStatement = (
-        statement: StatementSync,
+        prepared: PreparedStatementInfo,
         params: ReadonlyArray<unknown>,
         raw: boolean,
       ) =>
         Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-          statement.setReadBigInts(Boolean(ServiceMap.get(fiber.services, Client.SafeIntegers)));
+          prepared.statement.setReadBigInts(
+            Boolean(ServiceMap.get(fiber.services, Client.SafeIntegers)),
+          );
           try {
-            if (hasRows(statement)) {
-              return Effect.succeed(statement.all(...(params as any)));
+            if (prepared.producesRows) {
+              return Effect.succeed(prepared.statement.all(...(params as any)));
             }
-            const result = statement.run(...(params as any));
+            const result = prepared.statement.run(...(params as any));
             return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
           } catch (cause) {
             return Effect.fail(new SqlError({ cause, message: "Failed to execute statement" }));
@@ -108,30 +162,30 @@ const makeWithDatabase = (
         });
 
       const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
-        Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
+        Effect.flatMap(Cache.get(prepareCache, sql), (prepared) => runStatement(prepared, params, raw));
 
       const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
         Effect.acquireUseRelease(
           Cache.get(prepareCache, sql),
-          (statement) =>
+          (prepared) =>
             Effect.try({
               try: () => {
-                if (hasRows(statement)) {
-                  statement.setReturnArrays(true);
+                if (prepared.producesRows) {
+                  prepared.statement.setReturnArrays(true);
                   // Safe to cast to array after we've setReturnArrays(true)
-                  return statement.all(...(params as any)) as unknown as ReadonlyArray<
+                  return prepared.statement.all(...(params as any)) as unknown as ReadonlyArray<
                     ReadonlyArray<unknown>
                   >;
                 }
-                statement.run(...(params as any));
+                prepared.statement.run(...(params as any));
                 return [];
               },
               catch: (cause) => new SqlError({ cause, message: "Failed to execute statement" }),
             }),
-          (statement) =>
+          (prepared) =>
             Effect.sync(() => {
-              if (hasRows(statement)) {
-                statement.setReturnArrays(false);
+              if (prepared.producesRows) {
+                prepared.statement.setReturnArrays(false);
               }
             }),
         );
@@ -147,7 +201,7 @@ const makeWithDatabase = (
           return runValues(sql, params);
         },
         executeUnprepared(sql, params, rowTransform) {
-          const effect = runStatement(db.prepare(sql), params ?? [], false);
+          const effect = runStatement(prepareStatement(sql), params ?? [], false);
           return rowTransform ? Effect.map(effect, rowTransform) : effect;
         },
         executeStream(_sql, _params) {

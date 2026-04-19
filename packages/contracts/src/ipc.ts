@@ -37,6 +37,8 @@ import type {
   TerminalWriteInput,
 } from "./terminal";
 import type {
+  ServerSettings,
+  ServerUpdateSettingsInput,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
   PurgeInactiveSessionsInput,
@@ -198,6 +200,7 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    updateSettings: (input: ServerUpdateSettingsInput) => Promise<ServerSettings>;
     purgeInactiveSessions: (input: PurgeInactiveSessionsInput) => Promise<PurgeInactiveSessionsResult>;
   };
   orchestration: {

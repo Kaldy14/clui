@@ -8,6 +8,7 @@ import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
 import { ServerConfig } from "../../config";
+import { loadServerSettings } from "../../serverSettings";
 import { PiSessionJsonlHookWatcher } from "../../PiSessionJsonlHook";
 import { PtyAdapter, type PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
 import {
@@ -21,7 +22,6 @@ import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUt
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
-const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const CLUI_PI_THREAD_ID_ENV = "CLUI_PI_THREAD_ID";
 const CLUI_PI_SESSION_SYNC_DIR_ENV = "CLUI_PI_SESSION_SYNC_DIR";
 const PI_RUNTIME_AGENT_DIR_NAME = "pi-agent";
@@ -158,7 +158,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private readonly ptyAdapter: PtyAdapterShape;
   private readonly processKillGraceMs: number;
   private readonly historyLineLimit: number;
-  private readonly maxActiveSessions: number;
+  private maxActiveSessions: number;
   private readonly agentRootDir: string;
   private readonly sessionsRootDir: string;
   private readonly legacySessionsRootDir: string;
@@ -239,10 +239,6 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         : await this.resolveStartSessionFile(input.threadId, input.cwd, preferredSessionFile);
       entry.activeSessionFile = resolvedSessionFile;
 
-      const existingSessions = await this.listSessionFiles(sessionDir);
-      const canContinueRecent =
-        !input.fresh && resolvedSessionFile == null && existingSessions.length === 1;
-
       const args: string[] = [
         "--session-dir",
         sessionDir,
@@ -251,8 +247,6 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       ];
       if (resolvedSessionFile) {
         args.push("--session", resolvedSessionFile);
-      } else if (canContinueRecent) {
-        args.push("-c");
       }
 
       try {
@@ -261,7 +255,6 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         this.startJsonlHookWatcher(entry, entry.activeSessionFile);
 
         const spawnEnv = createSpawnEnv(process.env);
-        spawnEnv[PI_AGENT_DIR_ENV] = this.agentRootDir;
         spawnEnv[CLUI_PI_THREAD_ID_ENV] = input.threadId;
         spawnEnv[CLUI_PI_SESSION_SYNC_DIR_ENV] = this.sessionSyncDir;
 
@@ -289,7 +282,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         this.logger.info("pi session started", {
           threadId: input.threadId,
           pid: ptyProcess.pid,
-          resumed: resolvedSessionFile != null || canContinueRecent,
+          resumed: resolvedSessionFile != null,
           sessionDir,
           activeSessionFile: resolvedSessionFile,
         });
@@ -416,6 +409,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     for (const entry of toHibernate) {
       await this.hibernateSession(entry.threadId);
     }
+  }
+
+  async setMaxActiveSessions(maxActive: number): Promise<void> {
+    this.maxActiveSessions = maxActive;
+    await this.reconcileActiveSessions(maxActive);
   }
 
   async hibernateAll(): Promise<void> {
@@ -612,18 +610,6 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       return { cwd: parsed.cwd };
     } catch {
       return null;
-    }
-  }
-
-  private async listSessionFiles(sessionDir: string): Promise<string[]> {
-    try {
-      const entries = await readdir(sessionDir, { withFileTypes: true, encoding: "utf8" });
-      return entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-        .map((entry) => path.join(sessionDir, entry.name))
-        .toSorted();
-    } catch {
-      return [];
     }
   }
 
@@ -863,12 +849,14 @@ export const PiSessionManagerLive = Layer.effect(
   Effect.gen(function* () {
     const ptyAdapter = yield* PtyAdapter;
     const serverConfig = yield* ServerConfig;
+    const settings = yield* Effect.promise(() => loadServerSettings(serverConfig.stateDir));
 
     const runtime = yield* Effect.acquireRelease(
       Effect.sync(() =>
         new PiSessionManagerRuntime({
           ptyAdapter,
           stateDir: serverConfig.stateDir,
+          maxActiveSessions: settings.maxActiveHarnessSessions,
         }),
       ),
       (r) => Effect.sync(() => r.dispose()),
@@ -907,6 +895,7 @@ export const PiSessionManagerLive = Layer.effect(
       getSessionStatus: (threadId) => Effect.sync(() => runtime.getSessionStatus(threadId)),
       getSessionFile: (threadId) => Effect.sync(() => runtime.getSessionFile(threadId)),
       reconcileActiveSessions: (maxActive) => Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
+      setMaxActiveSessions: (maxActive) => Effect.promise(() => runtime.setMaxActiveSessions(maxActive)),
       hibernateAll: () => Effect.promise(() => runtime.hibernateAll()),
       subscribe: (listener) =>
         Effect.sync(() => {

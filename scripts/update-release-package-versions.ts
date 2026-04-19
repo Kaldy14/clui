@@ -81,7 +81,7 @@ function parseArgs(argv: ReadonlyArray<string>): {
 
   if (!version) {
     throw new Error(
-      "Usage: node scripts/update-release-package-versions.ts <version> [--root <path>] [--github-output]",
+      "Usage: bun scripts/update-release-package-versions.ts <version> [--root <path>] [--github-output]",
     );
   }
 
