@@ -750,9 +750,28 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Sticky pi input mirror</p>
+                    <p className="text-xs text-muted-foreground">
+                      Show the sticky mirrored pi input block while reading scrollback away from the bottom.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.stickyPiInputMirror}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        stickyPiInputMirror: Boolean(checked),
+                      })
+                    }
+                    aria-label="Sticky pi input mirror"
+                  />
+                </div>
+
                 {(settings.terminalFontSize !== defaults.terminalFontSize ||
                   settings.terminalFontFamily !== defaults.terminalFontFamily ||
-                  settings.terminalColorTheme !== defaults.terminalColorTheme) ? (
+                  settings.terminalColorTheme !== defaults.terminalColorTheme ||
+                  settings.stickyPiInputMirror !== defaults.stickyPiInputMirror) ? (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
@@ -762,6 +781,7 @@ function SettingsRouteView() {
                           terminalFontSize: defaults.terminalFontSize,
                           terminalFontFamily: defaults.terminalFontFamily,
                           terminalColorTheme: defaults.terminalColorTheme,
+                          stickyPiInputMirror: defaults.stickyPiInputMirror,
                         });
                         claudeCache.updateFontSettings();
                         claudeCache.refreshTheme();

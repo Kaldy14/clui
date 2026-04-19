@@ -4,6 +4,123 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-19 — Sticky pi input mirror is now configurable in Settings and defaults on
+
+**Problem:** The sticky pi input mirror was always enabled, with no way to turn it off for users who prefer an unmodified terminal-only reading experience.
+
+**Root cause:** The feature shipped as a hard-coded terminal behavior with no persisted app setting or Settings UI toggle.
+
+**Fix:** Added a new persisted `stickyPiInputMirror` app setting, defaulting to `true`, and exposed it as a boolean toggle in the Terminal section of Settings. The terminal mirror logic now fully respects that setting, and the terminal reset button also restores it to the default enabled state.
+
+**Affected files:**
+- `apps/web/src/appSettings.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Scrolling over the sticky pi input mirror now scrolls the real terminal
+
+**Problem:** Once the sticky pi input mirror was visible, wheel scrolling over that mirrored region felt broken because the overlay intercepted the pointer and the underlying xterm viewport no longer scrolled.
+
+**Root cause:** The sticky mirror is rendered as an absolutely positioned clickable overlay above xterm, so wheel events were captured by the overlay instead of reaching the terminal viewport beneath it.
+
+**Fix:** Added wheel forwarding on the sticky pi input mirror that converts wheel deltas into xterm `scrollLines()` calls, including fractional accumulation for trackpad-sized deltas. Scrolling over the mirrored input area now scrolls the real terminal instead of acting like a dead zone.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Sticky pi input mirror now survives taller multi-line drafts
+
+**Problem:** The sticky pi input mirror could disappear or fail to detect the editor block once a multi-line draft grew beyond the initial heuristic window, especially with blank lines in the prompt.
+
+**Root cause:** The first extraction heuristic capped the mirrored editor body at 12 lines and only looked back 16 lines from the bottom divider. Real pi drafts can exceed that height on larger terminals because pi's editor supports much taller visible multi-line input regions.
+
+**Fix:** Expanded the sticky mirror detection window so it tolerates substantially taller multi-line pi drafts and more blank-line-heavy prompts without dropping the mirrored block.
+
+**Affected files:**
+- `apps/web/src/lib/piStickyInputMirror.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Clicking the sticky pi input mirror no longer forces a scroll-to-bottom jump
+
+**Problem:** Clicking the sticky pi input mirror immediately scrolled the terminal back to the bottom, which made it impossible to keep reading the current scroll position while still focusing the real terminal input.
+
+**Root cause:** The sticky mirror reused the same click handler as the floating “New output” button, so mirror clicks always called `scrollToBottom()` before focusing xterm.
+
+**Fix:** Split the sticky mirror click behavior from the new-output jump action. Clicking the sticky pi input mirror now only focuses the real xterm terminal and preserves the current scroll position.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Pi sticky input mirror now preserves terminal colors/styles per cell
+
+**Problem:** The sticky pi input mirror matched terminal text layout, but it rendered as plain monochrome text instead of preserving the foreground/background colors and text emphasis visible in the real xterm view.
+
+**Root cause:** The first mirror implementation used `IBufferLine.translateToString()`, which only returns plain text and discards all per-cell terminal attributes like ANSI palette colors, truecolor values, inverse video, bold, underline, and background fills.
+
+**Fix:** Reworked the mirror extractor to read xterm buffer cells directly via `getCell()`, group adjacent cells into style runs, resolve palette/truecolor foreground and background colors against the active terminal theme, and render the sticky overlay as styled spans. The overlay now preserves terminal colors much more faithfully while still using the same divider-based editor block detection.
+
+**Affected files:**
+- `apps/web/src/lib/piStickyInputMirror.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Pi sticky input mirror now waits until you're 3+ lines off the bottom
+
+**Problem:** The sticky pi input mirror appeared immediately as soon as the viewport left the bottom row, which felt too eager and distracting during tiny scroll adjustments.
+
+**Root cause:** The mirror visibility check only tested whether the terminal was at the exact bottom, with no minimum scroll-distance threshold.
+
+**Fix:** Added a 3-line scroll threshold before showing the sticky pi input mirror. Small scroll nudges near the bottom now keep the terminal uncluttered, while deeper scrollback still activates the sticky mirrored input block.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Pi sticky input mirror now renders flush like terminal content
+
+**Problem:** The first sticky pi input mirror prototype looked like a floating card instead of a true continuation of terminal content, with labels, padding, borders, rounding, and scrollable chrome that broke the illusion of a sticky terminal region.
+
+**Root cause:** The overlay was intentionally styled as a visible experimental UI surface, not as a terminal-faithful mirror, so its box-model and decoration diverged from the underlying xterm presentation.
+
+**Fix:** Restyled the sticky pi input mirror to render flush over the terminal with no labels, padding, borders, rounding, shadows, or scrollbars. The overlay now uses the configured terminal font settings plus the current terminal foreground/background colors so it visually reads as a sticky terminal slice instead of a separate widget.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Pi threads now show a sticky mirrored input block while scrolled up
+
+**Problem:** When reading back through a long pi terminal session in Clui, the live pi input box disappears off-screen, so you lose sight of the current draft and have no quick way to jump back to the active input area.
+
+**Root cause:** Clui embeds pi as a raw PTY inside xterm.js, so the app had no host-level sticky composer or mirrored view of pi's editor/footer block while the user was scrolled away from the terminal bottom.
+
+**Fix:** Added a client-side pi sticky-input mirror that inspects the bottom xterm buffer page, detects the pi editor block via the horizontal-rule delimiters rendered by pi's TUI, and shows that block as a sticky overlay whenever the user scrolls away from the bottom. The overlay stays read-only, updates as terminal output changes, and clicking it jumps back to the live terminal input. Added focused extraction tests for the divider-based parser.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/piStickyInputMirror.ts`
+- `apps/web/src/lib/piStickyInputMirror.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-19 — Pi harness now preserves the user's global `~/.pi/agent` config again
 
 **Problem:** After the recent pi `/resume` integration changes, pi threads launched from Clui stopped seeing the user's normal global pi setup such as extensions, skills, themes, auth, and settings from `~/.pi/agent`.

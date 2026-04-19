@@ -3,9 +3,16 @@ import type { ClaudeSessionEvent, PiSessionEvent } from "@clui/contracts";
 import { PlayIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useAppSettings } from "../appSettings";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import * as claudeCache from "../lib/claudeTerminalCache";
+import {
+  piStickyInputMirrorsEqual,
+  readPiStickyInputMirror,
+  type PiStickyInputMirror,
+} from "../lib/piStickyInputMirror";
+import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import { setupProjectScript } from "../projectScripts";
 import { readNativeApi } from "../nativeApi";
@@ -610,7 +617,11 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
   const [searchOpen, setSearchOpen] = useState(false);
   const harness = thread.harness;
   const [showNewOutput, setShowNewOutput] = useState(false);
+  const [stickyPiInputMirror, setStickyPiInputMirror] = useState<PiStickyInputMirror | null>(null);
+  const { settings } = useAppSettings();
   const searchAddonRef = useRef<claudeCache.CachedTerminal["searchAddon"] | null>(null);
+  const stickyPiInputMirrorRef = useRef<PiStickyInputMirror | null>(null);
+  const stickyPiInputMirrorWheelRemainderRef = useRef(0);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -656,15 +667,43 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const isViewportAtBottom = (): boolean => {
       return terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     };
+    const stickyMirrorScrollThresholdReached = (): boolean => {
+      return terminal.buffer.active.baseY - terminal.buffer.active.viewportY >= 3;
+    };
     const isAltBuffer = () => terminal.buffer.active.type === "alternate";
+
+    let stickyMirrorRafId: number | null = null;
+    const commitStickyPiInputMirror = (nextMirror: PiStickyInputMirror | null) => {
+      if (piStickyInputMirrorsEqual(stickyPiInputMirrorRef.current, nextMirror)) return;
+      stickyPiInputMirrorRef.current = nextMirror;
+      setStickyPiInputMirror(nextMirror);
+    };
+    const refreshStickyPiInputMirror = () => {
+      if (disposed) return;
+      if (harness !== "pi" || !settings.stickyPiInputMirror || !stickyMirrorScrollThresholdReached()) {
+        commitStickyPiInputMirror(null);
+        return;
+      }
+      commitStickyPiInputMirror(readPiStickyInputMirror(terminal));
+    };
+    const scheduleStickyPiInputMirrorRefresh = () => {
+      if (harness !== "pi") return;
+      if (stickyMirrorRafId !== null) return;
+      stickyMirrorRafId = requestAnimationFrame(() => {
+        stickyMirrorRafId = null;
+        refreshStickyPiInputMirror();
+      });
+    };
 
     const scrollGuardedWrite = (data: string) => {
       if (isAltBuffer()) {
         terminal.write(data);
+        scheduleStickyPiInputMirrorRefresh();
         return;
       }
       if (isViewportAtBottom()) {
         terminal.write(data);
+        scheduleStickyPiInputMirrorRefresh();
         if (hasNewOutputFlag) {
           hasNewOutputFlag = false;
           setShowNewOutput(false);
@@ -681,6 +720,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         if (drift > terminal.rows) {
           terminal.scrollToLine(savedLine);
         }
+        scheduleStickyPiInputMirrorRefresh();
       });
       if (!hasNewOutputFlag) {
         hasNewOutputFlag = true;
@@ -740,6 +780,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (offset != null) {
         entry.lastServerOffset = offset;
       }
+      scheduleStickyPiInputMirrorRefresh();
       // Now safe to process live events — dimensions are correct.
       // Skip any buffered output events whose data was already included in the
       // scrollback delta (their offset <= the offset we just synced to).
@@ -893,12 +934,14 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // Signal that dimensions are now correct — safe to write content
       fitComplete = true;
       flushIfReady();
+      scheduleStickyPiInputMirrorRefresh();
     });
 
     // Watch for window resize — just re-fit, xterm.js preserves scroll
     // position natively via isUserScrolling during dimension changes.
     const onWindowResize = () => {
       fitAddon.fit();
+      scheduleStickyPiInputMirrorRefresh();
     };
     window.addEventListener("resize", onWindowResize);
 
@@ -975,6 +1018,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = null;
         fitAddon.fit();
+        scheduleStickyPiInputMirrorRefresh();
       });
     });
     resizeObserver.observe(el);
@@ -988,6 +1032,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         hasNewOutputFlag = false;
         setShowNewOutput(false);
       }
+      scheduleStickyPiInputMirrorRefresh();
     });
 
     // Watch for theme changes
@@ -1004,6 +1049,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+      if (stickyMirrorRafId !== null) cancelAnimationFrame(stickyMirrorRafId);
       if (scrollbackTimeoutId != null) clearTimeout(scrollbackTimeoutId);
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onWheelClearIndicator);
@@ -1020,7 +1066,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     // Keep the active xterm mounted across hook/status/sidebar updates.
     // Re-running this effect detaches the focused terminal DOM and can hand
     // focus back to the sidebar row while the user is typing.
-  }, [harness, threadId]);
+  }, [harness, settings.stickyPiInputMirror, threadId]);
 
   const handleSearchClose = useCallback(() => {
     setSearchOpen(false);
@@ -1028,6 +1074,12 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const cached = claudeCache.get(threadId);
     if (cached) cached.terminal.focus();
   }, [threadId]);
+
+  useEffect(() => {
+    if (harness === "pi" && settings.stickyPiInputMirror) return;
+    stickyPiInputMirrorRef.current = null;
+    setStickyPiInputMirror(null);
+  }, [harness, settings.stickyPiInputMirror]);
 
   const handleScrollToBottom = useCallback(() => {
     setShowNewOutput(false);
@@ -1038,6 +1090,40 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     }
   }, [threadId]);
 
+  const handleStickyPiInputMirrorClick = useCallback(() => {
+    const cached = claudeCache.get(threadId);
+    if (cached) {
+      cached.terminal.focus();
+    }
+  }, [threadId]);
+
+  const handleStickyPiInputMirrorWheel = useCallback(
+    (event: React.WheelEvent<HTMLButtonElement>) => {
+      const cached = claudeCache.get(threadId);
+      if (!cached) return;
+
+      event.preventDefault();
+
+      let lineDelta = event.deltaY;
+      if (event.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
+        lineDelta /= 40;
+      } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+        lineDelta *= cached.terminal.rows;
+      }
+
+      const accumulatedDelta = stickyPiInputMirrorWheelRemainderRef.current + lineDelta;
+      const wholeLines = accumulatedDelta > 0 ? Math.floor(accumulatedDelta) : Math.ceil(accumulatedDelta);
+      stickyPiInputMirrorWheelRemainderRef.current = accumulatedDelta - wholeLines;
+
+      if (wholeLines !== 0) {
+        cached.terminal.scrollLines(wholeLines);
+      }
+    },
+    [threadId],
+  );
+
+  const terminalTheme = terminalThemeFromApp();
+
   return (
     <div className="relative h-full w-full">
       {searchOpen && searchAddonRef.current && (
@@ -1047,7 +1133,39 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         />
       )}
       <div ref={containerRef} className="h-full w-full" />
-      {showNewOutput && (
+      {stickyPiInputMirror && harness === "pi" && settings.stickyPiInputMirror && (
+        <button
+          type="button"
+          onClick={handleStickyPiInputMirrorClick}
+          onWheel={handleStickyPiInputMirrorWheel}
+          className="absolute inset-x-0 bottom-0 z-20 block overflow-hidden border-0 bg-background p-0 text-left text-foreground shadow-none outline-none"
+          aria-label="Jump to live pi input"
+          title="Jump to live pi input"
+          style={{
+            backgroundColor: terminalTheme.background,
+            color: terminalTheme.foreground,
+            fontFamily: settings.terminalFontFamily,
+            fontSize: `${settings.terminalFontSize}px`,
+            lineHeight: 1.2,
+          }}
+        >
+          <div className="m-0 overflow-hidden whitespace-pre px-0 py-0">
+            {stickyPiInputMirror.lines.map((line, lineIndex) => (
+              <div key={`sticky-pi-input-line-${lineIndex}`}>
+                {line.segments.map((segment, segmentIndex) => (
+                  <span
+                    key={`sticky-pi-input-line-${lineIndex}-segment-${segmentIndex}`}
+                    style={segment.style}
+                  >
+                    {segment.text}
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+        </button>
+      )}
+      {showNewOutput && !stickyPiInputMirror && (
         <button
           type="button"
           onClick={handleScrollToBottom}

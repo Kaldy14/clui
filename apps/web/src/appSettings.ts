@@ -52,6 +52,9 @@ const AppSettingsSchema = Schema.Struct({
   terminalColorTheme: Schema.String.check(Schema.isMaxLength(64)).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_COLOR_THEME as string)),
   ),
+  stickyPiInputMirror: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(true)),
+  ),
   whisperModel: Schema.String.check(Schema.isMaxLength(64)).pipe(
     Schema.withConstructorDefault(() => Option.some("small")),
   ),
