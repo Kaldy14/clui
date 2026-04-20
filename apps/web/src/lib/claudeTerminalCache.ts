@@ -17,6 +17,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { terminalThemeFromApp } from "./terminalTheme";
+import { syncTerminalSurfaceTheme } from "./terminalSurfaceTheme";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -206,6 +207,7 @@ export function attach(threadId: string, container: HTMLElement): CachedTerminal
     container.appendChild(entry.terminal.element);
     tryLoadWebgl(entry.terminal);
     entry.container = container;
+    syncTerminalSurfaceTheme(container, entry.terminal);
     entry.lastAccessedAt = Date.now();
     // Don't fit() here — container isn't laid out yet. Caller handles fit
     // after requestAnimationFrame to get correct dimensions.
@@ -230,6 +232,7 @@ export function attach(threadId: string, container: HTMLElement): CachedTerminal
   entry.terminal.open(container);
   tryLoadWebgl(entry.terminal);
   entry.container = container;
+  syncTerminalSurfaceTheme(container, entry.terminal);
   entry.lastAccessedAt = Date.now();
   // Don't fit() here — container isn't laid out yet. Caller handles fit
   // after requestAnimationFrame to get correct dimensions.
@@ -270,9 +273,8 @@ export function dispose(threadId: string): void {
 
 /** Refresh theme for all cached terminals. */
 export function refreshTheme(): void {
-  const theme = terminalThemeFromApp();
   for (const entry of cache.values()) {
-    entry.terminal.options.theme = theme;
+    syncTerminalSurfaceTheme(entry.container, entry.terminal);
   }
 }
 

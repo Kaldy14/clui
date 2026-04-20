@@ -17,6 +17,7 @@ export function submitThreadPrompt(
   threadId: ThreadId,
   prompt: string,
 ): Promise<void> {
-  const normalizedPrompt = prompt.endsWith("\n") ? prompt : `${prompt}\n`;
-  return writeHarnessInput(api, harness, threadId, normalizedPrompt);
+  const trimmedTrailingSubmitChars = prompt.replace(/[\r\n]+$/u, "");
+  const submittedPrompt = `${trimmedTrailingSubmitChars}\r`;
+  return writeHarnessInput(api, harness, threadId, submittedPrompt);
 }

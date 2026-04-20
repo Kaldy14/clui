@@ -28,6 +28,7 @@ import {
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
+import { syncTerminalSurfaceTheme } from "../lib/terminalSurfaceTheme";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 
@@ -107,6 +108,7 @@ function TerminalViewport({
     terminal.loadAddon(fitAddon);
     searchInit(terminal);
     terminal.open(mount);
+    syncTerminalSurfaceTheme(mount, terminal);
     fitAddon.fit();
 
     terminalRef.current = terminal;
@@ -226,10 +228,7 @@ function TerminalViewport({
     });
 
     const themeObserver = new MutationObserver(() => {
-      const activeTerminal = terminalRef.current;
-      if (!activeTerminal) return;
-      activeTerminal.options.theme = terminalThemeFromApp();
-      activeTerminal.refresh(0, activeTerminal.rows - 1);
+      syncTerminalSurfaceTheme(mount, terminalRef.current);
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -789,7 +788,7 @@ export default function ThreadTerminalDrawer({
                       }
                     }}
                   >
-                    <div className="h-full p-1">
+                    <div className="h-full">
                       <TerminalViewport
                         threadId={threadId}
                         terminalId={terminalId}
@@ -806,7 +805,7 @@ export default function ThreadTerminalDrawer({
                 ))}
               </div>
             ) : (
-              <div className="h-full p-1">
+              <div className="h-full">
                 <TerminalViewport
                   key={resolvedActiveTerminalId}
                   threadId={threadId}

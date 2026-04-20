@@ -4,6 +4,73 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-20 — Rebuilt the `0.0.20` Apple Silicon mac desktop artifact after local changes
+
+**Problem:** After additional local changes, the previously generated macOS arm64 desktop package was stale and needed to be rebuilt from the current workspace state.
+
+**Root cause:** The existing DMG/ZIP artifacts were produced before the latest local edits, so they no longer reflected the current source tree.
+
+**Fix:** Re-ran the Apple Silicon desktop packaging flow with `bun run dist:desktop:dmg:arm64` and revalidated the workspace with `bun lint` and `bun typecheck`.
+
+**Affected files:**
+- `docs/CHANGELOG-DEV.md`
+- `release/Clui-0.0.20-arm64.dmg`
+- `release/Clui-0.0.20-arm64.zip`
+- `release/Clui-0.0.20-arm64.dmg.blockmap`
+- `release/Clui-0.0.20-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+
+---
+
+## 2026-04-20 — Terminal drawers now fill cleanly to the bottom edge
+
+**Problem:** The terminal drawers showed a thin stripe at the bottom where the terminal surface stopped short of the drawer edge.
+
+**Root cause:** The drawer layouts wrapped xterm in extra inner padding, which left a visible gap below the terminal. On top of that, terminal host surfaces were not explicitly synced to the active terminal theme, so any fit-addon remainder pixels could show the surrounding app background instead of the terminal background.
+
+**Fix:** Removed the extra inner padding around the thread/project drawer terminal viewports and added a shared terminal-surface theme sync helper so the host DOM background stays aligned with the xterm theme across cached terminals and drawer terminals.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalDrawer.tsx`
+- `apps/web/src/components/ProjectTerminalDrawer.tsx`
+- `apps/web/src/lib/claudeTerminalCache.ts`
+- `apps/web/src/lib/terminalSurfaceTheme.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Release version bumped to `0.0.20` and Apple Silicon mac build produced
+
+**Problem:** We needed a fresh app version and a packaged macOS Apple Silicon desktop artifact for distribution/testing.
+
+**Root cause:** Release package versions were still on `0.0.19`, so a new macOS arm64 build would continue to publish/package the old app version metadata.
+
+**Fix:** Bumped the release package versions to `0.0.20`, refreshed `bun.lock`, and built the macOS Apple Silicon desktop artifacts via `bun run dist:desktop:dmg:arm64`.
+
+**Affected files:**
+- `apps/desktop/package.json`
+- `apps/server/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-19 — Saved toolbar prompts now submit like Enter instead of inserting a blank line
+
+**Problem:** Clicking a saved toolbar prompt inserted the prompt text into the terminal followed by a newline, but pi stayed in the editor instead of treating it like an actual Enter/submit.
+
+**Root cause:** The new prompt submission helper appended `\n`, which is not the same keystroke xterm sends for Enter. In terminal sessions, Enter is submitted as carriage return (`\r`), while raw newline can be interpreted as just another line break inside the active editor.
+
+**Fix:** Changed saved prompt submission to strip trailing line-ending noise and append `\r`, matching real terminal Enter behavior so prompt clicks submit the active prompt and let the harness start responding.
+
+**Affected files:**
+- `apps/web/src/lib/threadInput.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-19 — Thread toolbar now supports saved custom prompts
 
 **Problem:** The thread toolbar only exposed runnable project actions/scripts, so there was no quick way to save reusable natural-language prompts and fire them from the active thread without retyping them.

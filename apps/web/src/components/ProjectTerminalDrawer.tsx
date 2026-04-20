@@ -24,6 +24,7 @@ import {
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
+import { syncTerminalSurfaceTheme } from "../lib/terminalSurfaceTheme";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -92,6 +93,7 @@ function ProjectTerminalViewport({
     terminal.loadAddon(fitAddon);
     searchInit(terminal);
     terminal.open(mount);
+    syncTerminalSurfaceTheme(mount, terminal);
     fitAddon.fit();
 
     terminalRef.current = terminal;
@@ -211,10 +213,7 @@ function ProjectTerminalViewport({
     });
 
     const themeObserver = new MutationObserver(() => {
-      const activeTerminal = terminalRef.current;
-      if (!activeTerminal) return;
-      activeTerminal.options.theme = terminalThemeFromApp();
-      activeTerminal.refresh(0, activeTerminal.rows - 1);
+      syncTerminalSurfaceTheme(mount, terminalRef.current);
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -526,7 +525,7 @@ export default function ProjectTerminalDrawer({
         </button>
       </div>
 
-      <div className="min-h-0 w-full flex-1 p-1">
+      <div className="min-h-0 w-full flex-1">
         <ProjectTerminalViewport
           projectId={projectId}
           cwd={cwd}
