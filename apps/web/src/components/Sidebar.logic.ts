@@ -1,4 +1,13 @@
+import type {
+  CodingHarness,
+  CommandId,
+  NativeApi,
+  ProjectId,
+  ThreadId,
+} from "@clui/contracts";
+
 import type { Thread } from "../types";
+import { DEFAULT_RUNTIME_MODE } from "../types";
 import { claudeTerminalStatusPill } from "../lib/threadStatus";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
@@ -30,6 +39,68 @@ type ThreadStatusInput = Pick<
   | "terminalStatus"
   | "hookStatus"
 >;
+
+export async function createThreadAndNavigate(input: {
+  api: {
+    orchestration: Pick<NativeApi["orchestration"], "dispatchCommand">;
+  };
+  navigate: (input: { to: "/$threadId"; params: { threadId: ThreadId } }) => Promise<unknown>;
+  addOptimisticThread: (input: {
+    id: ThreadId;
+    projectId: ProjectId;
+    title: string;
+    harness: CodingHarness;
+    branch: string | null;
+    worktreePath: string | null;
+    createdAt: string;
+  }) => void;
+  commandId: CommandId;
+  threadId: ThreadId;
+  projectId: ProjectId;
+  model: string;
+  harness: CodingHarness;
+  createdAt: string;
+  branch?: string | null;
+  worktreePath?: string | null;
+}): Promise<ThreadId> {
+  const branch = input.branch ?? null;
+  const worktreePath = input.worktreePath ?? null;
+
+  await input.api.orchestration.dispatchCommand({
+    type: "thread.create",
+    commandId: input.commandId,
+    threadId: input.threadId,
+    projectId: input.projectId,
+    title: "New thread",
+    model: input.model,
+    harness: input.harness,
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: "default",
+    branch,
+    worktreePath,
+    createdAt: input.createdAt,
+  });
+
+  // Only expose the thread locally after the server has accepted it.
+  // This avoids client-only placeholder threads that can be wiped or
+  // race with project-level snapshot syncs during project creation.
+  input.addOptimisticThread({
+    id: input.threadId,
+    projectId: input.projectId,
+    title: "New thread",
+    harness: input.harness,
+    branch,
+    worktreePath,
+    createdAt: input.createdAt,
+  });
+
+  await input.navigate({
+    to: "/$threadId",
+    params: { threadId: input.threadId },
+  });
+
+  return input.threadId;
+}
 
 export function hasUnseenCompletion(thread: Pick<Thread, "latestTurn" | "lastVisitedAt">): boolean {
   if (!thread.latestTurn?.completedAt) return false;

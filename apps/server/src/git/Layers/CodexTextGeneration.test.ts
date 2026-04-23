@@ -445,6 +445,26 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ),
   );
 
+  it.effect("generates and sanitizes thread titles", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          title: '  "Improve Login Flow"\nextra detail',
+        }),
+        stdinMustContain: "User prompt:",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateThreadTitle({
+          promptText: "fix login flow after oauth callback",
+        });
+
+        expect(generated.title).toBe("Improve Login Flow");
+      }),
+    ),
+  );
+
   it.effect(
     "fails with typed TextGenerationError when codex returns wrong branch payload shape",
     () =>

@@ -112,6 +112,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           ...(command.prompts !== undefined ? { prompts: command.prompts } : {}),
+          ...(command.hiddenAt !== undefined ? { hiddenAt: command.hiddenAt } : {}),
           updatedAt: occurredAt,
         },
       };

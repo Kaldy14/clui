@@ -8,6 +8,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@clui/shared/
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "../Errors.ts";
+import { generateThreadTitleWithCodex } from "../threadTitleGeneration.ts";
 import {
   type BranchNameGenerationInput,
   type BranchNameGenerationResult,
@@ -457,8 +458,12 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     });
   };
 
-  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = () =>
-    Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail: "Not implemented in Codex backend" }));
+  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) =>
+    generateThreadTitleWithCodex(input.promptText).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
   return {
     generateCommitMessage,

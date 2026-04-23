@@ -37,7 +37,7 @@ import {
 import { useStore } from "../store";
 import { LAST_EDITOR_KEY } from "../terminal-links";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
-import { projectTerminalThreadId, type Thread } from "../types";
+import { DEFAULT_THREAD_TERMINAL_ID, projectTerminalThreadId, type Thread } from "../types";
 import GitActionsControl from "./GitActionsControl";
 import { SpeechControl } from "./SpeechControl";
 import type { Icon } from "./Icons";
@@ -290,16 +290,21 @@ export function runProjectScriptInTerminal(
   const env = projectScriptRuntimeEnv({ project, worktreePath: worktreePath ?? null });
 
   if (script.terminalTarget === "project") {
-    // Open / write to the project terminal
+    // Open / write to the currently active project terminal tab
     const syntheticId = projectTerminalThreadId(project.id);
     const terminalStore = useTerminalStateStore.getState();
+    const terminalState = selectThreadTerminalState(
+      terminalStore.terminalStateByThreadId,
+      syntheticId,
+    );
+    const terminalId = terminalState.activeTerminalId ?? DEFAULT_THREAD_TERMINAL_ID;
     terminalStore.setProjectTerminalOpen(syntheticId, true);
     void api.terminal
-      .open({ threadId: syntheticId, terminalId: "default", cwd, env })
-      .then(() => api.terminal.write({ threadId: syntheticId, terminalId: "default", data: `${script.command}\r` }))
+      .open({ threadId: syntheticId, terminalId, cwd, env })
+      .then(() => api.terminal.write({ threadId: syntheticId, terminalId, data: `${script.command}\r` }))
       .catch(() => {
         // Terminal may already be open — try writing directly
-        void api.terminal.write({ threadId: syntheticId, terminalId: "default", data: `${script.command}\r` });
+        void api.terminal.write({ threadId: syntheticId, terminalId, data: `${script.command}\r` });
       });
   } else {
     // Open / write to a thread terminal

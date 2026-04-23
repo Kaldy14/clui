@@ -45,6 +45,13 @@ export function orderThreadsForProject<T extends ThreadOrderingInput>(
   return [...newThreads, ...explicitlyOrdered];
 }
 
+export function getTopThreadForProject<T extends ThreadOrderingInput>(
+  projectThreads: readonly T[],
+  manualOrder: readonly ThreadId[] | undefined,
+): T | null {
+  return orderThreadsForProject(projectThreads, manualOrder)[0] ?? null;
+}
+
 export function reorderThreadsWithinProject(input: {
   projectId: ProjectId;
   threads: readonly ThreadOrderingInput[];

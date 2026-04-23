@@ -4,6 +4,177 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-23 — Fixed scrambled pi auto-titles and added Codex title fallback
+
+**Problem:** Auto-generated thread titles were often scrambled for pi threads after editing the first prompt, and title generation failed outright when `claude -p` was unavailable or unusable (for example due to missing subscription/access).
+
+**Root cause:** The pi title path inferred the first prompt by concatenating raw terminal keystrokes and stripping escape sequences, which loses line-edit semantics like backspace, cursor-left insertion, delete, and readline-style motions. Separately, the thread-title text generation service only attempted Claude CLI and had no Codex fallback for the thread-title path.
+
+**Fix:** Replaced the pi prompt-title extraction with a small terminal line-editor replayer that reconstructs the final edited first line before auto-titling, including common cursor movement and deletion controls plus bracketed-paste wrappers. Added shared Codex-backed thread-title generation, wired the Codex backend to support thread titles directly, and made the Claude-backed title generator fall back to Codex when Claude title generation fails before finally letting the existing raw-prompt fallback apply.
+
+**Affected files:**
+- `apps/server/src/piWritePromptBuffer.ts`
+- `apps/server/src/piWritePromptBuffer.test.ts`
+- `apps/server/src/git/threadTitleGeneration.ts`
+- `apps/server/src/git/Layers/ClaudeCliTextGeneration.ts`
+- `apps/server/src/git/Layers/CodexTextGeneration.ts`
+- `apps/server/src/git/Layers/CodexTextGeneration.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-23 — Increased terminal tab cap from 4 to 10
+
+**Problem:** The new multi-tab project terminal behavior still hit the shared terminal cap at 4 tabs, which was too restrictive for the intended workflow.
+
+**Root cause:** The shared web terminal limit was hard-coded as `MAX_THREAD_TERMINAL_COUNT = 4`, and both thread terminal drawers and project terminal tabs use that same cap.
+
+**Fix:** Raised the shared terminal count cap to 10 so both thread terminals and project terminal tabs can open more sessions before the UI blocks new tabs.
+
+**Affected files:**
+- `apps/web/src/types.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-23 — Project terminal now supports multiple tabs
+
+**Problem:** The project terminal drawer only exposed a single terminal session, so there was no way to open another shell tab for the same project and switch between them from the drawer header.
+
+**Root cause:** `ProjectTerminalDrawer` was hard-wired to the synthetic project thread's default terminal id, rendered no tab UI, and project-level script launches always targeted that default terminal instead of the user's active project terminal session.
+
+**Fix:** Reworked the project terminal drawer header into a tab strip with an inline add button, wired it to the existing shared terminal state store so project terminals can create/switch/close tabs, rendered the active terminal tab by id, and updated project-script launches to target the currently active project terminal tab. Added store coverage to verify project drawer switching preserves per-project tab state.
+
+**Affected files:**
+- `apps/web/src/components/ProjectTerminalDrawer.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/terminalStateStore.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-23 — Viewing a completed thread no longer trips React error #185
+
+**Problem:** Opening a thread right as it completed could crash the desktop app with minified React error `#185` (`Maximum update depth exceeded`).
+
+**Root cause:** The chat route used one effect for both navigation-time visit marking and in-view completion clearing. When `hookStatus` / `latestTurn.completedAt` changed for the active thread, that effect kept issuing fresh `markThreadVisited()` updates while it was also clearing the completion badge, creating a render/update loop in production.
+
+**Fix:** Split the route logic into separate effects, kept plain navigation visit-marking independent, and added a small deduping helper so a viewed completion is only marked once per completion signal while duplicate `completed` hook events are still cleared safely. Added focused regression coverage for the new completion-visit helper.
+
+**Affected files:**
+- `apps/web/src/routes/_chat.$threadId.tsx`
+- `apps/web/src/lib/threadVisit.ts`
+- `apps/web/src/lib/threadVisit.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-22 — Rebuilt the `0.0.21` Apple Silicon mac desktop artifact after local changes
+
+**Problem:** After additional local changes, the macOS arm64 desktop artifact needed to be rebuilt from the current workspace state without changing the app version again.
+
+**Root cause:** The existing packaged artifacts no longer reflected the latest local source changes.
+
+**Fix:** Re-ran the Apple Silicon desktop packaging flow with `bun run dist:desktop:dmg:arm64` against the current `0.0.21` workspace version and revalidated the workspace with `bun lint` and `bun typecheck`.
+
+**Affected files:**
+- `release/Clui-0.0.21-arm64.dmg`
+- `release/Clui-0.0.21-arm64.zip`
+- `release/Clui-0.0.21-arm64.dmg.blockmap`
+- `release/Clui-0.0.21-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-23 — Projects can now be hidden and re-added to unhide
+
+**Problem:** Projects could only be deleted from the sidebar, which forced users to remove project history entirely when they just wanted to temporarily get a project out of the way. Re-adding the same folder also created the wrong mental model because there was no reversible hidden state to restore.
+
+**Root cause:** Project metadata only tracked active vs deleted state. The sidebar add flow only checked currently visible projects, and the synchronized client store did not have any concept of project visibility separate from deletion.
+
+**Fix:** Added a persisted project `hiddenAt` flag through the orchestration/contracts, projection pipeline, snapshot query, and SQLite projection storage; added a new projection migration for `projection_projects.hidden_at`; taught the sidebar project context menu to hide projects; filtered hidden projects and their threads out of the synced UI store; and updated “Add project” so re-adding an existing hidden workspace clears `hiddenAt` and unhides the project instead of creating a duplicate.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/decider.projectScripts.test.ts`
+- `apps/server/src/orchestration/projector.test.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
+- `apps/server/src/persistence/Services/ProjectionProjects.ts`
+- `apps/server/src/persistence/Layers/ProjectionProjects.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations/026_ProjectionProjectsHiddenAt.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/store.test.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-23 — New project threads now wait for server creation before the UI navigates
+
+**Problem:** Adding a project could leave behind an empty extra thread. The sidebar created a "New thread" immediately, but after you started using the project a second thread could appear while the original empty thread stuck around.
+
+**Root cause:** The sidebar was adding and navigating to a client-only optimistic thread before `thread.create` had been accepted by the server, and the project-add flow silently ignored initial thread creation failures. That let project-level snapshot syncs race with the first thread creation, so the intended thread could reappear later as a stray empty row while the user continued in another thread.
+
+**Fix:** Extracted a shared `createThreadAndNavigate()` helper that waits for the server's `thread.create` acknowledgement before exposing the new thread locally or navigating to it, and surfaced initial thread-creation failures during project add instead of swallowing them. Added regression coverage for the new ordering/failure behavior, and updated stale test fixtures to include the required `hiddenAt` project field so `bun typecheck` stays green.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/store.test.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
+- `apps/server/src/orchestration/commandInvariants.test.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-22 — Release version bumped to `0.0.21` and Apple Silicon mac build produced
+
+**Problem:** The app version needed to be increased and a fresh macOS Apple Silicon desktop build produced from the current workspace state.
+
+**Root cause:** Release package metadata still pointed at `0.0.20`, so packaging would continue to emit artifacts with the old version number.
+
+**Fix:** Bumped the release package versions to `0.0.21`, refreshed `bun.lock`, built the macOS arm64 desktop artifacts via `bun run dist:desktop:dmg:arm64`, and revalidated the workspace with `bun lint` and `bun typecheck`.
+
+**Affected files:**
+- `apps/desktop/package.json`
+- `apps/server/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.21-arm64.dmg`
+- `release/Clui-0.0.21-arm64.zip`
+- `release/Clui-0.0.21-arm64.dmg.blockmap`
+- `release/Clui-0.0.21-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-22 — Archiving the current thread now redirects immediately to the top active sibling thread
+
+**Problem:** Archiving the thread you were currently viewing could briefly leave you on that thread while the session was being stopped/hibernated, which made the UI look like it was pausing and then trying to resume. It also redirected to any unarchived thread globally instead of the top unarchived thread in the same project, and it should land on the empty page when that project has no remaining unarchived threads.
+
+**Root cause:** The archive flow waited for slow session shutdown work before navigating away from the current thread, leaving the dormant-thread auto-resume path time to flash in. Separately, the archived-thread fallback navigation logic only looked for the first unarchived thread across the whole workspace instead of resolving the ordered top unarchived thread inside the archived thread's own project.
+
+**Fix:** Added a shared ordered-thread helper, changed current-thread archiving to navigate away before session hibernation/terminal teardown, and updated archived-thread fallback navigation to choose the top unarchived thread from the same project or `/` when none exists.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/lib/threadOrdering.ts`
+- `apps/web/src/lib/threadOrdering.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-20 — Rebuilt the `0.0.20` Apple Silicon mac desktop artifact after local changes
 
 **Problem:** After additional local changes, the previously generated macOS arm64 desktop package was stale and needed to be rebuilt from the current workspace state.

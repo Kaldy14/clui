@@ -33,6 +33,7 @@ const readModel: OrchestrationReadModel = {
       prompts: [],
       createdAt: now,
       updatedAt: now,
+      hiddenAt: null,
       deletedAt: null,
     },
     {
@@ -44,6 +45,7 @@ const readModel: OrchestrationReadModel = {
       prompts: [],
       createdAt: now,
       updatedAt: now,
+      hiddenAt: null,
       deletedAt: null,
     },
   ],

@@ -1032,6 +1032,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       } else {
         bootstrapProjectId = existingProject.id;
         bootstrapProjectDefaultModel = existingProject.defaultModel ?? "claude-opus-4-6";
+        if (existingProject.hiddenAt !== null) {
+          yield* orchestrationEngine.dispatch({
+            type: "project.meta.update",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            projectId: bootstrapProjectId,
+            hiddenAt: null,
+          });
+        }
       }
 
       const existingThread = snapshot.threads.find(

@@ -38,6 +38,68 @@ function makeEvent(input: {
 }
 
 describe("orchestration projector", () => {
+  it("applies project hiddenAt updates", async () => {
+    const now = new Date().toISOString();
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "project.created",
+          aggregateKind: "project",
+          aggregateId: "project-1",
+          occurredAt: now,
+          commandId: "cmd-project-create",
+          payload: {
+            projectId: "project-1",
+            title: "Project 1",
+            workspaceRoot: "/tmp/project-1",
+            defaultModel: null,
+            scripts: [],
+            prompts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const hiddenAt = "2026-04-23T10:00:00.000Z";
+    const next = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "project.meta-updated",
+          aggregateKind: "project",
+          aggregateId: "project-1",
+          occurredAt: hiddenAt,
+          commandId: "cmd-project-hide",
+          payload: {
+            projectId: "project-1",
+            hiddenAt,
+            updatedAt: hiddenAt,
+          },
+        }),
+      ),
+    );
+
+    expect(next.projects).toEqual([
+      {
+        id: "project-1",
+        title: "Project 1",
+        workspaceRoot: "/tmp/project-1",
+        defaultModel: null,
+        scripts: [],
+        prompts: [],
+        createdAt: now,
+        updatedAt: hiddenAt,
+        hiddenAt,
+        deletedAt: null,
+      },
+    ]);
+  });
+
   it("applies thread.created events", async () => {
     const now = new Date().toISOString();
     const model = createEmptyReadModel(now);

@@ -37,6 +37,7 @@ import Migration0022 from "./Migrations/022_ProjectionThreadsHarness.ts";
 import Migration0023 from "./Migrations/023_ProjectionThreadsArchivedAt.ts";
 import Migration0024 from "./Migrations/024_ProjectionThreadsPiSessionFile.ts";
 import Migration0025 from "./Migrations/025_ProjectionProjectsPrompts.ts";
+import Migration0026 from "./Migrations/026_ProjectionProjectsHiddenAt.ts";
 import { Effect } from "effect";
 
 /**
@@ -75,6 +76,7 @@ const loader = Migrator.fromRecord({
   "23_ProjectionThreadsArchivedAt": Migration0023,
   "24_ProjectionThreadsPiSessionFile": Migration0024,
   "25_ProjectionProjectsPrompts": Migration0025,
+  "26_ProjectionProjectsHiddenAt": Migration0026,
 });
 
 /**

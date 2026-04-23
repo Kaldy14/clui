@@ -187,6 +187,7 @@ export function projectEvent(
             prompts: payload.prompts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
+            hiddenAt: null,
             deletedAt: null,
           };
 
@@ -218,6 +219,7 @@ export function projectEvent(
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   ...(payload.prompts !== undefined ? { prompts: payload.prompts } : {}),
+                  ...(payload.hiddenAt !== undefined ? { hiddenAt: payload.hiddenAt } : {}),
                   updatedAt: payload.updatedAt,
                 }
               : project,

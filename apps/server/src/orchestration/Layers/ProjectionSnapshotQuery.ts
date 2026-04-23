@@ -152,6 +152,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           prompts_json AS "prompts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          hidden_at AS "hiddenAt",
           deleted_at AS "deletedAt"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
@@ -558,6 +559,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             prompts: row.prompts,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
+            hiddenAt: row.hiddenAt,
             deletedAt: row.deletedAt,
           }));
 

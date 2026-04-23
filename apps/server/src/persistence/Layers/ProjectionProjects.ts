@@ -44,6 +44,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               prompts_json,
               created_at,
               updated_at,
+              hidden_at,
               deleted_at
             )
             VALUES (
@@ -55,6 +56,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               ${row.prompts},
               ${row.createdAt},
               ${row.updatedAt},
+              ${row.hiddenAt},
               ${row.deletedAt}
             )
             ON CONFLICT (project_id)
@@ -66,6 +68,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               prompts_json = excluded.prompts_json,
               created_at = excluded.created_at,
               updated_at = excluded.updated_at,
+              hidden_at = excluded.hidden_at,
               deleted_at = excluded.deleted_at
           `,
   });
@@ -84,6 +87,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           prompts_json AS "prompts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          hidden_at AS "hiddenAt",
           deleted_at AS "deletedAt"
         FROM projection_projects
         WHERE project_id = ${projectId}
@@ -104,6 +108,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           prompts_json AS "prompts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          hidden_at AS "hiddenAt",
           deleted_at AS "deletedAt"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC

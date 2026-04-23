@@ -96,6 +96,52 @@ describe("decider project scripts", () => {
     expect((event.payload as { scripts?: unknown[] }).scripts).toEqual(scripts);
   });
 
+  it("propagates hiddenAt in project.meta.update payload", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-hide"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-hide"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-hide"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-hide"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-hide"),
+          title: "Hidden project",
+          workspaceRoot: "/tmp/project-hide",
+          defaultModel: null,
+          scripts: [],
+          prompts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const hiddenAt = "2026-04-23T10:00:00.000Z";
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-project-hide"),
+          projectId: asProjectId("project-hide"),
+          hiddenAt,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.meta-updated");
+    expect((event.payload as { hiddenAt?: string | null }).hiddenAt).toBe(hiddenAt);
+  });
+
   it("emits user message and turn-start-requested events for thread.turn.start", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);

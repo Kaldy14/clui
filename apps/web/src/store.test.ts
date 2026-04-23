@@ -115,6 +115,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         defaultModel: "gpt-5.3-codex",
         createdAt: "2026-02-27T00:00:00.000Z",
         updatedAt: "2026-02-27T00:00:00.000Z",
+        hiddenAt: null,
         deletedAt: null,
         scripts: [],
         prompts: [],
@@ -134,6 +135,7 @@ function makeReadModelProject(
     defaultModel: "gpt-5.3-codex",
     createdAt: "2026-02-27T00:00:00.000Z",
     updatedAt: "2026-02-27T00:00:00.000Z",
+    hiddenAt: null,
     deletedAt: null,
     scripts: [],
     prompts: [],
@@ -350,6 +352,28 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+  });
+
+  it("filters hidden projects and their threads out of the synced store", () => {
+    const thread = makeReadModelThread({});
+    const readModel = {
+      ...makeReadModel(thread),
+      projects: [makeReadModelProject({ hiddenAt: "2026-04-23T10:00:00.000Z" })],
+    };
+
+    const next = syncServerReadModel(
+      {
+        projects: [],
+        threads: [],
+        threadsHydrated: false,
+        projectOrder: [],
+        threadOrderByProject: {},
+      },
+      readModel,
+    );
+
+    expect(next.projects).toEqual([]);
+    expect(next.threads).toEqual([]);
   });
 });
 

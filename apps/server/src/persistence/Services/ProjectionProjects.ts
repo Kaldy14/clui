@@ -21,6 +21,7 @@ export const ProjectionProject = Schema.Struct({
   prompts: Schema.Array(ProjectPrompt),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  hiddenAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionProject = typeof ProjectionProject.Type;

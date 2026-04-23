@@ -2,6 +2,7 @@ import { ProjectId, ThreadId } from "@clui/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  getTopThreadForProject,
   orderThreadsForProject,
   pruneThreadOrderByProject,
   reorderThreadsWithinProject,
@@ -52,6 +53,21 @@ describe("threadOrdering", () => {
       ThreadId.makeUnsafe("thread-2"),
       ThreadId.makeUnsafe("thread-1"),
     ]);
+  });
+
+  it("returns the top ordered thread for a project", () => {
+    const threads = [
+      makeThread({ id: "thread-1", createdAt: "2026-04-01T10:00:00.000Z" }),
+      makeThread({ id: "thread-2", createdAt: "2026-04-01T11:00:00.000Z" }),
+      makeThread({ id: "thread-3", createdAt: "2026-04-01T12:00:00.000Z" }),
+    ];
+
+    expect(
+      getTopThreadForProject(threads, [
+        ThreadId.makeUnsafe("thread-2"),
+        ThreadId.makeUnsafe("thread-1"),
+      ])?.id,
+    ).toBe(ThreadId.makeUnsafe("thread-3"));
   });
 
   it("captures a full manual order after drag-reordering within a project", () => {

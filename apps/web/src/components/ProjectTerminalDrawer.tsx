@@ -1,8 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { stripTerminalResponses } from "../lib/terminalInputFilter";
-import { TerminalSquare, XIcon } from "lucide-react";
-import type { ProjectId } from "@clui/contracts";
+import { Plus, TerminalSquare, XIcon } from "lucide-react";
+import type { ProjectId, ThreadId } from "@clui/contracts";
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -10,6 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
+
+import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import {
   extractTerminalLinks,
   isTerminalLinkActivation,
@@ -20,6 +21,7 @@ import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keyb
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
+  MAX_THREAD_TERMINAL_COUNT,
   projectTerminalThreadId,
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
@@ -48,21 +50,20 @@ function writeSystemMessage(terminal: Terminal, message: string): void {
 }
 
 interface ProjectTerminalViewportProps {
-  projectId: ProjectId;
+  threadId: ThreadId;
+  terminalId: string;
   cwd: string;
   resizeEpoch: number;
   drawerHeight: number;
 }
 
 function ProjectTerminalViewport({
-  projectId,
+  threadId,
+  terminalId,
   cwd,
   resizeEpoch,
   drawerHeight,
 }: ProjectTerminalViewportProps) {
-  const threadId = projectTerminalThreadId(projectId);
-  const terminalId = DEFAULT_THREAD_TERMINAL_ID;
-
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -377,6 +378,8 @@ export interface ProjectTerminalDrawerProps {
   onHeightChange: (height: number) => void;
 }
 
+const newProjectTerminalId = () => crypto.randomUUID().slice(0, 8);
+
 export default function ProjectTerminalDrawer({
   projectId,
   cwd,
@@ -389,7 +392,22 @@ export default function ProjectTerminalDrawer({
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadId, threadId),
   );
+  const createTerminal = useTerminalStateStore((state) => state.newTerminal);
+  const setActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
+  const closeTerminal = useTerminalStateStore((state) => state.closeTerminal);
+
+  const terminalIds =
+    terminalState.terminalIds.length > 0
+      ? terminalState.terminalIds
+      : [DEFAULT_THREAD_TERMINAL_ID];
+  const activeTerminalId = terminalIds.includes(terminalState.activeTerminalId)
+    ? terminalState.activeTerminalId
+    : (terminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
   const hasRunningProcess = terminalState.runningTerminalIds.length > 0;
+  const hasReachedTerminalLimit = terminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
+  const addTerminalLabel = hasReachedTerminalLimit
+    ? `Add terminal tab (max ${MAX_THREAD_TERMINAL_COUNT})`
+    : "Add terminal tab";
 
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
@@ -494,6 +512,18 @@ export default function ProjectTerminalDrawer({
     };
   }, [syncHeight]);
 
+  const handleCreateTerminal = useCallback(() => {
+    if (hasReachedTerminalLimit) return;
+    createTerminal(threadId, newProjectTerminalId());
+  }, [createTerminal, hasReachedTerminalLimit, threadId]);
+
+  const handleCloseTerminal = useCallback(
+    (terminalId: string) => {
+      closeTerminal(threadId, terminalId);
+    },
+    [closeTerminal, threadId],
+  );
+
   return (
     <aside
       className="project-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
@@ -509,15 +539,86 @@ export default function ProjectTerminalDrawer({
         <div className="h-[2px] w-12 rounded-full bg-border/0 transition-colors group-hover/resize:bg-border" />
       </div>
 
-      <div className="flex h-7 items-center gap-2 border-b border-border/60 px-2">
-        <TerminalSquare className="size-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium text-foreground/80">Project Terminal</span>
-        {hasRunningProcess && (
-          <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-        )}
+      <div className="flex h-8 items-center gap-2 border-b border-border/60 px-2">
+        <TerminalSquare className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="shrink-0 text-xs font-medium text-foreground/80">Project Terminal</span>
         <button
           type="button"
-          className="ml-auto p-0.5 text-muted-foreground hover:text-foreground"
+          className={`inline-flex size-5 shrink-0 items-center justify-center rounded-md transition-colors ${
+            hasReachedTerminalLimit
+              ? "cursor-not-allowed text-muted-foreground/40"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground"
+          }`}
+          onClick={handleCreateTerminal}
+          disabled={hasReachedTerminalLimit}
+          aria-label={addTerminalLabel}
+          title={addTerminalLabel}
+        >
+          <Plus className="size-3.5" />
+        </button>
+        {hasRunningProcess && (
+          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" />
+        )}
+
+        <div className="min-w-0 flex-1 overflow-x-auto">
+          <div className="flex min-w-max items-center gap-1 py-1">
+            {terminalIds.map((terminalId, index) => {
+              const isActive = terminalId === activeTerminalId;
+              const isRunning = terminalState.runningTerminalIds.includes(terminalId);
+              const label = `Terminal ${index + 1}`;
+              const closeLabel = `Close ${label}`;
+
+              return (
+                <div
+                  key={terminalId}
+                  className={`group flex shrink-0 items-center rounded-md border text-xs transition-colors ${
+                    isActive
+                      ? "border-border bg-accent text-foreground"
+                      : "border-border/60 bg-background text-muted-foreground hover:border-border hover:bg-accent/50 hover:text-foreground"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 px-2 py-1 text-left"
+                    onClick={() => setActiveTerminal(threadId, terminalId)}
+                    aria-pressed={isActive}
+                    title={label}
+                  >
+                    <span
+                      className={`size-1.5 rounded-full ${
+                        isRunning ? "bg-emerald-500" : "bg-border/70"
+                      }`}
+                    />
+                    <span className="max-w-28 truncate font-medium">{label}</span>
+                  </button>
+
+                  {terminalIds.length > 1 && (
+                    <button
+                      type="button"
+                      className={`mr-1 inline-flex size-4 items-center justify-center rounded-sm transition-colors ${
+                        isActive
+                          ? "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                          : "text-muted-foreground/80 hover:bg-accent hover:text-foreground"
+                      }`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleCloseTerminal(terminalId);
+                      }}
+                      aria-label={closeLabel}
+                      title={closeLabel}
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="ml-auto shrink-0 p-0.5 text-muted-foreground hover:text-foreground"
           onClick={onClose}
           aria-label="Close project terminal"
         >
@@ -527,7 +628,9 @@ export default function ProjectTerminalDrawer({
 
       <div className="min-h-0 w-full flex-1">
         <ProjectTerminalViewport
-          projectId={projectId}
+          key={activeTerminalId}
+          threadId={threadId}
+          terminalId={activeTerminalId}
           cwd={cwd}
           resizeEpoch={resizeEpoch}
           drawerHeight={drawerHeight}

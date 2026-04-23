@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { CommandId, ProjectId, ThreadId } from "@clui/contracts";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  createThreadAndNavigate,
   hasUnseenCompletion,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -19,6 +21,90 @@ function makeLatestTurn(overrides?: {
     completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
   };
 }
+
+describe("createThreadAndNavigate", () => {
+  it("waits for the server thread.create ack before adding local state or navigating", async () => {
+    const events: string[] = [];
+    let resolveDispatch = (): void => {
+      throw new Error("dispatch promise was not captured");
+    };
+
+    const api = {
+      orchestration: {
+        dispatchCommand: vi.fn(
+          () =>
+            new Promise<{ sequence: number }>((resolve) => {
+              events.push("dispatch:start");
+              resolveDispatch = () => {
+                events.push("dispatch:resolved");
+                resolve({ sequence: 1 });
+              };
+            }),
+        ),
+      },
+    };
+    const addOptimisticThread = vi.fn(() => {
+      events.push("optimistic");
+    });
+    const navigate = vi.fn(async () => {
+      events.push("navigate");
+    });
+
+    const pending = createThreadAndNavigate({
+      api,
+      navigate,
+      addOptimisticThread,
+      commandId: CommandId.makeUnsafe("cmd-thread-create"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      projectId: ProjectId.makeUnsafe("project-1"),
+      model: "gpt-5-codex",
+      harness: "claudeCode",
+      createdAt: "2026-04-23T10:00:00.000Z",
+      branch: null,
+      worktreePath: null,
+    });
+
+    expect(events).toEqual(["dispatch:start"]);
+    expect(addOptimisticThread).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+
+    resolveDispatch();
+    await pending;
+
+    expect(events).toEqual(["dispatch:start", "dispatch:resolved", "optimistic", "navigate"]);
+  });
+
+  it("does not add local state or navigate when thread.create fails", async () => {
+    const addOptimisticThread = vi.fn();
+    const navigate = vi.fn(async () => undefined);
+    const api = {
+      orchestration: {
+        dispatchCommand: vi.fn(async (): Promise<{ sequence: number }> => {
+          throw new Error("thread.create failed");
+        }),
+      },
+    };
+
+    await expect(
+      createThreadAndNavigate({
+        api,
+        navigate,
+        addOptimisticThread,
+        commandId: CommandId.makeUnsafe("cmd-thread-create-fail"),
+        threadId: ThreadId.makeUnsafe("thread-2"),
+        projectId: ProjectId.makeUnsafe("project-1"),
+        model: "gpt-5-codex",
+        harness: "claudeCode",
+        createdAt: "2026-04-23T10:00:00.000Z",
+        branch: null,
+        worktreePath: null,
+      }),
+    ).rejects.toThrow("thread.create failed");
+
+    expect(addOptimisticThread).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+});
 
 describe("hasUnseenCompletion", () => {
   it("returns true when a thread completed after its last visit", () => {

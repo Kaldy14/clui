@@ -4,6 +4,7 @@ import { Suspense, lazy, type ReactNode, useCallback, useEffect, useRef, useStat
 
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { getViewedThreadCompletionVisit } from "../lib/threadVisit";
 import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
@@ -178,6 +179,7 @@ function ChatThreadRouteView() {
   );
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
+  const lastHandledCompletionVisitKeyRef = useRef<string | null>(null);
   const closeDiff = useCallback(() => {
     void navigate({
       to: "/$threadId",
@@ -198,12 +200,30 @@ function ChatThreadRouteView() {
     });
   }, [navigate, threadId]);
 
-  // Mark thread as visited and clear "Completed" badge when navigating to it
-  // — or when the thread completes while we're already viewing it.
+  // Mark thread as visited when navigating to it.
   useEffect(() => {
     if (!threadsHydrated || !routeThreadExists) return;
+    useStore.getState().markThreadVisited(threadId);
+  }, [threadsHydrated, routeThreadExists, threadId]);
+
+  // Clear a viewed completion exactly once per completion signal so we don't
+  // keep issuing new visit timestamps while the current thread is already open.
+  useEffect(() => {
+    if (!threadsHydrated || !routeThreadExists) return;
+
     const store = useStore.getState();
-    store.markThreadVisited(threadId);
+    const completionVisit = getViewedThreadCompletionVisit({
+      threadId,
+      hookStatus,
+      completedAt,
+      lastHandledKey: lastHandledCompletionVisitKeyRef.current,
+    });
+
+    if (completionVisit) {
+      lastHandledCompletionVisitKeyRef.current = completionVisit.key;
+      store.markThreadVisited(threadId, completionVisit.visitedAt);
+    }
+
     if (hookStatus === "completed") {
       store.setHookStatus(threadId, null);
     }

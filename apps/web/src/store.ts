@@ -459,10 +459,11 @@ function hasPendingArchiveUpdate(threadId: string): boolean {
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
-  const projects = mapProjectsFromReadModel(
-    readModel.projects.filter((project) => project.deletedAt === null),
-    state.projects,
+  const visibleReadModelProjects = readModel.projects.filter(
+    (project) => project.deletedAt === null && (project.hiddenAt ?? null) === null,
   );
+  const visibleProjectIds = new Set(visibleReadModelProjects.map((project) => project.id));
+  const projects = mapProjectsFromReadModel(visibleReadModelProjects, state.projects);
   const baseThreadOrderByProject =
     Object.keys(state.threadOrderByProject).length > 0
       ? state.threadOrderByProject
@@ -470,7 +471,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   let anyThreadChanged = false;
   const threads = readModel.threads
-    .filter((thread) => thread.deletedAt === null)
+    .filter((thread) => thread.deletedAt === null && visibleProjectIds.has(thread.projectId))
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
 

@@ -367,6 +367,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             prompts: event.payload.prompts,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
+            hiddenAt: null,
             deletedAt: null,
           });
           return;
@@ -389,6 +390,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
             ...(event.payload.prompts !== undefined ? { prompts: event.payload.prompts } : {}),
+            ...(event.payload.hiddenAt !== undefined ? { hiddenAt: event.payload.hiddenAt } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

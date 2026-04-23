@@ -37,9 +37,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
-  DEFAULT_PROVIDER_INTERACTION_MODE,
   type DesktopUpdateState,
   ProjectId,
   ThreadId,
@@ -102,8 +100,12 @@ import {
   prStatusIndicator,
 } from "../lib/threadStatus";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
-import { orderThreadsForProject } from "../lib/threadOrdering";
-import { resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
+import { getTopThreadForProject, orderThreadsForProject } from "../lib/threadOrdering";
+import {
+  createThreadAndNavigate,
+  resolveThreadStatusPill,
+  shouldClearThreadSelectionOnMouseDown,
+} from "./Sidebar.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -725,53 +727,52 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       const branch = options?.branch ?? null;
       const worktreePath = options?.worktreePath ?? null;
       const harness = appSettings.defaultCodingHarness;
-      const project = projects.find((entry) => entry.id === projectId);
+      const project = useStore.getState().projects.find((entry) => entry.id === projectId);
       const model =
         project?.model ??
         (harness === "claudeCode"
           ? DEFAULT_MODEL_BY_PROVIDER.claudeCode
           : DEFAULT_MODEL_BY_PROVIDER.codex);
 
-      // Add thread optimistically so the route has it immediately
-      addOptimisticThread({
-        id: threadId,
-        projectId,
-        title: "New thread",
-        harness,
-        branch,
-        worktreePath,
-        createdAt,
-      });
-
-      void api.orchestration.dispatchCommand({
-        type: "thread.create",
+      await createThreadAndNavigate({
+        api,
+        navigate,
+        addOptimisticThread,
         commandId: newCommandId(),
         threadId,
         projectId,
-        title: "New thread",
         model,
         harness,
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
         branch,
         worktreePath,
-        createdAt,
-      });
-
-      await navigate({
-        to: "/$threadId",
-        params: { threadId },
       });
     },
-    [appSettings.defaultCodingHarness, navigate, addOptimisticThread, projects],
+    [appSettings.defaultCodingHarness, navigate, addOptimisticThread],
+  );
+
+  const getTopUnarchivedThreadForProject = useCallback(
+    (projectId: ProjectId, excludedThreadId?: ThreadId) =>
+      getTopThreadForProject(
+        threads.filter(
+          (thread) =>
+            thread.projectId === projectId &&
+            thread.archivedAt === null &&
+            thread.id !== excludedThreadId,
+        ),
+        threadOrderByProject[projectId],
+      ),
+    [threadOrderByProject, threads],
   );
 
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
-      const latestThread = orderThreadsForProject(
-        threads.filter((thread) => thread.projectId === projectId),
-        threadOrderByProject[projectId],
-      )[0];
+      const { threads: currentThreads, threadOrderByProject: currentThreadOrderByProject } =
+        useStore.getState();
+      const latestThread = getTopThreadForProject(
+        currentThreads.filter((thread) => thread.projectId === projectId),
+        currentThreadOrderByProject[projectId],
+      );
       if (!latestThread) return;
 
       void navigate({
@@ -779,7 +780,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         params: { threadId: latestThread.id },
       });
     },
-    [navigate, threadOrderByProject, threads],
+    [navigate],
   );
 
   const addProjectFromPath = useCallback(
@@ -788,6 +789,12 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       if (!cwd || isAddingProject) return;
       const api = readNativeApi();
       if (!api) return;
+
+      const refreshSnapshot = async () => {
+        const snapshot = await api.orchestration.getSnapshot();
+        useStore.getState().syncServerReadModel(snapshot);
+        return snapshot;
+      };
 
       setIsAddingProject(true);
       const finishAddingProject = () => {
@@ -804,6 +811,44 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         return;
       }
 
+      try {
+        const snapshot = await api.orchestration.getSnapshot();
+        const matchingProject = snapshot.projects.find(
+          (project) => project.workspaceRoot === cwd && project.deletedAt === null,
+        );
+
+        if (matchingProject) {
+          if ((matchingProject.hiddenAt ?? null) !== null) {
+            await api.orchestration.dispatchCommand({
+              type: "project.meta.update",
+              commandId: newCommandId(),
+              projectId: matchingProject.id,
+              hiddenAt: null,
+            });
+
+            const refreshedSnapshot = await refreshSnapshot().catch(() => null);
+            const existingThreads = (refreshedSnapshot ?? snapshot).threads.filter(
+              (thread) => thread.projectId === matchingProject.id && thread.deletedAt === null,
+            );
+            if (existingThreads.length > 0) {
+              focusMostRecentThreadForProject(matchingProject.id);
+              finishAddingProject();
+              return;
+            }
+
+            await handleNewThread(matchingProject.id);
+            finishAddingProject();
+            return;
+          }
+
+          focusMostRecentThreadForProject(matchingProject.id);
+          finishAddingProject();
+          return;
+        }
+      } catch {
+        // Fall through to create mode. The project.create dispatch below remains authoritative.
+      }
+
       const projectId = newProjectId();
       const createdAt = new Date().toISOString();
       const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
@@ -817,7 +862,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
           defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
         });
-        await handleNewThread(projectId).catch(() => undefined);
+        await refreshSnapshot().catch(() => null);
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
@@ -833,6 +878,20 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         }
         return;
       }
+
+      try {
+        await handleNewThread(projectId);
+      } catch (error) {
+        finishAddingProject();
+        toastManager.add({
+          type: "error",
+          title: "Project added, but the first thread could not be created",
+          description:
+            error instanceof Error ? error.message : "Create a thread manually and try again.",
+        });
+        return;
+      }
+
       finishAddingProject();
     },
     [
@@ -1054,6 +1113,19 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       const thread = threads.find((entry) => entry.id === threadId);
       if (!thread) return;
 
+      if (archivedAt !== null && routeThreadId === threadId) {
+        const fallbackThread = getTopUnarchivedThreadForProject(thread.projectId, threadId);
+        if (fallbackThread) {
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: fallbackThread.id },
+            replace: true,
+          });
+        } else {
+          await navigate({ to: "/", replace: true });
+        }
+      }
+
       if (archivedAt !== null) {
         if (thread.session && thread.session.status !== "closed") {
           await api.orchestration
@@ -1093,7 +1165,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         });
       }
     },
-    [clearTerminalState, setThreadArchived, threads],
+    [clearTerminalState, getTopUnarchivedThreadForProject, navigate, routeThreadId, setThreadArchived, threads],
   );
 
   const handleThreadContextMenu = useCallback(
@@ -1310,15 +1382,66 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       const api = readNativeApi();
       if (!api) return;
       const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Delete", destructive: true }],
+        [
+          { id: "hide", label: "Hide" },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
         position,
       );
-      if (clicked !== "delete") return;
+      if (clicked === null) return;
 
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
 
       const projectThreads = threads.filter((thread) => thread.projectId === projectId);
+      if (clicked === "hide") {
+        const activeThread = routeThreadId ? threads.find((thread) => thread.id === routeThreadId) : null;
+        if (activeThread?.projectId === projectId) {
+          const fallbackThread = threads.find(
+            (thread) => thread.projectId !== projectId && thread.archivedAt === null,
+          );
+          if (fallbackThread) {
+            await navigate({
+              to: "/$threadId",
+              params: { threadId: fallbackThread.id },
+              replace: true,
+            });
+          } else {
+            await navigate({ to: "/", replace: true });
+          }
+        }
+
+        try {
+          clearProjectDraftThreadId(projectId);
+          await api.orchestration.dispatchCommand({
+            type: "project.meta.update",
+            commandId: newCommandId(),
+            projectId,
+            hiddenAt: new Date().toISOString(),
+          });
+          const snapshot = await api.orchestration.getSnapshot().catch(() => null);
+          if (snapshot) {
+            useStore.getState().syncServerReadModel(snapshot);
+          }
+          const projectTerminalId = projectTerminalThreadId(projectId);
+          storeSetTerminalOpen(projectTerminalId, false);
+          clearTerminalState(projectTerminalId);
+          for (const thread of projectThreads) {
+            claudeCache.dispose(thread.id);
+            clearTerminalState(thread.id);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error hiding project.";
+          console.error("Failed to hide project", { projectId, error });
+          toastManager.add({
+            type: "error",
+            title: `Failed to hide "${project.name}"`,
+            description: message,
+          });
+        }
+        return;
+      }
+
       if (projectThreads.length > 0) {
         toastManager.add({
           type: "warning",
@@ -1350,7 +1473,15 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         });
       }
     },
-    [clearProjectDraftThreadId, projects, threads],
+    [
+      clearProjectDraftThreadId,
+      clearTerminalState,
+      navigate,
+      projects,
+      routeThreadId,
+      storeSetTerminalOpen,
+      threads,
+    ],
   );
 
   const sidebarDnDSensors = useSensors(
@@ -1545,20 +1676,18 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     const currentThread = threads.find((thread) => thread.id === routeThreadId);
     if (!currentThread || currentThread.archivedAt === null) return;
 
-    const fallbackThreadId = threads.find(
-      (thread) => thread.id !== routeThreadId && thread.archivedAt === null,
-    )?.id;
-    if (fallbackThreadId) {
+    const fallbackThread = getTopUnarchivedThreadForProject(currentThread.projectId, routeThreadId);
+    if (fallbackThread) {
       void navigate({
         to: "/$threadId",
-        params: { threadId: fallbackThreadId },
+        params: { threadId: fallbackThread.id },
         replace: true,
       });
       return;
     }
 
     void navigate({ to: "/", replace: true });
-  }, [navigate, routeThreadId, showArchivedThreads, threads]);
+  }, [getTopUnarchivedThreadForProject, navigate, routeThreadId, showArchivedThreads, threads]);
 
   const desktopUpdateButtonDisabled = isDesktopUpdateButtonDisabled(desktopUpdateState);
   const desktopUpdateButtonAction = desktopUpdateState

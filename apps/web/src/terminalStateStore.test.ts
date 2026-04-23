@@ -1,9 +1,12 @@
-import { ThreadId } from "@clui/contracts";
+import { ProjectId, ThreadId } from "@clui/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
+import { projectTerminalThreadId } from "./types";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
+const PROJECT_A_ID = ProjectId.makeUnsafe("project-a");
+const PROJECT_B_ID = ProjectId.makeUnsafe("project-b");
 
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
@@ -105,5 +108,30 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalGroups).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2"] },
     ]);
+  });
+
+  it("closes other project drawers without resetting their tab state", () => {
+    const store = useTerminalStateStore.getState();
+    const projectATerminalThreadId = projectTerminalThreadId(PROJECT_A_ID);
+    const projectBTerminalThreadId = projectTerminalThreadId(PROJECT_B_ID);
+
+    store.newTerminal(projectATerminalThreadId, "terminal-2");
+    store.setProjectTerminalOpen(projectATerminalThreadId, true);
+    store.setProjectTerminalOpen(projectBTerminalThreadId, true);
+
+    const projectATerminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      projectATerminalThreadId,
+    );
+    const projectBTerminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      projectBTerminalThreadId,
+    );
+
+    expect(projectATerminalState.terminalOpen).toBe(false);
+    expect(projectATerminalState.terminalIds).toEqual(["default", "terminal-2"]);
+    expect(projectATerminalState.activeTerminalId).toBe("terminal-2");
+    expect(projectBTerminalState.terminalOpen).toBe(true);
+    expect(projectBTerminalState.terminalIds).toEqual(["default"]);
   });
 });

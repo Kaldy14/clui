@@ -7,12 +7,16 @@
  * @module ClaudeCliTextGeneration
  */
 
-import { Effect, Layer, Option, Schema, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@clui/shared/git";
 
 import { TextGenerationError } from "../Errors.ts";
+import {
+  generateThreadTitleWithCodex,
+  sanitizeGeneratedThreadTitle,
+} from "../threadTitleGeneration.ts";
 import {
   type BranchNameGenerationResult,
   type CommitMessageGenerationResult,
@@ -74,6 +78,8 @@ function normalizeError(
 
 const makeClaudeCliTextGeneration = Effect.gen(function* () {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const readStreamAsString = <E>(
     operation: string,
@@ -372,11 +378,10 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
 
   // ── Thread titles ────────────────────────────────────────────────────
 
-  const TITLE_MAX_LENGTH = 60;
   const TITLE_TIMEOUT_MS = 30_000;
 
-  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) =>
-    Effect.gen(function* () {
+  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) => {
+    const generateWithClaude = Effect.gen(function* () {
       const command = ChildProcess.make(
         "claude",
         [
@@ -405,7 +410,7 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
           normalizeError("generateThreadTitle", cause, "Failed to spawn Claude CLI"),
         ));
 
-      const [stdout, _stderr, exitCode] = yield* Effect.all(
+      const [stdout, stderr, exitCode] = yield* Effect.all(
         [
           readStreamAsString("generateThreadTitle", child.stdout),
           readStreamAsString("generateThreadTitle", child.stderr),
@@ -420,9 +425,15 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
       );
 
       if (exitCode !== 0) {
+        const stderrDetail = stderr.trim();
+        const stdoutDetail = stdout.trim();
+        const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
         return yield* new TextGenerationError({
           operation: "generateThreadTitle",
-          detail: `Claude CLI failed with code ${exitCode}.`,
+          detail:
+            detail.length > 0
+              ? `Claude CLI failed: ${detail}`
+              : `Claude CLI failed with code ${exitCode}.`,
         });
       }
 
@@ -434,30 +445,17 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
             detail: `Claude CLI returned invalid JSON. stdout length=${stdout.length}`,
           }),
       });
-      let title = typeof parsed.result === "string" ? parsed.result.trim() : null;
-
-      // Strip markdown code fences if present
-      if (title) {
-        title = title.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "").trim();
-        // If result is JSON like {"title":"..."}, extract the title
-        const jsonMatch = title.match(/^\s*\{\s*"title"\s*:\s*"([^"]*)"\s*\}/);
-        if (jsonMatch) {
-          title = jsonMatch[1] ?? null;
-        }
-      }
+      const title = sanitizeGeneratedThreadTitle(
+        typeof parsed.result === "string" ? parsed.result : null,
+      );
 
       if (!title) {
         return yield* new TextGenerationError({
           operation: "generateThreadTitle",
-          detail: "No title generated.",
+          detail: "Claude CLI did not generate a usable thread title.",
         });
       }
 
-      // Clean up: remove surrounding quotes
-      title = title.replace(/^["']|["']$/g, "").trim();
-      if (title.length > TITLE_MAX_LENGTH) {
-        title = `${title.slice(0, TITLE_MAX_LENGTH - 1)}\u2026`;
-      }
       return { title } satisfies ThreadTitleGenerationResult;
     }).pipe(
       Effect.scoped,
@@ -470,6 +468,26 @@ const makeClaudeCliTextGeneration = Effect.gen(function* () {
         }),
       ),
     );
+
+    return generateWithClaude.pipe(
+      Effect.catch((claudeError) =>
+        generateThreadTitleWithCodex(input.promptText).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.catch((codexError) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateThreadTitle",
+                detail: `Claude CLI title generation failed (${claudeError.detail}); Codex fallback failed (${codexError.detail})`,
+                cause: codexError,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  };
 
   return {
     generateCommitMessage,
