@@ -574,6 +574,11 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
   >(() => new Set());
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
+  const startRenameThread = useCallback((thread: Thread) => {
+    setRenamingThreadId(thread.id);
+    setRenamingTitle(thread.title);
+    renamingCommittedRef.current = false;
+  }, []);
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressThreadClickAfterDragRef = useRef(false);
@@ -1188,9 +1193,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       );
 
       if (clicked === "rename") {
-        setRenamingThreadId(threadId);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        startRenameThread(thread);
         return;
       }
 
@@ -1258,7 +1261,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       }
       await deleteThread(threadId);
     },
-    [appSettings.confirmThreadDelete, archiveThread, deleteThread, markThreadUnread, threads],
+    [appSettings.confirmThreadDelete, archiveThread, deleteThread, markThreadUnread, startRenameThread, threads],
   );
 
   const handleMultiSelectContextMenu = useCallback(
@@ -2291,7 +2294,15 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                                       onClick={(e) => e.stopPropagation()}
                                                     />
                                                   ) : (
-                                                    <span className="min-w-0 flex-1 truncate text-xs">
+                                                    <span
+                                                      className="min-w-0 flex-1 truncate text-xs"
+                                                      title="Double-click to rename"
+                                                      onDoubleClick={(event) => {
+                                                        event.preventDefault();
+                                                        event.stopPropagation();
+                                                        startRenameThread(thread);
+                                                      }}
+                                                    >
                                                       {thread.title}
                                                     </span>
                                                   )}

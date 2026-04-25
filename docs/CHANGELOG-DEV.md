@@ -4,6 +4,20 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-25 — Sidebar thread titles can be renamed by double-click
+
+**Problem:** Thread names in the sidebar could only be renamed through the context menu, so the expected double-click-to-edit interaction was missing.
+
+**Root cause:** The sidebar already had inline rename state and persistence wired up, but the visible thread title text did not start that edit mode on double click.
+
+**Fix:** Extracted the rename-start setup into a shared helper, reused it from the context menu, and wired the sidebar thread title span to enter inline edit mode on double click.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-25 — Thread search no longer caps old or archived threads
 
 **Problem:** The thread search dialog only showed the 20 most recent threads when opened, making older threads hard to find even though the read model included many more active and archived threads.
