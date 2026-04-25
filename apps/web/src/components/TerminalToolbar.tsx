@@ -132,7 +132,7 @@ function EditableTitle({
           if (e.key === "Enter") commit();
           if (e.key === "Escape") setEditing(false);
         }}
-        className="h-5 min-w-0 flex-1 rounded-sm border border-primary/40 bg-background/80 px-1 text-xs font-medium text-foreground outline-none ring-1 ring-primary/20"
+        className="h-5 w-full min-w-0 rounded-sm border border-primary/40 bg-background/80 px-1 text-xs font-medium text-foreground outline-none ring-1 ring-primary/20"
         spellCheck={false}
       />
     );
@@ -142,10 +142,10 @@ function EditableTitle({
     <button
       type="button"
       onClick={() => setEditing(true)}
-      className="min-w-0 truncate rounded-sm px-1 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
+      className="min-w-0 w-full rounded-sm px-1 text-left text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
       title="Click to rename"
     >
-      {title}
+      <span className="thread-title-fade block min-w-0 overflow-hidden whitespace-nowrap">{title}</span>
     </button>
   );
 }
@@ -596,7 +596,7 @@ export default function TerminalToolbar({
     <TooltipProvider>
       <div className={`flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-card/60 px-2 backdrop-blur-sm dark:border-border/25 dark:bg-card/40${isElectron ? " drag-region" : ""}`}>
         {/* Title */}
-        <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1">
           <EditableTitle threadId={threadId} title={thread.title} />
         </div>
 

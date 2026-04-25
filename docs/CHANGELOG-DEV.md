@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-25 — Top thread title uses the full toolbar space
+
+**Problem:** The open-thread title in the top toolbar clipped too early, and the inline rename input stayed narrow instead of using the available toolbar width.
+
+**Root cause:** `EditableTitle` rendered auto-width button/input controls inside the flex title slot. The title text also relied on ellipsis truncation instead of filling the slot and fading only at the constrained edge.
+
+**Fix:** Made the title slot a flex container, forced both the read-only button and edit input to span the full available width, and replaced ellipsis truncation with a masked end fade for the visible title text.
+
+**Affected files:**
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/index.css`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-25 — Sidebar thread titles can be renamed by double-click
 
 **Problem:** Thread names in the sidebar could only be renamed through the context menu, so the expected double-click-to-edit interaction was missing.
