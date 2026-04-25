@@ -29,6 +29,13 @@ const PI_LEGACY_THREAD_SESSION_DIR_NAME = "pi-sessions";
 const PI_SESSION_SYNC_DIR_NAME = "pi-session-sync";
 const PI_RUNTIME_EXTENSION_DIR_NAME = "pi-runtime";
 const PI_SESSION_SYNC_EXTENSION_FILENAME = "clui-pi-session-sync.js";
+const PI_HOOK_STATUSES = new Set<ClaudeHookStatus>([
+  "working",
+  "needsInput",
+  "pendingApproval",
+  "error",
+  "completed",
+]);
 
 class ScrollbackRingBuffer {
   private lines: string[] = [];
@@ -86,6 +93,7 @@ interface PiSessionSyncPayload {
   readonly sessionFile: string | null;
   readonly timestamp: string;
   readonly reason?: string;
+  readonly hookStatus?: ClaudeHookStatus | null;
 }
 
 interface PiSessionEntry extends PiSessionState {
@@ -127,8 +135,27 @@ import path from "node:path";
 
 const syncDir = process.env.${CLUI_PI_SESSION_SYNC_DIR_ENV};
 const threadId = process.env.${CLUI_PI_THREAD_ID_ENV};
+const userInputToolNames = new Set([
+  "ask",
+  "askfollowupquestion",
+  "askquestion",
+  "askuser",
+  "askuserquestion",
+  "question",
+  "questionnaire",
+]);
+const pendingUserInputToolCallIds = new Set();
+let lastHookStatus;
 
-function writePayload(ctx, reason) {
+function normalizeToolName(toolName) {
+  return String(toolName ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isUserInputTool(toolName) {
+  return userInputToolNames.has(normalizeToolName(toolName));
+}
+
+function writePayload(ctx, reason, hookStatus) {
   if (!syncDir || !threadId) return;
   mkdirSync(syncDir, { recursive: true });
   const payload = {
@@ -137,18 +164,69 @@ function writePayload(ctx, reason) {
     timestamp: new Date().toISOString(),
     reason,
   };
-  const target = path.join(syncDir, \`${"${threadId}"}.json\`);
-  const tmp = \`${"${target}"}.tmp\`;
+  if (hookStatus !== undefined) {
+    payload.hookStatus = hookStatus;
+  }
+  const target = path.join(syncDir, threadId + ".json");
+  const tmp = target + ".tmp";
   writeFileSync(tmp, JSON.stringify(payload));
   renameSync(tmp, target);
 }
 
+function setHookStatus(ctx, hookStatus, reason) {
+  if (lastHookStatus === hookStatus) return;
+  lastHookStatus = hookStatus;
+  writePayload(ctx, reason, hookStatus);
+}
+
 export default function (pi) {
   pi.on("session_start", async (event, ctx) => {
+    pendingUserInputToolCallIds.clear();
+    lastHookStatus = undefined;
     writePayload(ctx, event.reason);
+  });
+
+  pi.on("agent_start", async (_event, ctx) => {
+    pendingUserInputToolCallIds.clear();
+    setHookStatus(ctx, "working", "agent_start");
+  });
+
+  pi.on("tool_execution_start", async (event, ctx) => {
+    if (isUserInputTool(event.toolName)) {
+      pendingUserInputToolCallIds.add(event.toolCallId);
+      setHookStatus(ctx, "needsInput", "tool_input:" + event.toolName);
+      return;
+    }
+    if (pendingUserInputToolCallIds.size === 0) {
+      setHookStatus(ctx, "working", "tool_start:" + event.toolName);
+    }
+  });
+
+  pi.on("tool_call", async (event, ctx) => {
+    if (!isUserInputTool(event.toolName)) return;
+    pendingUserInputToolCallIds.add(event.toolCallId);
+    setHookStatus(ctx, "needsInput", "tool_call:" + event.toolName);
+  });
+
+  pi.on("tool_execution_end", async (event, ctx) => {
+    const wasUserInputTool = pendingUserInputToolCallIds.delete(event.toolCallId);
+    if (wasUserInputTool && pendingUserInputToolCallIds.size === 0) {
+      setHookStatus(ctx, "working", "tool_input_resolved:" + event.toolName);
+    }
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
+    pendingUserInputToolCallIds.clear();
+    setHookStatus(ctx, "completed", "agent_end");
   });
 }
 `.trimStart();
+}
+
+function parsePiHookStatus(value: unknown): ClaudeHookStatus | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  return PI_HOOK_STATUSES.has(value as ClaudeHookStatus) ? (value as ClaudeHookStatus) : undefined;
 }
 
 export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents> {
@@ -625,7 +703,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     });
   }
 
-  private applyHookStatusIfChanged(entry: PiSessionEntry, status: ClaudeHookStatus): void {
+  private applyHookStatusIfChanged(entry: PiSessionEntry, status: ClaudeHookStatus | null): void {
     if (entry.hookStatus === status) return;
     entry.hookStatus = status;
     this.emitEvent({
@@ -709,12 +787,14 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       const raw = await readFile(entry.syncFilePath, "utf8");
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       if (parsed.threadId !== entry.threadId) return;
+      const hookStatus = parsePiHookStatus(parsed.hookStatus);
       payload = {
         threadId: entry.threadId,
         sessionFile: typeof parsed.sessionFile === "string" ? parsed.sessionFile : null,
         timestamp:
           typeof parsed.timestamp === "string" ? parsed.timestamp : new Date().toISOString(),
         ...(typeof parsed.reason === "string" ? { reason: parsed.reason } : {}),
+        ...(hookStatus !== undefined ? { hookStatus } : {}),
       };
     } catch (error) {
       this.logger.warn("failed to parse pi session sync file", {
@@ -726,27 +806,31 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }
 
     const nextSessionFile = payload.sessionFile ? path.resolve(payload.sessionFile) : null;
-    if (nextSessionFile === entry.activeSessionFile) return;
+    if (nextSessionFile !== entry.activeSessionFile) {
+      entry.activeSessionFile = nextSessionFile;
+      if (entry.jsonlHookWatcher) {
+        entry.jsonlHookWatcher.setSessionFile(nextSessionFile);
+      } else {
+        this.startJsonlHookWatcher(entry, nextSessionFile);
+      }
 
-    entry.activeSessionFile = nextSessionFile;
-    if (entry.jsonlHookWatcher) {
-      entry.jsonlHookWatcher.setSessionFile(nextSessionFile);
-    } else {
-      this.startJsonlHookWatcher(entry, nextSessionFile);
+      this.logger.info("pi session file updated", {
+        threadId: entry.threadId,
+        sessionFile: nextSessionFile,
+        reason: payload.reason,
+      });
+
+      this.emitEvent({
+        type: "sessionFile",
+        threadId: entry.threadId,
+        createdAt: payload.timestamp,
+        sessionFile: nextSessionFile,
+      });
     }
 
-    this.logger.info("pi session file updated", {
-      threadId: entry.threadId,
-      sessionFile: nextSessionFile,
-      reason: payload.reason,
-    });
-
-    this.emitEvent({
-      type: "sessionFile",
-      threadId: entry.threadId,
-      createdAt: payload.timestamp,
-      sessionFile: nextSessionFile,
-    });
+    if ("hookStatus" in payload) {
+      this.applyHookStatusIfChanged(entry, payload.hookStatus ?? null);
+    }
   }
 
   private resetHookStatus(entry: PiSessionEntry): void {

@@ -18,6 +18,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-25 — Pi questionnaire tools now show Needs Input in the sidebar
+
+**Problem:** Pi-backed threads stayed on the blue “Working” sidebar status while the `questionnaire`/question-style tools were actually blocked waiting for user input.
+
+**Root cause:** Clui’s Pi terminal path only inferred `working` / `completed` from prompt submission and Pi session JSONL messages. Pi custom tools that open interactive UI do not write a distinct JSONL status while their `execute()` promise is waiting, so the sidebar never received a `needsInput` hook status.
+
+**Fix:** Extended Clui’s injected Pi runtime sync extension to report lifecycle hook statuses through the existing sidecar file, including `needsInput` for known user-input tools (`questionnaire`, `question`, and ask-style tools), `working` when they resolve, and `completed` on `agent_end`. The server now parses hook status updates independently of session-file changes, and the web client refreshes dock badges after Pi attention-status updates.
+
+**Affected files:**
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/web/src/routes/__root.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-25 — Thread search no longer caps old or archived threads
 
 **Problem:** The thread search dialog only showed the 20 most recent threads when opened, making older threads hard to find even though the read model included many more active and archived threads.

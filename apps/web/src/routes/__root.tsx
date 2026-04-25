@@ -562,6 +562,7 @@ function EventRouter() {
           useStore
             .getState()
             .setHookStatus(ThreadId.makeUnsafe(event.threadId), event.hookStatus);
+          updateDockBadge(useStore.getState().threads);
         }
       }
     });

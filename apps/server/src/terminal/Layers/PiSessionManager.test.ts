@@ -153,6 +153,8 @@ describe("PiSessionManagerRuntime", () => {
       "utf8",
     );
     expect(extensionSource).toContain("session_start");
+    expect(extensionSource).toContain("tool_execution_start");
+    expect(extensionSource).toContain("questionnaire");
   });
 
   it("reopens an explicit pi session file with --session", async () => {
@@ -292,6 +294,60 @@ describe("PiSessionManagerRuntime", () => {
     await waitFor(() => {
       expect(runtime!.getSessionFile("thread-1")).toBe(sessionFile);
       expect(events.some((event) => event.type === "sessionFile" && event.sessionFile === sessionFile)).toBe(true);
+    });
+  });
+
+  it("tracks hook status updates from the pi sync sidecar without a session-file change", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+    const events = collectEvents(runtime);
+
+    await runtime.startSession({
+      threadId: "thread-1",
+      cwd,
+      cols: 100,
+      rows: 24,
+    });
+
+    const syncFile = path.join(stateDir, "pi-session-sync", "thread-1.json");
+    await writeFile(
+      syncFile,
+      JSON.stringify({
+        threadId: "thread-1",
+        sessionFile: null,
+        timestamp: new Date().toISOString(),
+        reason: "tool_input:questionnaire",
+        hookStatus: "needsInput",
+      }),
+      "utf8",
+    );
+
+    await waitFor(() => {
+      const statuses = events
+        .filter((event) => event.type === "hookStatus")
+        .map((event) => event.hookStatus);
+      expect(statuses).toContain("needsInput");
+    });
+
+    await writeFile(
+      syncFile,
+      JSON.stringify({
+        threadId: "thread-1",
+        sessionFile: null,
+        timestamp: new Date().toISOString(),
+        reason: "tool_input_resolved:questionnaire",
+        hookStatus: "working",
+      }),
+      "utf8",
+    );
+
+    await waitFor(() => {
+      const statuses = events
+        .filter((event) => event.type === "hookStatus")
+        .map((event) => event.hookStatus);
+      expect(statuses.at(-1)).toBe("working");
     });
   });
 });
