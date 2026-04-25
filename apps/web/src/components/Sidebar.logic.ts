@@ -9,6 +9,7 @@ import type {
 import type { Thread } from "../types";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 import { claudeTerminalStatusPill } from "../lib/threadStatus";
+import { hasUnseenCompletion as hasUnseenThreadCompletion } from "../lib/threadUnread";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
@@ -34,6 +35,7 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestTurn"
   | "lastVisitedAt"
+  | "lastCompletedAt"
   | "proposedPlans"
   | "session"
   | "terminalStatus"
@@ -102,15 +104,10 @@ export async function createThreadAndNavigate(input: {
   return input.threadId;
 }
 
-export function hasUnseenCompletion(thread: Pick<Thread, "latestTurn" | "lastVisitedAt">): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestTurn.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return true;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
+export function hasUnseenCompletion(
+  thread: Pick<Thread, "latestTurn" | "lastVisitedAt" | "lastCompletedAt">,
+): boolean {
+  return hasUnseenThreadCompletion(thread);
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {

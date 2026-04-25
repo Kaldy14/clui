@@ -19,6 +19,27 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-25 — Mark unread works for completed Pi threads
+
+**Problem:** Choosing “Mark unread” from the sidebar context menu did nothing for completed Pi-backed threads after their live completion badge had been cleared.
+
+**Root cause:** Sidebar unread state only compared `lastVisitedAt` with `latestTurn.completedAt`. Pi terminal sessions report completion through terminal hook-status events and do not always create an orchestration latest-turn record, so the mark-unread action had no completion timestamp to move before.
+
+**Fix:** Added a UI-local terminal completion marker that is recorded when hook status becomes `completed`, shared the unseen-completion calculation between sidebar/status helpers, and taught “Mark unread” to use that marker when no orchestration turn completion exists.
+
+**Affected files:**
+- `apps/web/src/lib/threadUnread.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/lib/threadStatus.ts`
+- `apps/web/src/routes/_chat.$threadId.tsx`
+- `apps/web/src/store.test.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-25 — Sidebar thread titles can be renamed by double-click
 
 **Problem:** Thread names in the sidebar could only be renamed through the context menu, so the expected double-click-to-edit interaction was missing.

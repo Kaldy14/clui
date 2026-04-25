@@ -174,9 +174,10 @@ function ChatThreadRouteView() {
   // Subscribe to completion-related state so the badge-clearing effect below
   // re-fires when a thread completes while we're already viewing it.
   const hookStatus = useStore((store) => store.threads.find((t) => t.id === threadId)?.hookStatus ?? null);
-  const completedAt = useStore(
-    (store) => store.threads.find((t) => t.id === threadId)?.latestTurn?.completedAt ?? null,
-  );
+  const completedAt = useStore((store) => {
+    const thread = store.threads.find((t) => t.id === threadId);
+    return thread?.latestTurn?.completedAt ?? thread?.lastCompletedAt ?? null;
+  });
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
   const lastHandledCompletionVisitKeyRef = useRef<string | null>(null);

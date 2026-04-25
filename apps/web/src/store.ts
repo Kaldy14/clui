@@ -26,6 +26,7 @@ import {
   pruneThreadOrderByProject,
   reorderThreadsWithinProject,
 } from "./lib/threadOrdering";
+import { getUnreadVisitedAtForThread } from "./lib/threadUnread";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -554,6 +555,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         lastInteractedAt: thread.lastInteractedAt || thread.updatedAt,
         latestTurn: thread.latestTurn,
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+        lastCompletedAt: existing?.lastCompletedAt,
         branch: preserveLocalBranch ? existing.branch : thread.branch,
         worktreePath: preserveLocalBranch ? existing.worktreePath : thread.worktreePath,
         archivedAt: preserveLocalArchivedAt ? existing.archivedAt : (thread.archivedAt ?? null),
@@ -617,10 +619,8 @@ export function markThreadVisited(
 
 export function markThreadUnread(state: AppState, threadId: ThreadId): AppState {
   const threads = updateThread(state.threads, threadId, (thread) => {
-    if (!thread.latestTurn?.completedAt) return thread;
-    const latestTurnCompletedAtMs = Date.parse(thread.latestTurn.completedAt);
-    if (Number.isNaN(latestTurnCompletedAtMs)) return thread;
-    const unreadVisitedAt = new Date(latestTurnCompletedAtMs - 1).toISOString();
+    const unreadVisitedAt = getUnreadVisitedAtForThread(thread);
+    if (!unreadVisitedAt) return thread;
     if (thread.lastVisitedAt === unreadVisitedAt) return thread;
     return { ...thread, lastVisitedAt: unreadVisitedAt };
   });
@@ -724,6 +724,7 @@ export function addOptimisticThread(
     archivedAt: null,
     latestTurn: null,
     lastVisitedAt: input.createdAt,
+    lastCompletedAt: undefined,
     branch: input.branch,
     worktreePath: input.worktreePath,
     turnDiffSummaries: [],
@@ -783,6 +784,25 @@ export function setThreadHarness(
   const threads = updateThread(state.threads, threadId, (thread) => {
     if (thread.harness === harness) return thread;
     return { ...thread, harness };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setThreadHookStatus(
+  state: AppState,
+  threadId: ThreadId,
+  hookStatus: ClaudeHookStatus | null,
+  completedAt?: string,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    const nextLastCompletedAt =
+      hookStatus === "completed"
+        ? (completedAt ?? new Date().toISOString())
+        : thread.lastCompletedAt;
+    if (thread.hookStatus === hookStatus && thread.lastCompletedAt === nextLastCompletedAt) {
+      return thread;
+    }
+    return { ...thread, hookStatus, lastCompletedAt: nextLastCompletedAt };
   });
   return threads === state.threads ? state : { ...state, threads };
 }
@@ -913,13 +933,7 @@ export const useStore = create<AppStore>((set) => ({
   setThreadArchived: (threadId, archivedAt) =>
     set((state) => setThreadArchived(state, threadId, archivedAt)),
   setHookStatus: (threadId, hookStatus) =>
-    set((state) => {
-      const threads = updateThread(state.threads, threadId, (thread) => {
-        if (thread.hookStatus === hookStatus) return thread;
-        return { ...thread, hookStatus };
-      });
-      return threads === state.threads ? state : { ...state, threads };
-    }),
+    set((state) => setThreadHookStatus(state, threadId, hookStatus)),
   bumpLastInteractedAt: (threadId) =>
     set((state) => {
       const now = new Date().toISOString();

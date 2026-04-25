@@ -115,6 +115,16 @@ describe("hasUnseenCompletion", () => {
       }),
     ).toBe(true);
   });
+
+  it("uses terminal completion markers when there is no orchestration turn", () => {
+    expect(
+      hasUnseenCompletion({
+        latestTurn: null,
+        lastCompletedAt: "2026-03-09T10:05:00.000Z",
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("shouldClearThreadSelectionOnMouseDown", () => {
@@ -225,7 +235,8 @@ describe("resolveThreadStatusPill", () => {
         thread: {
           ...baseThread,
           interactionMode: "default",
-          latestTurn: makeLatestTurn(),
+          latestTurn: null,
+          lastCompletedAt: "2026-03-09T10:05:00.000Z",
           lastVisitedAt: "2026-03-09T10:04:00.000Z",
           session: {
             ...baseThread.session,

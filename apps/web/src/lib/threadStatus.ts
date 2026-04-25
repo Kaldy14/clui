@@ -1,5 +1,6 @@
 import type { ClaudeHookStatus, GitStatusResult, TerminalStatus } from "@clui/contracts";
 import type { Thread } from "../types";
+import { hasUnseenCompletion as hasUnseenThreadCompletion } from "./threadUnread";
 
 export interface ThreadStatusPill {
   label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Needs Input" | "Running" | "Paused" | "Error";
@@ -34,14 +35,7 @@ export function formatRelativeTime(iso: string): string {
 }
 
 export function hasUnseenCompletion(thread: Thread): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestTurn.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return true;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
+  return hasUnseenThreadCompletion(thread);
 }
 
 export function threadStatusPill(

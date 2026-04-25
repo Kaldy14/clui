@@ -123,6 +123,8 @@ export interface Thread {
   archivedAt: string | null;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
+  /** UI-local completion marker for terminal-backed harnesses that do not emit orchestration turns. */
+  lastCompletedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];

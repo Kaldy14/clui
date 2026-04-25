@@ -14,6 +14,7 @@ import {
   syncServerReadModel,
   setTerminalStatus,
   setTerminalLifecycle,
+  setThreadHookStatus,
   type AppState,
 } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
@@ -170,10 +171,31 @@ describe("store pure functions", () => {
     );
   });
 
-  it("markThreadUnread does not change a thread without a completed turn", () => {
+  it("markThreadUnread uses the terminal completion marker for pi threads without completed turns", () => {
+    const lastCompletedAt = "2026-02-25T12:30:00.000Z";
+    const initialState = makeState(
+      makeThread({
+        harness: "pi",
+        latestTurn: null,
+        lastCompletedAt,
+        lastVisitedAt: "2026-02-25T12:35:00.000Z",
+      }),
+    );
+
+    const next = markThreadUnread(initialState, ThreadId.makeUnsafe("thread-1"));
+
+    const updatedThread = next.threads[0];
+    expect(updatedThread?.lastVisitedAt).toBe("2026-02-25T12:29:59.999Z");
+    expect(Date.parse(updatedThread?.lastVisitedAt ?? "")).toBeLessThan(
+      Date.parse(lastCompletedAt),
+    );
+  });
+
+  it("markThreadUnread does not change a thread without any completion marker", () => {
     const initialState = makeState(
       makeThread({
         latestTurn: null,
+        lastCompletedAt: undefined,
         lastVisitedAt: "2026-02-25T12:35:00.000Z",
       }),
     );
@@ -181,6 +203,27 @@ describe("store pure functions", () => {
     const next = markThreadUnread(initialState, ThreadId.makeUnsafe("thread-1"));
 
     expect(next).toEqual(initialState);
+  });
+
+  it("setThreadHookStatus records a completion marker when terminal hooks complete", () => {
+    const completedAt = "2026-02-25T12:30:00.000Z";
+    const initialState = makeState(
+      makeThread({
+        harness: "pi",
+        hookStatus: "working",
+        lastCompletedAt: undefined,
+      }),
+    );
+
+    const next = setThreadHookStatus(
+      initialState,
+      ThreadId.makeUnsafe("thread-1"),
+      "completed",
+      completedAt,
+    );
+
+    expect(next.threads[0]?.hookStatus).toBe("completed");
+    expect(next.threads[0]?.lastCompletedAt).toBe(completedAt);
   });
 
   it("reorderProjects moves a project to a target index", () => {
