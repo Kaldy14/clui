@@ -4,6 +4,28 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-25 — Release version bumped to `0.0.22` and Apple Silicon mac build produced
+
+**Problem:** The app version needed to be increased and a fresh macOS Apple Silicon desktop build produced from the current workspace state.
+
+**Root cause:** Release package metadata still pointed at `0.0.21`, so packaging would continue to emit artifacts with the previous version number.
+
+**Fix:** Bumped the release package versions to `0.0.22`, refreshed `bun.lock`, built the macOS arm64 desktop artifacts via `bun run dist:desktop:dmg:arm64`, and revalidated the workspace with `bun lint` and `bun typecheck`.
+
+**Affected files:**
+- `apps/server/package.json`
+- `apps/desktop/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.22-arm64.dmg`
+- `release/Clui-0.0.22-arm64.zip`
+- `release/Clui-0.0.22-arm64.dmg.blockmap`
+- `release/Clui-0.0.22-arm64.zip.blockmap`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-25 — Top thread title uses the full toolbar space
 
 **Problem:** The open-thread title in the top toolbar clipped too early, and the inline rename input stayed narrow instead of using the available toolbar width.
