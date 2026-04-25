@@ -4,6 +4,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-25 — Thread search no longer caps old or archived threads
+
+**Problem:** The thread search dialog only showed the 20 most recent threads when opened, making older threads hard to find even though the read model included many more active and archived threads.
+
+**Root cause:** `ThreadSearchDialog` reused a small recent-thread cap for the empty-query state and stopped non-empty searches at a fixed result limit. It also only checked the first user message for message-text matches, so later prompts in an old thread could not surface it.
+
+**Fix:** Extracted the thread search logic into a testable helper, removed the recent/result caps so the dialog searches and lists every loaded thread (including archived threads), sorted results by latest activity, and matched the first user message that contains the query instead of only the first user message overall. Added regression coverage for >100 empty-query results, matches beyond the old cap, and later-message matches.
+
+**Affected files:**
+- `apps/web/src/components/ThreadSearchDialog.tsx`
+- `apps/web/src/components/ThreadSearchDialog.logic.ts`
+- `apps/web/src/components/ThreadSearchDialog.logic.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-23 — Fixed scrambled pi auto-titles and added Codex title fallback
 
 **Problem:** Auto-generated thread titles were often scrambled for pi threads after editing the first prompt, and title generation failed outright when `claude -p` was unavailable or unusable (for example due to missing subscription/access).

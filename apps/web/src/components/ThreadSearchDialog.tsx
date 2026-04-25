@@ -9,124 +9,30 @@ import {
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ArchiveIcon, GitBranchIcon, SearchIcon } from "lucide-react";
-import type { ProjectId, ThreadId } from "@clui/contracts";
+import type { ThreadId } from "@clui/contracts";
 import { useStore } from "../store";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { formatRelativeTime, threadStatusPill } from "../lib/threadStatus";
-import type { Thread, Project } from "../types";
+import { groupByProject, searchThreads, type SearchResult } from "./ThreadSearchDialog.logic";
 import { CommandDialog, CommandDialogPopup } from "./ui/command";
-
-const MAX_RESULTS = 50;
-const RECENT_LIMIT = 20;
 
 // ── Highlight matching text ──────────────────────────────────────────
 
 function highlightMatch(text: string, query: string): ReactNode {
-  if (!query) return text;
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return text;
   const lower = text.toLowerCase();
-  const idx = lower.indexOf(query.toLowerCase());
+  const idx = lower.indexOf(normalizedQuery.toLowerCase());
   if (idx === -1) return text;
   return (
     <>
       {text.slice(0, idx)}
       <mark className="rounded-sm bg-yellow-200/40 text-inherit dark:bg-yellow-400/20">
-        {text.slice(idx, idx + query.length)}
+        {text.slice(idx, idx + normalizedQuery.length)}
       </mark>
-      {text.slice(idx + query.length)}
+      {text.slice(idx + normalizedQuery.length)}
     </>
   );
-}
-
-// ── Search logic ─────────────────────────────────────────────────────
-
-interface SearchResult {
-  thread: Thread;
-  matchField: "title" | "branch" | "project" | "message" | null;
-  matchSnippet: string | null;
-}
-
-function searchThreads(
-  threads: readonly Thread[],
-  projects: readonly Project[],
-  query: string,
-): SearchResult[] {
-  if (!query.trim()) {
-    const sorted = [...threads].toSorted(
-      (a, b) =>
-        Math.max(new Date(b.updatedAt).getTime(), new Date(b.createdAt).getTime()) -
-        Math.max(new Date(a.updatedAt).getTime(), new Date(a.createdAt).getTime()),
-    );
-    return sorted.slice(0, RECENT_LIMIT).map((thread) => ({
-      thread,
-      matchField: null,
-      matchSnippet: null,
-    }));
-  }
-
-  const q = query.toLowerCase();
-  const projectNameById = new Map<ProjectId, string>(projects.map((p) => [p.id, p.name]));
-  const results: SearchResult[] = [];
-
-  for (const thread of threads) {
-    if (results.length >= MAX_RESULTS) break;
-
-    if (thread.title.toLowerCase().includes(q)) {
-      results.push({ thread, matchField: "title", matchSnippet: null });
-      continue;
-    }
-
-    if (thread.branch?.toLowerCase().includes(q)) {
-      results.push({ thread, matchField: "branch", matchSnippet: null });
-      continue;
-    }
-
-    const projectName = projectNameById.get(thread.projectId);
-    if (projectName?.toLowerCase().includes(q)) {
-      results.push({ thread, matchField: "project", matchSnippet: null });
-      continue;
-    }
-
-    const firstUserMessage = thread.messages.find((m) => m.role === "user");
-    if (firstUserMessage?.text.toLowerCase().includes(q)) {
-      const lowerText = firstUserMessage.text.toLowerCase();
-      const matchIdx = lowerText.indexOf(q);
-      const start = Math.max(0, matchIdx - 30);
-      const end = Math.min(firstUserMessage.text.length, matchIdx + q.length + 60);
-      const snippet =
-        (start > 0 ? "..." : "") +
-        firstUserMessage.text.slice(start, end).trim() +
-        (end < firstUserMessage.text.length ? "..." : "");
-      results.push({ thread, matchField: "message", matchSnippet: snippet });
-      continue;
-    }
-  }
-
-  return results;
-}
-
-// ── Flatten grouped results for keyboard navigation ──────────────────
-
-interface GroupedResults {
-  project: Project;
-  results: SearchResult[];
-}
-
-function groupByProject(results: SearchResult[], projects: readonly Project[]): GroupedResults[] {
-  const projectById = new Map(projects.map((p) => [p.id, p]));
-  const groups = new Map<ProjectId, GroupedResults>();
-
-  for (const result of results) {
-    const project = projectById.get(result.thread.projectId);
-    if (!project) continue;
-    const existing = groups.get(project.id);
-    if (existing) {
-      existing.results.push(result);
-    } else {
-      groups.set(project.id, { project, results: [result] });
-    }
-  }
-
-  return [...groups.values()];
 }
 
 // ── Result item ──────────────────────────────────────────────────────
