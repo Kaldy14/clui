@@ -49,14 +49,8 @@ import {
   ClaudeSessionManager,
   type ClaudeSessionManagerShape,
 } from "./terminal/Services/ClaudeSession.ts";
-import {
-  PiSessionManager,
-  type PiSessionManagerShape,
-} from "./terminal/Services/PiSession.ts";
-import {
-  MacosSleepPreventer,
-  type MacosSleepPreventerShape,
-} from "./macosSleepPreventer";
+import { PiSessionManager, type PiSessionManagerShape } from "./terminal/Services/PiSession.ts";
+import { MacosSleepPreventer, type MacosSleepPreventerShape } from "./macosSleepPreventer";
 
 interface PendingMessages {
   queue: unknown[];
@@ -64,7 +58,6 @@ interface PendingMessages {
 }
 
 const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
-
 
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
@@ -321,11 +314,7 @@ async function sendRequest(
 }
 
 /** Send a fire-and-forget message (no response expected from server). */
-function sendFireAndForget(
-  ws: WebSocket,
-  method: string,
-  params?: unknown,
-): void {
+function sendFireAndForget(ws: WebSocket, method: string, params?: unknown): void {
   const id = crypto.randomUUID();
   const body =
     params && typeof params === "object" && !Array.isArray(params)
@@ -481,10 +470,7 @@ describe("WebSocket Server", () => {
       options.piSessionManager
         ? Layer.succeed(PiSessionManager, options.piSessionManager)
         : Layer.empty,
-      Layer.succeed(
-        MacosSleepPreventer,
-        options.macosSleepPreventer ?? defaultMacosSleepPreventer,
-      ),
+      Layer.succeed(MacosSleepPreventer, options.macosSleepPreventer ?? defaultMacosSleepPreventer),
     );
 
     const runtimeLayer = Layer.merge(
@@ -809,8 +795,7 @@ describe("WebSocket Server", () => {
       availableEditors: expect.any(Array),
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress:
-          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -840,8 +825,7 @@ describe("WebSocket Server", () => {
       availableEditors: expect.any(Array),
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress:
-          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -881,8 +865,7 @@ describe("WebSocket Server", () => {
       availableEditors: expect.any(Array),
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress:
-          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -944,8 +927,7 @@ describe("WebSocket Server", () => {
     expect(result.providers).toEqual([]);
     expect(result.settings).toEqual({
       maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-      preventMacosSleepWhenThreadInProgress:
-        DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
     });
     expectAvailableEditors(result.availableEditors);
   });
@@ -1018,14 +1000,11 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       maxActiveHarnessSessions: 7,
-      preventMacosSleepWhenThreadInProgress:
-        DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
     });
     expect(claudeCaps).toEqual([7]);
     expect(piCaps).toEqual([7]);
-    expect(sleepPreventionEnabled).toEqual([
-      DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
-    ]);
+    expect(sleepPreventionEnabled).toEqual([DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS]);
     expect(
       JSON.parse(fs.readFileSync(getServerSettingsPath(stateDir), "utf8")) as {
         maxActiveHarnessSessions: number;
@@ -1033,8 +1012,7 @@ describe("WebSocket Server", () => {
       },
     ).toEqual({
       maxActiveHarnessSessions: 7,
-      preventMacosSleepWhenThreadInProgress:
-        DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
     });
   });
 
@@ -1138,8 +1116,7 @@ describe("WebSocket Server", () => {
       availableEditors: expect.any(Array),
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress:
-          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -1191,8 +1168,7 @@ describe("WebSocket Server", () => {
       availableEditors: expect.any(Array),
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress:
-          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       },
     });
     expectAvailableEditors(
@@ -1921,7 +1897,12 @@ describe("WebSocket Server", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]!.method).toBe("getScrollback");
       expect(calls[0]!.args[0]).toBe("thread-1");
-      expect(response.result).toEqual({ threadId: "thread-1", scrollback: "scrollback-data", offset: 42, reset: false });
+      expect(response.result).toEqual({
+        threadId: "thread-1",
+        scrollback: "scrollback-data",
+        offset: 42,
+        reset: false,
+      });
     });
 
     it("claude.write calls writeToSession with correct data", async () => {

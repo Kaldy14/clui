@@ -8,7 +8,7 @@
  */
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
-import type { ChatAttachment } from "@clui/contracts";
+import type { ChatAttachment, CodingHarness } from "@clui/contracts";
 
 import type { TextGenerationError } from "../Errors.ts";
 
@@ -17,6 +17,8 @@ export interface CommitMessageGenerationInput {
   branch: string | null;
   stagedSummary: string;
   stagedPatch: string;
+  /** Coding harness whose text generator should be used for this operation. */
+  harness?: CodingHarness;
   /** When true, the model also returns a semantic branch name for the change. */
   includeBranch?: boolean;
 }
@@ -35,6 +37,8 @@ export interface PrContentGenerationInput {
   commitSummary: string;
   diffSummary: string;
   diffPatch: string;
+  /** Coding harness whose text generator should be used for this operation. */
+  harness?: CodingHarness;
 }
 
 export interface PrContentGenerationResult {
@@ -45,6 +49,8 @@ export interface PrContentGenerationResult {
 export interface BranchNameGenerationInput {
   cwd: string;
   message: string;
+  /** Coding harness whose text generator should be used for this operation. */
+  harness?: CodingHarness;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 

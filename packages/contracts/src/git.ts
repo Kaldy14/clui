@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
+import { CodingHarness } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
@@ -62,6 +63,7 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   featureBranchName: Schema.optional(TrimmedNonEmptyStringSchema),
+  harness: Schema.optional(CodingHarness),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 

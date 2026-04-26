@@ -13,6 +13,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a server setting, defaulting to enabled, that starts a `caffeinate -dims` process while at least one thread is actively working and stops it when all working threads complete, hibernate, exit, error, or wait for input. The setting is persisted in server settings, exposed in Settings, applied live, and covered by server/runtime tests.
 
 **Affected files:**
+
 - `packages/contracts/src/server.ts`
 - `apps/server/src/serverSettings.ts`
 - `apps/server/src/macosSleepPreventer.ts`
@@ -21,6 +22,29 @@ Session-by-session log of changes, fixes, and decisions made during development.
 - `apps/server/src/wsServer.ts`
 - `apps/server/src/wsServer.test.ts`
 - `apps/web/src/routes/_chat.settings.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-04-26 — Git commit text generation follows the active coding harness
+
+**Problem:** Git actions still generated automatic commit and pull request text through the Claude CLI even when a thread used pi as its coding harness.
+
+**Root cause:** The Git text-generation service was globally wired to `ClaudeCliTextGenerationLive`, and the web Git action request did not include the active thread harness, so the server had no way to route generation to pi.
+
+**Fix:** Added optional harness metadata to stacked Git action requests and text-generation inputs, passed the active thread harness from the toolbar, introduced a pi CLI print-mode text generator for commit/PR/branch JSON output, and routed harness-aware Git text generation to pi or Claude accordingly without touching the active terminal session.
+
+**Affected files:**
+- `packages/contracts/src/git.ts`
+- `apps/web/src/components/GitActionsControl.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/lib/gitReactQuery.ts`
+- `apps/server/src/git/Services/TextGeneration.ts`
+- `apps/server/src/git/Layers/GitManager.ts`
+- `apps/server/src/git/Layers/ClaudeCliTextGeneration.ts`
+- `apps/server/src/git/Layers/PiCliTextGeneration.ts`
+- `apps/server/src/git/Layers/HarnessTextGeneration.ts`
+- `apps/server/src/serverLayers.ts`
 - `docs/CHANGELOG-DEV.md`
 
 ---
@@ -34,6 +58,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped the release package versions to `0.0.22`, refreshed `bun.lock`, built the macOS arm64 desktop artifacts via `bun run dist:desktop:dmg:arm64`, and revalidated the workspace with `bun lint` and `bun typecheck`.
 
 **Affected files:**
+
 - `apps/server/package.json`
 - `apps/desktop/package.json`
 - `apps/web/package.json`
@@ -56,6 +81,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Made the title slot a flex container, forced both the read-only button and edit input to span the full available width, and replaced ellipsis truncation with a masked end fade for the visible title text.
 
 **Affected files:**
+
 - `apps/web/src/components/TerminalToolbar.tsx`
 - `apps/web/src/index.css`
 - `docs/CHANGELOG-DEV.md`
@@ -71,6 +97,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a UI-local terminal completion marker that is recorded when hook status becomes `completed`, shared the unseen-completion calculation between sidebar/status helpers, and taught “Mark unread” to use that marker when no orchestration turn completion exists.
 
 **Affected files:**
+
 - `apps/web/src/lib/threadUnread.ts`
 - `apps/web/src/store.ts`
 - `apps/web/src/types.ts`
@@ -92,6 +119,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Extracted the rename-start setup into a shared helper, reused it from the context menu, and wired the sidebar thread title span to enter inline edit mode on double click.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -106,6 +134,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Extended Clui’s injected Pi runtime sync extension to report lifecycle hook statuses through the existing sidecar file, including `needsInput` for known user-input tools (`questionnaire`, `question`, and ask-style tools), `working` when they resolve, and `completed` on `agent_end`. The server now parses hook status updates independently of session-file changes, and the web client refreshes dock badges after Pi attention-status updates.
 
 **Affected files:**
+
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
 - `apps/web/src/routes/__root.tsx`
@@ -122,6 +151,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Extracted the thread search logic into a testable helper, removed the recent/result caps so the dialog searches and lists every loaded thread (including archived threads), sorted results by latest activity, and matched the first user message that contains the query instead of only the first user message overall. Added regression coverage for >100 empty-query results, matches beyond the old cap, and later-message matches.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadSearchDialog.tsx`
 - `apps/web/src/components/ThreadSearchDialog.logic.ts`
 - `apps/web/src/components/ThreadSearchDialog.logic.test.ts`
@@ -138,6 +168,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Replaced the pi prompt-title extraction with a small terminal line-editor replayer that reconstructs the final edited first line before auto-titling, including common cursor movement and deletion controls plus bracketed-paste wrappers. Added shared Codex-backed thread-title generation, wired the Codex backend to support thread titles directly, and made the Claude-backed title generator fall back to Codex when Claude title generation fails before finally letting the existing raw-prompt fallback apply.
 
 **Affected files:**
+
 - `apps/server/src/piWritePromptBuffer.ts`
 - `apps/server/src/piWritePromptBuffer.test.ts`
 - `apps/server/src/git/threadTitleGeneration.ts`
@@ -157,6 +188,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Raised the shared terminal count cap to 10 so both thread terminals and project terminal tabs can open more sessions before the UI blocks new tabs.
 
 **Affected files:**
+
 - `apps/web/src/types.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -171,6 +203,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Reworked the project terminal drawer header into a tab strip with an inline add button, wired it to the existing shared terminal state store so project terminals can create/switch/close tabs, rendered the active terminal tab by id, and updated project-script launches to target the currently active project terminal tab. Added store coverage to verify project drawer switching preserves per-project tab state.
 
 **Affected files:**
+
 - `apps/web/src/components/ProjectTerminalDrawer.tsx`
 - `apps/web/src/components/TerminalToolbar.tsx`
 - `apps/web/src/terminalStateStore.test.ts`
@@ -187,6 +220,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Split the route logic into separate effects, kept plain navigation visit-marking independent, and added a small deduping helper so a viewed completion is only marked once per completion signal while duplicate `completed` hook events are still cleared safely. Added focused regression coverage for the new completion-visit helper.
 
 **Affected files:**
+
 - `apps/web/src/routes/_chat.$threadId.tsx`
 - `apps/web/src/lib/threadVisit.ts`
 - `apps/web/src/lib/threadVisit.test.ts`
@@ -203,6 +237,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Re-ran the Apple Silicon desktop packaging flow with `bun run dist:desktop:dmg:arm64` against the current `0.0.21` workspace version and revalidated the workspace with `bun lint` and `bun typecheck`.
 
 **Affected files:**
+
 - `release/Clui-0.0.21-arm64.dmg`
 - `release/Clui-0.0.21-arm64.zip`
 - `release/Clui-0.0.21-arm64.dmg.blockmap`
@@ -221,6 +256,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a persisted project `hiddenAt` flag through the orchestration/contracts, projection pipeline, snapshot query, and SQLite projection storage; added a new projection migration for `projection_projects.hidden_at`; taught the sidebar project context menu to hide projects; filtered hidden projects and their threads out of the synced UI store; and updated “Add project” so re-adding an existing hidden workspace clears `hiddenAt` and unhides the project instead of creating a duplicate.
 
 **Affected files:**
+
 - `packages/contracts/src/orchestration.ts`
 - `apps/server/src/orchestration/decider.ts`
 - `apps/server/src/orchestration/projector.ts`
@@ -250,6 +286,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Extracted a shared `createThreadAndNavigate()` helper that waits for the server's `thread.create` acknowledgement before exposing the new thread locally or navigating to it, and surfaced initial thread-creation failures during project add instead of swallowing them. Added regression coverage for the new ordering/failure behavior, and updated stale test fixtures to include the required `hiddenAt` project field so `bun typecheck` stays green.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/components/Sidebar.logic.ts`
 - `apps/web/src/components/Sidebar.logic.test.ts`
@@ -270,6 +307,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped the release package versions to `0.0.21`, refreshed `bun.lock`, built the macOS arm64 desktop artifacts via `bun run dist:desktop:dmg:arm64`, and revalidated the workspace with `bun lint` and `bun typecheck`.
 
 **Affected files:**
+
 - `apps/desktop/package.json`
 - `apps/server/package.json`
 - `apps/web/package.json`
@@ -293,6 +331,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a shared ordered-thread helper, changed current-thread archiving to navigate away before session hibernation/terminal teardown, and updated archived-thread fallback navigation to choose the top unarchived thread from the same project or `/` when none exists.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/lib/threadOrdering.ts`
 - `apps/web/src/lib/threadOrdering.test.ts`
@@ -309,6 +348,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Re-ran the Apple Silicon desktop packaging flow with `bun run dist:desktop:dmg:arm64` and revalidated the workspace with `bun lint` and `bun typecheck`.
 
 **Affected files:**
+
 - `docs/CHANGELOG-DEV.md`
 - `release/Clui-0.0.20-arm64.dmg`
 - `release/Clui-0.0.20-arm64.zip`
@@ -327,6 +367,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Removed the extra inner padding around the thread/project drawer terminal viewports and added a shared terminal-surface theme sync helper so the host DOM background stays aligned with the xterm theme across cached terminals and drawer terminals.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalDrawer.tsx`
 - `apps/web/src/components/ProjectTerminalDrawer.tsx`
 - `apps/web/src/lib/claudeTerminalCache.ts`
@@ -344,6 +385,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped the release package versions to `0.0.20`, refreshed `bun.lock`, and built the macOS Apple Silicon desktop artifacts via `bun run dist:desktop:dmg:arm64`.
 
 **Affected files:**
+
 - `apps/desktop/package.json`
 - `apps/server/package.json`
 - `apps/web/package.json`
@@ -362,6 +404,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Changed saved prompt submission to strip trailing line-ending noise and append `\r`, matching real terminal Enter behavior so prompt clicks submit the active prompt and let the harness start responding.
 
 **Affected files:**
+
 - `apps/web/src/lib/threadInput.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -376,6 +419,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added project-scoped saved prompts with create/edit/delete UI in the thread toolbar, persisted them through orchestration project metadata and projection storage, and wired prompt execution to submit the saved prompt directly into the active thread session. Also routed voice input through the harness-aware prompt submission helper so prompt-like submissions consistently target the current thread harness.
 
 **Affected files:**
+
 - `packages/contracts/src/orchestration.ts`
 - `apps/server/src/orchestration/decider.ts`
 - `apps/server/src/orchestration/projector.ts`
@@ -405,6 +449,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a new persisted `stickyPiInputMirror` app setting, defaulting to `true`, and exposed it as a boolean toggle in the Terminal section of Settings. The terminal mirror logic now fully respects that setting, and the terminal reset button also restores it to the default enabled state.
 
 **Affected files:**
+
 - `apps/web/src/appSettings.ts`
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/routes/_chat.settings.tsx`
@@ -421,6 +466,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added wheel forwarding on the sticky pi input mirror that converts wheel deltas into xterm `scrollLines()` calls, including fractional accumulation for trackpad-sized deltas. Scrolling over the mirrored input area now scrolls the real terminal instead of acting like a dead zone.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -435,6 +481,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Expanded the sticky mirror detection window so it tolerates substantially taller multi-line pi drafts and more blank-line-heavy prompts without dropping the mirrored block.
 
 **Affected files:**
+
 - `apps/web/src/lib/piStickyInputMirror.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -449,6 +496,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Split the sticky mirror click behavior from the new-output jump action. Clicking the sticky pi input mirror now only focuses the real xterm terminal and preserves the current scroll position.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -463,6 +511,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Reworked the mirror extractor to read xterm buffer cells directly via `getCell()`, group adjacent cells into style runs, resolve palette/truecolor foreground and background colors against the active terminal theme, and render the sticky overlay as styled spans. The overlay now preserves terminal colors much more faithfully while still using the same divider-based editor block detection.
 
 **Affected files:**
+
 - `apps/web/src/lib/piStickyInputMirror.ts`
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `docs/CHANGELOG-DEV.md`
@@ -478,6 +527,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a 3-line scroll threshold before showing the sticky pi input mirror. Small scroll nudges near the bottom now keep the terminal uncluttered, while deeper scrollback still activates the sticky mirrored input block.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -492,6 +542,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Restyled the sticky pi input mirror to render flush over the terminal with no labels, padding, borders, rounding, shadows, or scrollbars. The overlay now uses the configured terminal font settings plus the current terminal foreground/background colors so it visually reads as a sticky terminal slice instead of a separate widget.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -506,6 +557,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a client-side pi sticky-input mirror that inspects the bottom xterm buffer page, detects the pi editor block via the horizontal-rule delimiters rendered by pi's TUI, and shows that block as a sticky overlay whenever the user scrolls away from the bottom. The overlay stays read-only, updates as terminal output changes, and clicking it jumps back to the live terminal input. Added focused extraction tests for the divider-based parser.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/lib/piStickyInputMirror.ts`
 - `apps/web/src/lib/piStickyInputMirror.test.ts`
@@ -522,6 +574,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Stopped overriding `PI_CODING_AGENT_DIR` when spawning pi from Clui. Clui now keeps using its explicit `--session-dir` plus runtime extension/sidecar for thread session tracking, while pi continues to resolve global config from the user's normal environment (including any user-defined `PI_CODING_AGENT_DIR`, or `~/.pi/agent` by default). Added regression coverage to ensure Clui no longer stomps a pre-existing `PI_CODING_AGENT_DIR` value.
 
 **Affected files:**
+
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -537,6 +590,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Marked first-run pi thread launches as `fresh` in the web terminal start path, and removed the server-side implicit `pi -c` fallback so Clui only resumes pi when a thread is explicitly tied to a `piSessionFile` (or a legacy thread session is migrated). Added a regression test covering the single-existing-session case so brand new pi threads stay isolated.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
@@ -553,6 +607,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Made `ThreadTerminalStatusChanged` command and event payload decoding backward-compatible by defaulting missing `claudeSessionId`, `piSessionFile`, and `scrollbackSnapshot` fields to `null`. Added regression coverage in both contracts decoding tests and the server orchestration event store replay tests for legacy rows missing `piSessionFile`.
 
 **Affected files:**
+
 - `packages/contracts/src/orchestration.ts`
 - `packages/contracts/src/orchestration.test.ts`
 - `apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts`
@@ -569,6 +624,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added persisted server settings with a new `maxActiveHarnessSessions` cap, exposed it through `server.getConfig` plus a new `server.updateSettings` RPC, and taught both Claude and pi session managers to load the saved cap at startup and apply live changes immediately via `setMaxActiveSessions()`. Added a Settings page control for editing the per-harness cap and updated server tests to cover reading and writing the new setting.
 
 **Affected files:**
+
 - `packages/contracts/src/server.ts`
 - `packages/contracts/src/ws.ts`
 - `packages/contracts/src/ipc.ts`
@@ -594,6 +650,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Reworked the Node SQLite client to infer row-producing statements without relying on `statement.columns()`, while still supporting `SELECT`, `PRAGMA`, and `RETURNING` queries on Node/Electron runtimes. Also registered migration `024_ProjectionThreadsPiSessionFile` so existing databases are upgraded before thread snapshot queries touch `pi_session_file`. Verified by starting the backend with a fresh temp `CLUI_STATE_DIR` and by running `bun lint`, `bun typecheck`, and `bun run build`.
 
 **Affected files:**
+
 - `apps/server/src/persistence/NodeSqliteClient.ts`
 - `apps/server/src/persistence/Migrations.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -609,6 +666,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped the release package versions to `0.0.19`, refreshed `bun.lock`, switched the server build and root release/build helper scripts from `node` to `bun`, updated related script usage/help text and release docs, and verified the repo with `bun lint`, `bun typecheck`, and `bun run build`.
 
 **Affected files:**
+
 - `apps/desktop/package.json`
 - `apps/server/package.json`
 - `apps/web/package.json`
@@ -631,6 +689,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Moved Clui's pi integration to a pi-compatible shared agent store under `${stateDir}/pi-agent`, with per-cwd session dirs matching pi's own naming scheme and `PI_CODING_AGENT_DIR` injected into the spawned pi process so native `/resume` and `/resume all` discover Clui-managed sessions. Added persisted `piSessionFile` thread metadata end-to-end (contracts, projections, web store/types, terminal status dispatch) so each thread reopens its exact selected pi session via `pi --session <file>`. Added a tiny runtime pi extension plus a thread-scoped sidecar watcher so Clui learns session switches immediately when the user runs `/resume`, `/new`, `/fork`, or import inside pi, and refactored the pi JSONL hook watcher to follow the active session file rather than whichever file in a shared directory was newest. Added legacy migration from the old `${stateDir}/pi-sessions/<threadId>` layout into the new shared per-cwd store, plus focused runtime/watcher tests.
 
 **Affected files:**
+
 - `packages/contracts/src/orchestration.ts`
 - `packages/contracts/src/pi-terminal.ts`
 - `apps/server/src/terminal/Services/PiSession.ts`
@@ -667,6 +726,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Narrowed the active terminal transport helpers to depend only on the thread harness + thread id, then changed the active terminal effect to reinitialize only when that transport identity changes. Sidebar badge updates now re-render without detaching the focused terminal. The dormant scrollback bootstrap path was narrowed the same way so it also avoids unnecessary terminal resets on unrelated thread-object changes. To keep repo validation green against the already-introduced `piSessionFile` contract, I also filled in the missing server/web fixture fields and completed the missing `piSessionFile` plumbing in the pi session manager + WebSocket terminal-status dispatch path.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/store.test.ts`
 - `apps/web/src/worktreeCleanup.test.ts`
@@ -688,6 +748,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Kept the thread drag handle absolutely positioned outside the visible row, reserved the matching gutter on the sortable item container instead of inside the row itself, and hid the in-list content for the actively dragged thread while preserving its layout space. That keeps the old visual layout/content width, makes the handle lane part of every row's hit area even when the grip icon is hidden, and leaves behind only an empty landing gap instead of a second visible copy of the row. The grip still only appears on hover/focus, and the drag overlay mirrors the same absolute-gutter structure.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -702,6 +763,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added persisted `archivedAt` thread metadata end-to-end (contracts, projector/read model, SQLite projection + migration, web thread types/store), added an archive/unarchive action to the sidebar thread context menu, added a sidebar header toggle to show/hide archived threads, and kept archived threads in the global search dialog with an explicit archived badge. Archiving now best-effort stops the orchestration session, hibernates the Claude/pi harness, closes auxiliary thread terminals, disposes client terminal state, and then persists the archived state. When archived threads are hidden, the sidebar automatically navigates away from an archived route to the next unarchived thread (or home). Follow-up fixes: archived state now gets the same client-side race protection/eager patching as other optimistic thread metadata so stale snapshot syncs can no longer “unarchive” rows when you click into recently archived threads; multi-select context menus now support archive/unarchive; archived-thread selection no longer clears archive selection state as a workaround; selecting an archived thread now explicitly cancels any queued throttled snapshot sync and drops deferred sync for that thread so it stays on the local paused snapshot view; non-meta/non-delete thread events for archived threads are suppressed from the current-thread/deferred snapshot path; only explicit unarchive transitions trigger the extra snapshot sync path; archived dormant threads no longer auto-resume on mount, so opening one preserves the paused view with the Resume action; and the new `023_ProjectionThreadsArchivedAt` migration is now actually registered in `apps/server/src/persistence/Migrations.ts` so dev/server startup applies the schema change instead of crashing with `no such column: archived_at`.
 
 **Affected files:**
+
 - `packages/contracts/src/orchestration.ts`
 - `apps/server/src/orchestration/decider.ts`
 - `apps/server/src/orchestration/projector.ts`
@@ -728,6 +790,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Switched the drag overlay thread row to the same sidebar sub-button structure/classes so the top/bottom spacing matches the real row, and removed the sortable hover ring styling so drag-and-drop no longer paints a blue border on rows/projects.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -742,6 +805,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Reworked the thread drag UI so the drag overlay preserves the original row width/height and mirrors the sidebar row layout closely, while moving the reorder grip to an absolutely positioned left gutter so it no longer shrinks the thread row content area. Also updated thread-related test fixtures that now require `archivedAt` so `bun typecheck` stays green.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/store.test.ts`
 - `apps/web/src/worktreeCleanup.test.ts`
@@ -761,6 +825,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Switched the root `dev`, `dev:server`, `dev:web`, and `dev:desktop` scripts to `bun scripts/dev-runner.ts ...` so local dev starts correctly again.
 
 **Affected files:**
+
 - `package.json`
 - `docs/CHANGELOG-DEV.md`
 

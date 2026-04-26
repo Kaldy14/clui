@@ -70,12 +70,18 @@ function TerminalStatusBadge({ thread }: { thread: Thread }) {
           : "bg-zinc-500/8 dark:bg-zinc-400/8";
 
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-px text-[10px] font-medium tracking-wide uppercase ${pill.colorClass} ${bgClass}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-px text-[10px] font-medium tracking-wide uppercase ${pill.colorClass} ${bgClass}`}
+    >
       <span className={pill.pulse ? "relative flex size-1.5" : undefined}>
         {pill.pulse && (
-          <span className={`absolute inline-flex size-full animate-ping rounded-full ${pill.dotClass} opacity-50`} />
+          <span
+            className={`absolute inline-flex size-full animate-ping rounded-full ${pill.dotClass} opacity-50`}
+          />
         )}
-        <span className={`${pill.pulse ? "relative inline-flex" : ""} size-1.5 rounded-full ${pill.dotClass}`} />
+        <span
+          className={`${pill.pulse ? "relative inline-flex" : ""} size-1.5 rounded-full ${pill.dotClass}`}
+        />
       </span>
       {pill.label}
     </span>
@@ -84,13 +90,7 @@ function TerminalStatusBadge({ thread }: { thread: Thread }) {
 
 // ── Editable Title ────────────────────────────────────────────────────
 
-function EditableTitle({
-  threadId,
-  title,
-}: {
-  threadId: ThreadId;
-  title: string;
-}) {
+function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -145,7 +145,9 @@ function EditableTitle({
       className="min-w-0 w-full rounded-sm px-1 text-left text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
       title="Click to rename"
     >
-      <span className="thread-title-fade block min-w-0 overflow-hidden whitespace-nowrap">{title}</span>
+      <span className="thread-title-fade block min-w-0 overflow-hidden whitespace-nowrap">
+        {title}
+      </span>
     </button>
   );
 }
@@ -173,7 +175,10 @@ const OpenInEditorPicker = memo(function OpenInEditorPicker({
   openInCwd: string | null;
 }) {
   const { data: serverConfig } = useQuery(serverConfigQueryOptions());
-  const availableEditors = useMemo(() => serverConfig?.availableEditors ?? [], [serverConfig?.availableEditors]);
+  const availableEditors = useMemo(
+    () => serverConfig?.availableEditors ?? [],
+    [serverConfig?.availableEditors],
+  );
   const keybindings = useMemo(() => serverConfig?.keybindings ?? [], [serverConfig?.keybindings]);
 
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
@@ -247,13 +252,7 @@ const OpenInEditorPicker = memo(function OpenInEditorPicker({
       <GroupSeparator />
       <Menu>
         <MenuTrigger
-          render={
-            <Button
-              aria-label="Editor options"
-              size="icon-xs"
-              variant="outline"
-            />
-          }
+          render={<Button aria-label="Editor options" size="icon-xs" variant="outline" />}
         >
           <ChevronDownIcon aria-hidden="true" className="size-3" />
         </MenuTrigger>
@@ -301,7 +300,9 @@ export function runProjectScriptInTerminal(
     terminalStore.setProjectTerminalOpen(syntheticId, true);
     void api.terminal
       .open({ threadId: syntheticId, terminalId, cwd, env })
-      .then(() => api.terminal.write({ threadId: syntheticId, terminalId, data: `${script.command}\r` }))
+      .then(() =>
+        api.terminal.write({ threadId: syntheticId, terminalId, data: `${script.command}\r` }),
+      )
       .catch(() => {
         // Terminal may already be open — try writing directly
         void api.terminal.write({ threadId: syntheticId, terminalId, data: `${script.command}\r` });
@@ -333,9 +334,7 @@ export default function TerminalToolbar({
   diffOpen: boolean;
 }) {
   const thread = useStore((s) => s.threads.find((t) => t.id === threadId));
-  const project = useStore((s) =>
-    s.projects.find((p) => p.id === thread?.projectId),
-  );
+  const project = useStore((s) => s.projects.find((p) => p.id === thread?.projectId));
   const gitCwd = thread?.worktreePath ?? project?.cwd ?? null;
   const navigate = useNavigate();
   const isGitRepo = gitCwd !== null;
@@ -394,7 +393,8 @@ export default function TerminalToolbar({
         toastManager.add({
           type: "error",
           title: "Failed to send prompt",
-          description: error instanceof Error ? error.message : "The prompt could not be submitted.",
+          description:
+            error instanceof Error ? error.message : "The prompt could not be submitted.",
         });
       }
     },
@@ -527,33 +527,36 @@ export default function TerminalToolbar({
   }, [navigate, threadId, diffOpen]);
 
   // ── YOLO mode ──
-  const yoloMode = useTerminalStateStore((s) =>
-    selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  const yoloMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
   );
   const setYoloMode = useTerminalStateStore((s) => s.setYoloMode);
 
-  const handleYoloToggle = useCallback(async (enable: boolean) => {
-    const api = readNativeApi();
-    if (!api || !thread || thread.harness !== "claudeCode") return;
-    const cwd = thread.worktreePath ?? project?.cwd ?? "";
-    if (!cwd) return;
-    setYoloMode(threadId, enable);
-    const cached = claudeCache.get(threadId);
-    const cols = cached?.terminal.cols ?? 120;
-    const rows = cached?.terminal.rows ?? 40;
-    try {
-      await api.claude.start({
-        threadId,
-        cwd,
-        cols,
-        rows,
-        resumeSessionId: thread.claudeSessionId ?? undefined,
-        ...(enable ? { dangerouslySkipPermissions: true } : {}),
-      });
-    } catch {
-      setYoloMode(threadId, !enable);
-    }
-  }, [threadId, thread, project, setYoloMode]);
+  const handleYoloToggle = useCallback(
+    async (enable: boolean) => {
+      const api = readNativeApi();
+      if (!api || !thread || thread.harness !== "claudeCode") return;
+      const cwd = thread.worktreePath ?? project?.cwd ?? "";
+      if (!cwd) return;
+      setYoloMode(threadId, enable);
+      const cached = claudeCache.get(threadId);
+      const cols = cached?.terminal.cols ?? 120;
+      const rows = cached?.terminal.rows ?? 40;
+      try {
+        await api.claude.start({
+          threadId,
+          cwd,
+          cols,
+          rows,
+          resumeSessionId: thread.claudeSessionId ?? undefined,
+          ...(enable ? { dangerouslySkipPermissions: true } : {}),
+        });
+      } catch {
+        setYoloMode(threadId, !enable);
+      }
+    },
+    [threadId, thread, project, setYoloMode],
+  );
 
   const handleResume = useCallback(async () => {
     const api = readNativeApi();
@@ -594,7 +597,9 @@ export default function TerminalToolbar({
 
   return (
     <TooltipProvider>
-      <div className={`flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-card/60 px-2 backdrop-blur-sm dark:border-border/25 dark:bg-card/40${isElectron ? " drag-region" : ""}`}>
+      <div
+        className={`flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-card/60 px-2 backdrop-blur-sm dark:border-border/25 dark:bg-card/40${isElectron ? " drag-region" : ""}`}
+      >
         {/* Title */}
         <div className="flex min-w-0 flex-1">
           <EditableTitle threadId={threadId} title={thread.title} />
@@ -644,7 +649,11 @@ export default function TerminalToolbar({
         <OpenInEditorPicker openInCwd={gitCwd} />
 
         {/* Git actions */}
-        <GitActionsControl gitCwd={gitCwd} activeThreadId={threadId} />
+        <GitActionsControl
+          gitCwd={gitCwd}
+          activeThreadId={threadId}
+          activeHarness={thread.harness}
+        />
 
         {/* Diff toggle */}
         {isGitRepo && (
@@ -675,140 +684,140 @@ export default function TerminalToolbar({
         {/* YOLO mode toggle */}
         {thread.harness === "claudeCode" ? (
           <>
-        <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
-        <Popover>
-          <Tooltip>
-            <PopoverTrigger
-              render={
-                <TooltipTrigger
+            <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
+            <Popover>
+              <Tooltip>
+                <PopoverTrigger
                   render={
-                    <Button
-                      size="xs"
-                      variant={yoloMode ? "default" : "ghost"}
-                      aria-label="YOLO mode"
-                      className={
-                        yoloMode
-                          ? "size-6 rounded-md p-0 bg-red-500/15 text-red-500 hover:bg-red-500/25 dark:bg-red-500/20 dark:text-red-400 dark:hover:bg-red-500/30"
-                          : "size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="xs"
+                          variant={yoloMode ? "default" : "ghost"}
+                          aria-label="YOLO mode"
+                          className={
+                            yoloMode
+                              ? "size-6 rounded-md p-0 bg-red-500/15 text-red-500 hover:bg-red-500/25 dark:bg-red-500/20 dark:text-red-400 dark:hover:bg-red-500/30"
+                              : "size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
+                          }
+                        />
                       }
                     />
                   }
-                />
-              }
-            >
-              <ShieldOffIcon className="size-3" aria-hidden="true" />
-            </PopoverTrigger>
-            <TooltipPopup side="bottom">
-              {yoloMode ? "YOLO mode active" : "YOLO mode"}
-            </TooltipPopup>
-          </Tooltip>
-          <PopoverPopup side="bottom" align="end" className="w-64">
-            <div className="space-y-2">
-              <p className="text-sm font-medium">
-                {yoloMode ? "Disable YOLO mode?" : "Enable YOLO mode?"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                YOLO mode auto-accepts all tool calls without asking for permission.
-              </p>
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                This will restart the current session to apply the change. Your conversation
-                context is preserved, but the terminal will briefly reset.
-                Best used when Claude is idle.
-              </p>
-              <div className="flex justify-end gap-2 pt-1">
-                <PopoverClose
-                  render={
-                    <Button size="xs" variant="outline">
-                      Cancel
-                    </Button>
-                  }
-                />
-                <PopoverClose
-                  render={
-                    <Button
-                      size="xs"
-                      variant={yoloMode ? "outline" : "default"}
-                      className={yoloMode ? "" : "bg-red-500 text-white hover:bg-red-600"}
-                      onClick={() => void handleYoloToggle(!yoloMode)}
-                    >
-                      {yoloMode ? "Disable" : "Enable YOLO"}
-                    </Button>
-                  }
-                />
-              </div>
-            </div>
-          </PopoverPopup>
-        </Popover>
+                >
+                  <ShieldOffIcon className="size-3" aria-hidden="true" />
+                </PopoverTrigger>
+                <TooltipPopup side="bottom">
+                  {yoloMode ? "YOLO mode active" : "YOLO mode"}
+                </TooltipPopup>
+              </Tooltip>
+              <PopoverPopup side="bottom" align="end" className="w-64">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">
+                    {yoloMode ? "Disable YOLO mode?" : "Enable YOLO mode?"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    YOLO mode auto-accepts all tool calls without asking for permission.
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    This will restart the current session to apply the change. Your conversation
+                    context is preserved, but the terminal will briefly reset. Best used when Claude
+                    is idle.
+                  </p>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <PopoverClose
+                      render={
+                        <Button size="xs" variant="outline">
+                          Cancel
+                        </Button>
+                      }
+                    />
+                    <PopoverClose
+                      render={
+                        <Button
+                          size="xs"
+                          variant={yoloMode ? "outline" : "default"}
+                          className={yoloMode ? "" : "bg-red-500 text-white hover:bg-red-600"}
+                          onClick={() => void handleYoloToggle(!yoloMode)}
+                        >
+                          {yoloMode ? "Disable" : "Enable YOLO"}
+                        </Button>
+                      }
+                    />
+                  </div>
+                </div>
+              </PopoverPopup>
+            </Popover>
           </>
         ) : null}
 
         {/* Separator before terminal actions */}
-        {isDormant && (
-          <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
-        )}
+        {isDormant && <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />}
 
         {/* Terminal actions */}
         <div className="flex items-center gap-0.5">
-        {isDormant && (
-          <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    onClick={handleResume}
-                    className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-emerald-600 dark:hover:text-emerald-400"
-                  />
-                }
-              >
-                <PlayIcon className="size-3" aria-hidden="true" />
-                <span className="sr-only">Resume</span>
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">Resume</TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    onClick={() => {
-                      const api = readNativeApi();
-                      if (!api || !thread) return;
-                      const cwd = thread.worktreePath ?? project?.cwd ?? "";
-                      if (!cwd) return;
-                      claudeCache.dispose(threadId);
-                      if (thread.harness === "pi") {
-                        void api.pi.start({
-                          threadId,
-                          cwd,
-                          cols: 120,
-                          rows: 40,
-                          fresh: true,
-                          ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
-                        });
-                      } else {
-                        void api.claude.start({
-                          threadId,
-                          cwd,
-                          cols: 120,
-                          rows: 40,
-                          ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
-                        });
-                      }
-                    }}
-                    className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
-                  />
-                }
-              >
-                <RotateCcwIcon className="size-3" aria-hidden="true" />
-                <span className="sr-only">Restart fresh</span>
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">New session</TooltipPopup>
-            </Tooltip>
-          </>
-        )}
+          {isDormant && (
+            <>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={handleResume}
+                      className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-emerald-600 dark:hover:text-emerald-400"
+                    />
+                  }
+                >
+                  <PlayIcon className="size-3" aria-hidden="true" />
+                  <span className="sr-only">Resume</span>
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">Resume</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => {
+                        const api = readNativeApi();
+                        if (!api || !thread) return;
+                        const cwd = thread.worktreePath ?? project?.cwd ?? "";
+                        if (!cwd) return;
+                        claudeCache.dispose(threadId);
+                        if (thread.harness === "pi") {
+                          void api.pi.start({
+                            threadId,
+                            cwd,
+                            cols: 120,
+                            rows: 40,
+                            fresh: true,
+                            ...(thread.piSessionFile
+                              ? { resumeSessionFile: thread.piSessionFile }
+                              : {}),
+                          });
+                        } else {
+                          void api.claude.start({
+                            threadId,
+                            cwd,
+                            cols: 120,
+                            rows: 40,
+                            ...(yoloMode ? { dangerouslySkipPermissions: true } : {}),
+                          });
+                        }
+                      }}
+                      className="size-6 rounded-md p-0 text-muted-foreground/70 hover:text-foreground"
+                    />
+                  }
+                >
+                  <RotateCcwIcon className="size-3" aria-hidden="true" />
+                  <span className="sr-only">Restart fresh</span>
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">New session</TooltipPopup>
+              </Tooltip>
+            </>
+          )}
         </div>
       </div>
     </TooltipProvider>

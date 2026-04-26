@@ -1,33 +1,18 @@
-/**
- * ClaudeCliTextGeneration — text generation via `claude` CLI.
- *
- * Shells out to `claude -p` with `--json-schema` for structured output,
- * using the user's existing Claude Code subscription. No API key needed.
- *
- * @module ClaudeCliTextGeneration
- */
-
-import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@clui/shared/git";
 
 import { TextGenerationError } from "../Errors.ts";
 import {
-  generateThreadTitleWithCodex,
-  sanitizeGeneratedThreadTitle,
-} from "../threadTitleGeneration.ts";
-import {
   type BranchNameGenerationResult,
   type CommitMessageGenerationResult,
   type PrContentGenerationResult,
-  type ThreadTitleGenerationResult,
   type TextGenerationShape,
   TextGeneration,
 } from "../Services/TextGeneration.ts";
 
-const SONNET_MODEL = "sonnet";
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = 180_000;
 
 function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
@@ -47,7 +32,7 @@ function sanitizePrTitle(raw: string): string {
   return singleLine.length > 0 ? singleLine : "Update project changes";
 }
 
-function normalizeError(
+function normalizePiError(
   operation: string,
   error: unknown,
   fallback: string,
@@ -56,13 +41,13 @@ function normalizeError(
   if (error instanceof Error) {
     const lower = error.message.toLowerCase();
     if (
-      error.message.includes("Command not found: claude") ||
-      lower.includes("spawn claude") ||
+      error.message.includes("Command not found: pi") ||
+      lower.includes("spawn pi") ||
       lower.includes("enoent")
     ) {
       return new TextGenerationError({
         operation,
-        detail: "Claude CLI (`claude`) is required but not available on PATH.",
+        detail: "pi CLI (`pi`) is required but not available on PATH.",
         cause: error,
       });
     }
@@ -75,11 +60,30 @@ function normalizeError(
   return new TextGenerationError({ operation, detail: fallback, cause: error });
 }
 
+function stripMarkdownJsonFences(value: string): string {
+  return value
+    .trim()
+    .replace(/^```(?:json)?\s*/iu, "")
+    .replace(/\s*```$/u, "")
+    .trim();
+}
 
-export const makeClaudeCliTextGeneration = Effect.gen(function* () {
+function parseJsonCandidate(value: string): unknown {
+  const cleaned = stripMarkdownJsonFences(value);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(cleaned.slice(start, end + 1));
+    }
+    throw new Error("No JSON object found in pi output.");
+  }
+}
+
+export const makePiCliTextGeneration = Effect.gen(function* () {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
 
   const readStreamAsString = <E>(
     operation: string,
@@ -93,45 +97,42 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
         }),
       ).pipe(
         Effect.mapError((cause) =>
-          normalizeError(operation, cause, "Failed to collect process output"),
+          normalizePiError(operation, cause, "Failed to collect process output"),
         ),
       );
       return text;
     });
 
-  const runClaudeJson = <S extends Schema.Top>({
+  const runPiJson = <S extends Schema.Top>({
     operation,
-    model,
     systemPrompt,
     userPrompt,
     outputSchema,
     cwd,
   }: {
     operation: string;
-    model: string;
     systemPrompt: string;
     userPrompt: string;
     outputSchema: S;
-    cwd?: string;
+    cwd: string;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      // Pipe prompt via stdin (like Codex does) to avoid OS arg length limits
-      // and use /tmp as cwd to prevent claude from loading project CLAUDE.md files
       const command = ChildProcess.make(
-        "claude",
+        "pi",
         [
-          "-p",
-          "--output-format", "json",
-          "--model", model,
-          "--tools", "",
-          "--max-turns", "1",
-          "--effort", "low",
-          "--system-prompt", `${systemPrompt}\n\nRespond with ONLY a valid JSON object matching the requested schema. No markdown, no code fences, no extra text.`,
-          "--no-session-persistence",
-          "-",
+          "--print",
+          "--no-session",
+          "--no-tools",
+          "--no-context-files",
+          "--no-extensions",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--system-prompt",
+          `${systemPrompt}\n\nRespond with ONLY a valid JSON object matching the requested schema. No markdown, no code fences, no extra text.`,
+          "Generate the requested JSON object from the provided input.",
         ],
         {
-          cwd: cwd ?? "/tmp",
+          cwd,
           shell: process.platform === "win32",
           stdin: {
             stream: Stream.make(new TextEncoder().encode(userPrompt)),
@@ -143,7 +144,7 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
         .spawn(command)
         .pipe(
           Effect.mapError((cause) =>
-            normalizeError(operation, cause, "Failed to spawn Claude CLI process"),
+            normalizePiError(operation, cause, "Failed to spawn pi CLI process"),
           ),
         );
 
@@ -154,7 +155,7 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
           child.exitCode.pipe(
             Effect.map((value) => Number(value)),
             Effect.mapError((cause) =>
-              normalizeError(operation, cause, "Failed to read Claude CLI exit code"),
+              normalizePiError(operation, cause, "Failed to read pi CLI exit code"),
             ),
           ),
         ],
@@ -165,53 +166,27 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
         const detail = stderr.trim() || stdout.trim();
         return yield* new TextGenerationError({
           operation,
-          detail: detail.length > 0
-            ? `Claude CLI failed: ${detail}`
-            : `Claude CLI failed with code ${exitCode}.`,
+          detail:
+            detail.length > 0 ? `pi CLI failed: ${detail}` : `pi CLI failed with code ${exitCode}.`,
         });
       }
 
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(stdout) as Record<string, unknown>,
-        catch: () =>
+      const resultObj = yield* Effect.try({
+        try: () => parseJsonCandidate(stdout),
+        catch: (cause) =>
           new TextGenerationError({
             operation,
-            detail: "Claude CLI returned invalid JSON output.",
+            detail: "pi CLI returned invalid JSON output.",
+            cause,
           }),
       });
-
-      // Extract result string, strip markdown code fences, parse as JSON
-      const resultValue = parsed.result;
-      let resultObj: unknown;
-
-      if (typeof resultValue === "string" && resultValue.trim().length > 0) {
-        const cleaned = resultValue.trim()
-          .replace(/^```(?:json)?\s*/, "")
-          .replace(/\s*```$/, "")
-          .trim();
-        resultObj = yield* Effect.try({
-          try: () => JSON.parse(cleaned),
-          catch: () =>
-            new TextGenerationError({
-              operation,
-              detail: "Claude CLI result is not valid JSON.",
-            }),
-        });
-      } else if (typeof resultValue === "object" && resultValue !== null) {
-        resultObj = resultValue;
-      } else {
-        return yield* new TextGenerationError({
-          operation,
-          detail: "Claude CLI returned no result.",
-        });
-      }
 
       return yield* Schema.decodeEffect(outputSchema)(resultObj).pipe(
         Effect.catchTag("SchemaError", (cause) =>
           Effect.fail(
             new TextGenerationError({
               operation,
-              detail: "Claude CLI returned invalid structured output.",
+              detail: "pi CLI returned invalid structured output.",
               cause,
             }),
           ),
@@ -224,21 +199,22 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
         Option.match({
           onNone: () =>
             Effect.fail(
-              new TextGenerationError({ operation, detail: "Claude CLI request timed out." }),
+              new TextGenerationError({ operation, detail: "pi CLI request timed out." }),
             ),
           onSome: (value) => Effect.succeed(value),
         }),
       ),
     );
 
-  // ── Commit messages ──────────────────────────────────────────────────
-
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
     const wantsBranch = input.includeBranch === true;
 
     const systemPrompt = [
       "You write concise git commit messages.",
-      "IMPORTANT: Do NOT add any Co-Authored-By lines or attribution to AI/Claude in commit messages.",
+      "IMPORTANT: Do NOT add any Co-Authored-By lines or attribution to AI/pi in commit messages.",
+      wantsBranch
+        ? "Return a JSON object with keys: subject, body, branch."
+        : "Return a JSON object with keys: subject, body.",
       "Rules:",
       "- subject must be imperative, <= 72 chars, and no trailing period",
       "- body can be empty string or short bullet points",
@@ -269,9 +245,8 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
           body: Schema.String,
         });
 
-    return runClaudeJson({
+    return runPiJson({
       operation: "generateCommitMessage",
-      model: SONNET_MODEL,
       systemPrompt,
       userPrompt,
       outputSchema,
@@ -290,11 +265,10 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
     );
   };
 
-  // ── PR content ───────────────────────────────────────────────────────
-
   const generatePrContent: TextGenerationShape["generatePrContent"] = (input) => {
     const systemPrompt = [
       "You write GitHub pull request content.",
+      "Return a JSON object with keys: title, body.",
       "Rules:",
       "- title should be concise and specific",
       "- body must be markdown and include headings '## Summary' and '## Testing'",
@@ -316,9 +290,8 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       limitSection(input.diffPatch, 40_000),
     ].join("\n");
 
-    return runClaudeJson({
+    return runPiJson({
       operation: "generatePrContent",
-      model: SONNET_MODEL,
       systemPrompt,
       userPrompt,
       outputSchema: Schema.Struct({
@@ -337,11 +310,10 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
     );
   };
 
-  // ── Branch names ─────────────────────────────────────────────────────
-
   const generateBranchName: TextGenerationShape["generateBranchName"] = (input) => {
     const systemPrompt = [
       "You generate concise git branch names.",
+      "Return a JSON object with key: branch.",
       "Rules:",
       "- Branch should describe the requested work from the user message.",
       "- Keep it short and specific (2-6 words).",
@@ -361,9 +333,8 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       );
     }
 
-    return runClaudeJson({
+    return runPiJson({
       operation: "generateBranchName",
-      model: SONNET_MODEL,
       systemPrompt,
       userPrompt: promptSections.join("\n"),
       outputSchema: Schema.Struct({ branch: Schema.String }),
@@ -371,123 +342,20 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
     }).pipe(
       Effect.map(
         (generated) =>
-          ({ branch: sanitizeBranchFragment(generated.branch) }) satisfies BranchNameGenerationResult,
+          ({
+            branch: sanitizeBranchFragment(generated.branch),
+          }) satisfies BranchNameGenerationResult,
       ),
     );
   };
 
-  // ── Thread titles ────────────────────────────────────────────────────
-
-  const TITLE_TIMEOUT_MS = 30_000;
-
-  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) => {
-    const generateWithClaude = Effect.gen(function* () {
-      const command = ChildProcess.make(
-        "claude",
-        [
-          "-p",
-          "--output-format", "json",
-          "--model", SONNET_MODEL,
-          "--tools", "",
-          "--max-turns", "1",
-          "--effort", "low",
-          "--system-prompt", "Generate a concise title (max 60 chars) for a coding session. Summarize the intent in title case. Respond with ONLY the title text, nothing else.",
-          "--no-session-persistence",
-          "-",
-        ],
-        {
-          cwd: "/tmp",
-          shell: process.platform === "win32",
-          stdin: {
-            stream: Stream.make(new TextEncoder().encode(limitSection(input.promptText, 500))),
-          },
-        },
-      );
-
-      const child = yield* commandSpawner
-        .spawn(command)
-        .pipe(Effect.mapError((cause) =>
-          normalizeError("generateThreadTitle", cause, "Failed to spawn Claude CLI"),
-        ));
-
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          readStreamAsString("generateThreadTitle", child.stdout),
-          readStreamAsString("generateThreadTitle", child.stderr),
-          child.exitCode.pipe(
-            Effect.map((value) => Number(value)),
-            Effect.mapError((cause) =>
-              normalizeError("generateThreadTitle", cause, "Failed to read exit code"),
-            ),
-          ),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      if (exitCode !== 0) {
-        const stderrDetail = stderr.trim();
-        const stdoutDetail = stdout.trim();
-        const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
-        return yield* new TextGenerationError({
-          operation: "generateThreadTitle",
-          detail:
-            detail.length > 0
-              ? `Claude CLI failed: ${detail}`
-              : `Claude CLI failed with code ${exitCode}.`,
-        });
-      }
-
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(stdout) as Record<string, unknown>,
-        catch: () =>
-          new TextGenerationError({
-            operation: "generateThreadTitle",
-            detail: `Claude CLI returned invalid JSON. stdout length=${stdout.length}`,
-          }),
-      });
-      const title = sanitizeGeneratedThreadTitle(
-        typeof parsed.result === "string" ? parsed.result : null,
-      );
-
-      if (!title) {
-        return yield* new TextGenerationError({
-          operation: "generateThreadTitle",
-          detail: "Claude CLI did not generate a usable thread title.",
-        });
-      }
-
-      return { title } satisfies ThreadTitleGenerationResult;
-    }).pipe(
-      Effect.scoped,
-      Effect.timeoutOption(TITLE_TIMEOUT_MS),
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail: "Title generation timed out." })),
-          onSome: (value) => Effect.succeed(value),
-        }),
-      ),
+  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = () =>
+    Effect.fail(
+      new TextGenerationError({
+        operation: "generateThreadTitle",
+        detail: "pi CLI text generation does not implement thread-title generation.",
+      }),
     );
-
-    return generateWithClaude.pipe(
-      Effect.catch((claudeError) =>
-        generateThreadTitleWithCodex(input.promptText).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.catch((codexError) =>
-            Effect.fail(
-              new TextGenerationError({
-                operation: "generateThreadTitle",
-                detail: `Claude CLI title generation failed (${claudeError.detail}); Codex fallback failed (${codexError.detail})`,
-                cause: codexError,
-              }),
-            ),
-          ),
-        ),
-      ),
-    );
-  };
 
   return {
     generateCommitMessage,
@@ -497,7 +365,4 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
   } satisfies TextGenerationShape;
 });
 
-export const ClaudeCliTextGenerationLive = Layer.effect(
-  TextGeneration,
-  makeClaudeCliTextGeneration,
-);
+export const PiCliTextGenerationLive = Layer.effect(TextGeneration, makePiCliTextGeneration);

@@ -330,8 +330,7 @@ function SettingsRouteView() {
   );
 
   const configuredMaxActiveHarnessSessions =
-    serverConfigQuery.data?.settings.maxActiveHarnessSessions ??
-    DEFAULT_ACTIVE_HARNESS_SESSION_CAP;
+    serverConfigQuery.data?.settings.maxActiveHarnessSessions ?? DEFAULT_ACTIVE_HARNESS_SESSION_CAP;
   const configuredPreventMacosSleepWhenThreadInProgress =
     serverConfigQuery.data?.settings.preventMacosSleepWhenThreadInProgress ??
     DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS;
@@ -382,7 +381,8 @@ function SettingsRouteView() {
                     className="font-medium text-primary underline underline-offset-2 hover:text-primary/80"
                   >
                     Get it here
-                  </a>.
+                  </a>
+                  .
                 </p>
               </div>
             </section>
@@ -391,7 +391,8 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Default coding harness</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Choose which harness new threads start with by default. You can still change it before the thread is first launched.
+                  Choose which harness new threads start with by default. You can still change it
+                  before the thread is first launched.
                 </p>
               </div>
 
@@ -431,13 +432,16 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Session hibernation</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Limit how many active thread PTY sessions Clui keeps per harness before it hibernates the least recently used one. Claude Code and pi each use their own cap.
+                  Limit how many active thread PTY sessions Clui keeps per harness before it
+                  hibernates the least recently used one. Claude Code and pi each use their own cap.
                 </p>
               </div>
 
               <div className="space-y-3">
                 <label htmlFor="max-active-harness-sessions" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Active sessions per harness</span>
+                  <span className="text-xs font-medium text-foreground">
+                    Active sessions per harness
+                  </span>
                   <div className="flex flex-wrap items-center gap-3">
                     <Input
                       id="max-active-harness-sessions"
@@ -452,13 +456,15 @@ function SettingsRouteView() {
                       className="w-28"
                     />
                     <span className="text-xs text-muted-foreground">
-                      {MIN_ACTIVE_HARNESS_SESSION_CAP}–{MAX_ACTIVE_HARNESS_SESSION_CAP} active sessions per harness
+                      {MIN_ACTIVE_HARNESS_SESSION_CAP}–{MAX_ACTIVE_HARNESS_SESSION_CAP} active
+                      sessions per harness
                     </span>
                   </div>
                 </label>
 
                 <p className="text-xs text-muted-foreground">
-                  Current setting: {configuredMaxActiveHarnessSessions}. When a harness goes over the cap, Clui hibernates the oldest active thread and resumes it on demand later.
+                  Current setting: {configuredMaxActiveHarnessSessions}. When a harness goes over
+                  the cap, Clui hibernates the oldest active thread and resumes it on demand later.
                 </p>
 
                 <div className="rounded-lg border border-border bg-background px-3 py-3">
@@ -471,7 +477,9 @@ function SettingsRouteView() {
                         Prevent macOS sleep while a thread is working
                       </label>
                       <p className="text-xs text-muted-foreground">
-                        Keeps your Mac awake with <code>caffeinate</code> while Claude Code or pi is actively processing a turn. Sleep is allowed again when the thread completes, exits, hibernates, or waits for input.
+                        Keeps your Mac awake with <code>caffeinate</code> while Claude Code or pi is
+                        actively processing a turn. Sleep is allowed again when the thread
+                        completes, exits, hibernates, or waits for input.
                       </p>
                     </div>
                     <Switch
@@ -564,8 +572,11 @@ function SettingsRouteView() {
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
                 To match Claude Code's output colors, type{" "}
-                <code className="rounded bg-muted px-1 py-0.5 text-[11px] font-mono text-foreground">/theme</code>{" "}
-                inside a terminal session and select <span className="font-medium">{resolvedTheme}</span>.
+                <code className="rounded bg-muted px-1 py-0.5 text-[11px] font-mono text-foreground">
+                  /theme
+                </code>{" "}
+                inside a terminal session and select{" "}
+                <span className="font-medium">{resolvedTheme}</span>.
               </p>
             </section>
 
@@ -715,7 +726,8 @@ function SettingsRouteView() {
                   <span className="text-xs font-medium text-foreground">Color theme</span>
                   <div className="space-y-2" role="radiogroup" aria-label="Terminal color theme">
                     {TERMINAL_COLOR_THEME_OPTIONS.map((option) => {
-                      const selected = (settings.terminalColorTheme as TerminalColorTheme) === option.value;
+                      const selected =
+                        (settings.terminalColorTheme as TerminalColorTheme) === option.value;
                       return (
                         <button
                           key={option.value}
@@ -759,7 +771,10 @@ function SettingsRouteView() {
                       onChange={(event) => {
                         const value = Number.parseInt(event.target.value, 10);
                         if (Number.isNaN(value)) return;
-                        const clamped = Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, value));
+                        const clamped = Math.max(
+                          MIN_TERMINAL_FONT_SIZE,
+                          Math.min(MAX_TERMINAL_FONT_SIZE, value),
+                        );
                         updateSettings({ terminalFontSize: clamped });
                         claudeCache.updateFontSettings();
                       }}
@@ -792,7 +807,8 @@ function SettingsRouteView() {
                   <div>
                     <p className="text-sm font-medium text-foreground">Sticky pi input mirror</p>
                     <p className="text-xs text-muted-foreground">
-                      Show the sticky mirrored pi input block while reading scrollback away from the bottom.
+                      Show the sticky mirrored pi input block while reading scrollback away from the
+                      bottom.
                     </p>
                   </div>
                   <Switch
@@ -806,10 +822,10 @@ function SettingsRouteView() {
                   />
                 </div>
 
-                {(settings.terminalFontSize !== defaults.terminalFontSize ||
-                  settings.terminalFontFamily !== defaults.terminalFontFamily ||
-                  settings.terminalColorTheme !== defaults.terminalColorTheme ||
-                  settings.stickyPiInputMirror !== defaults.stickyPiInputMirror) ? (
+                {settings.terminalFontSize !== defaults.terminalFontSize ||
+                settings.terminalFontFamily !== defaults.terminalFontFamily ||
+                settings.terminalColorTheme !== defaults.terminalColorTheme ||
+                settings.stickyPiInputMirror !== defaults.stickyPiInputMirror ? (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
@@ -838,9 +854,15 @@ function SettingsRouteView() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   Transcribe voice input using a local Whisper model. Shortcut:{" "}
                   <span className="inline-flex items-center gap-0.5">
-                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘</kbd>
-                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">⇧</kbd>
-                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">V</kbd>
+                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                      ⌘
+                    </kbd>
+                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                      ⇧
+                    </kbd>
+                    <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                      V
+                    </kbd>
                   </span>
                 </p>
               </div>
@@ -902,9 +924,7 @@ function SettingsRouteView() {
                     </span>
                   )}
                   {whisperModelReady && (
-                    <span className="text-xs text-muted-foreground">
-                      Model is ready for use.
-                    </span>
+                    <span className="text-xs text-muted-foreground">Model is ready for use.</span>
                   )}
                 </div>
 
@@ -930,7 +950,8 @@ function SettingsRouteView() {
                 <label htmlFor="voice-prefix" className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">Voice prefix</span>
                   <p className="text-[11px] text-muted-foreground">
-                    Text prepended to every voice transcription before sending. Leave empty for none.
+                    Text prepended to every voice transcription before sending. Leave empty for
+                    none.
                   </p>
                   <input
                     id="voice-prefix"

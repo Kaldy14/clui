@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
+import type { CodingHarness } from "@clui/contracts";
 import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
@@ -491,6 +492,7 @@ export const makeGitManager = Effect.gen(function* () {
     commitMessage?: string;
     /** When true, also produce a semantic feature branch name. */
     includeBranch?: boolean;
+    harness?: CodingHarness;
   }) =>
     Effect.gen(function* () {
       const context = yield* gitCore.prepareCommitContext(input.cwd);
@@ -516,6 +518,7 @@ export const makeGitManager = Effect.gen(function* () {
           branch: input.branch,
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
+          ...(input.harness ? { harness: input.harness } : {}),
           ...(input.includeBranch ? { includeBranch: true } : {}),
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
@@ -533,6 +536,7 @@ export const makeGitManager = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
+    harness?: CodingHarness,
   ) =>
     Effect.gen(function* () {
       const suggestion =
@@ -541,6 +545,7 @@ export const makeGitManager = Effect.gen(function* () {
           cwd,
           branch,
           ...(commitMessage ? { commitMessage } : {}),
+          ...(harness ? { harness } : {}),
         }));
       if (!suggestion) {
         return { status: "skipped_no_changes" as const };
@@ -568,7 +573,7 @@ export const makeGitManager = Effect.gen(function* () {
         Effect.catch(() => Effect.succeed(null)),
       );
 
-  const runPrStep = (cwd: string, fallbackBranch: string | null) =>
+  const runPrStep = (cwd: string, fallbackBranch: string | null, harness?: CodingHarness) =>
     Effect.gen(function* () {
       const details = yield* gitCore.statusDetails(cwd);
       const branch = details.branch ?? fallbackBranch;
@@ -607,6 +612,7 @@ export const makeGitManager = Effect.gen(function* () {
         commitSummary: limitContext(rangeContext.commitSummary, 20_000),
         diffSummary: limitContext(rangeContext.diffSummary, 20_000),
         diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+        ...(harness ? { harness } : {}),
       });
 
       const repoName = yield* resolveRepoName(cwd);
@@ -826,12 +832,19 @@ export const makeGitManager = Effect.gen(function* () {
     },
   );
 
-  const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string, featureBranchName?: string) =>
+  const runFeatureBranchStep = (
+    cwd: string,
+    branch: string | null,
+    commitMessage?: string,
+    featureBranchName?: string,
+    harness?: CodingHarness,
+  ) =>
     Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
         cwd,
         branch,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(harness ? { harness } : {}),
         includeBranch: !featureBranchName,
       });
       if (!suggestion) {
@@ -841,12 +854,13 @@ export const makeGitManager = Effect.gen(function* () {
         );
       }
 
-      const preferredBranch = featureBranchName ?? suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
+      const preferredBranch =
+        featureBranchName ?? suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
       const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
       const resolvedBranch = featureBranchName
-        ? (existingBranchNames.some((n) => n.toLowerCase() === featureBranchName.toLowerCase())
-            ? resolveAutoFeatureBranchName(existingBranchNames, featureBranchName)
-            : featureBranchName)
+        ? existingBranchNames.some((n) => n.toLowerCase() === featureBranchName.toLowerCase())
+          ? resolveAutoFeatureBranchName(existingBranchNames, featureBranchName)
+          : featureBranchName
         : resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
 
       yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
@@ -885,6 +899,7 @@ export const makeGitManager = Effect.gen(function* () {
           initialStatus.branch,
           input.commitMessage,
           input.featureBranchName,
+          input.harness,
         );
         branchStep = result.branchStep;
         commitMessageForStep = result.resolvedCommitMessage;
@@ -900,6 +915,7 @@ export const makeGitManager = Effect.gen(function* () {
         currentBranch,
         commitMessageForStep,
         preResolvedCommitSuggestion,
+        input.harness,
       );
 
       const push = wantsPush
@@ -907,7 +923,7 @@ export const makeGitManager = Effect.gen(function* () {
         : { status: "skipped_not_requested" as const };
 
       const pr = wantsPr
-        ? yield* runPrStep(input.cwd, currentBranch)
+        ? yield* runPrStep(input.cwd, currentBranch, input.harness)
         : { status: "skipped_not_requested" as const };
 
       return {

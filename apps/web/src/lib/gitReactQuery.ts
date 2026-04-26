@@ -1,4 +1,4 @@
-import type { GitStackedAction } from "@clui/contracts";
+import type { CodingHarness, GitStackedAction } from "@clui/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 
@@ -120,11 +120,13 @@ export function gitRunStackedActionMutationOptions(input: {
       commitMessage,
       featureBranch,
       featureBranchName,
+      harness,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
       featureBranch?: boolean;
       featureBranchName?: string;
+      harness?: CodingHarness;
     }) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git action is unavailable.");
@@ -134,6 +136,7 @@ export function gitRunStackedActionMutationOptions(input: {
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(featureBranchName ? { featureBranchName } : {}),
+        ...(harness ? { harness } : {}),
       });
     },
     onSettled: async () => {

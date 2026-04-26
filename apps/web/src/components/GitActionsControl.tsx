@@ -1,4 +1,4 @@
-import type { GitStackedAction, GitStatusResult, ThreadId } from "@clui/contracts";
+import type { CodingHarness, GitStackedAction, GitStatusResult, ThreadId } from "@clui/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
@@ -46,6 +46,7 @@ import { readNativeApi } from "~/nativeApi";
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
+  activeHarness: CodingHarness;
 }
 
 interface PendingDefaultBranchAction {
@@ -139,7 +140,11 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({
+  gitCwd,
+  activeThreadId,
+  activeHarness,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -327,6 +332,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
       const promise = runImmediateGitActionMutation.mutateAsync({
         action,
+        harness: activeHarness,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(featureBranch && featureBranchName ? { featureBranchName } : {}),
@@ -421,6 +427,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
+      activeHarness,
       isDefaultBranch,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,
@@ -490,7 +497,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       ...(commitMessage ? { commitMessage } : {}),
       ...(trimmedBranchName ? { featureBranchName: trimmedBranchName } : {}),
     });
-  }, [isCommitDialogOpen, dialogCommitMessage, checkoutNewBranchAndRunAction, featureBranchNameInput]);
+  }, [
+    isCommitDialogOpen,
+    dialogCommitMessage,
+    checkoutNewBranchAndRunAction,
+    featureBranchNameInput,
+  ]);
 
   const runQuickAction = useCallback(() => {
     if (quickAction.kind === "open_pr") {
@@ -622,9 +634,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                 }
               >
                 <GitQuickActionIcon quickAction={quickAction} />
-                <span className="ml-0.5">
-                  {quickAction.label}
-                </span>
+                <span className="ml-0.5">{quickAction.label}</span>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
@@ -638,9 +648,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
               onClick={runQuickAction}
             >
               <GitQuickActionIcon quickAction={quickAction} />
-              <span className="ml-0.5">
-                {quickAction.label}
-              </span>
+              <span className="ml-0.5">{quickAction.label}</span>
             </Button>
           )}
           <GroupSeparator />

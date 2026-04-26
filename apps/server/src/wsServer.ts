@@ -186,9 +186,10 @@ function findGitRoot(
     let candidate = pathModule.resolve(startDir);
     for (let i = 0; i < 10; i++) {
       const gitDir = pathModule.join(candidate, ".git");
-      const exists = yield* fs
-        .stat(gitDir)
-        .pipe(Effect.map(() => true), Effect.catch(() => Effect.succeed(false)));
+      const exists = yield* fs.stat(gitDir).pipe(
+        Effect.map(() => true),
+        Effect.catch(() => Effect.succeed(false)),
+      );
       if (exists) return candidate;
       const parent = pathModule.dirname(candidate);
       if (parent === candidate) break;
@@ -239,11 +240,26 @@ function resolveWorkspaceWritePath(params: {
 function inferLanguage(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const langMap: Record<string, string> = {
-    ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
-    json: "json", css: "css", html: "html", md: "markdown",
-    py: "python", rs: "rust", go: "go", yaml: "yaml", yml: "yaml",
-    sh: "shell", bash: "shell", zsh: "shell",
-    sql: "sql", graphql: "graphql", xml: "xml", svg: "xml",
+    ts: "typescript",
+    tsx: "tsx",
+    js: "javascript",
+    jsx: "jsx",
+    json: "json",
+    css: "css",
+    html: "html",
+    md: "markdown",
+    py: "python",
+    rs: "rust",
+    go: "go",
+    yaml: "yaml",
+    yml: "yaml",
+    sh: "shell",
+    bash: "shell",
+    zsh: "shell",
+    sql: "sql",
+    graphql: "graphql",
+    xml: "xml",
+    svg: "xml",
   };
   return langMap[ext] ?? "text";
 }
@@ -497,32 +513,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (autoTitledThreads.has(threadId)) return;
     autoTitledThreads.add(threadId);
 
-    const fallbackTitle =
-      promptText.length <= 50 ? promptText : `${promptText.slice(0, 49)}\u2026`;
+    const fallbackTitle = promptText.length <= 50 ? promptText : `${promptText.slice(0, 49)}\u2026`;
 
     void Effect.runPromise(
-      textGeneration
-        .generateThreadTitle({ promptText })
-        .pipe(
-          Effect.map(({ title }) => title),
-          Effect.catch((error) => {
-            logger.warn("pi auto-title AI failed, using fallback", { threadId, error: String(error) });
-            return Effect.succeed(fallbackTitle);
-          }),
-          Effect.flatMap((title) =>
-            orchestrationEngine.dispatch({
-              type: "thread.meta.update",
-              commandId: CommandId.makeUnsafe(crypto.randomUUID()),
-              threadId: ThreadId.makeUnsafe(threadId),
-              title,
-              titleSource: "auto",
-            }),
-          ),
-          Effect.catch((error) => {
-            autoTitledThreads.delete(threadId);
-            return Effect.logError("pi auto-title dispatch failed", { cause: error });
+      textGeneration.generateThreadTitle({ promptText }).pipe(
+        Effect.map(({ title }) => title),
+        Effect.catch((error) => {
+          logger.warn("pi auto-title AI failed, using fallback", {
+            threadId,
+            error: String(error),
+          });
+          return Effect.succeed(fallbackTitle);
+        }),
+        Effect.flatMap((title) =>
+          orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            threadId: ThreadId.makeUnsafe(threadId),
+            title,
+            titleSource: "auto",
           }),
         ),
+        Effect.catch((error) => {
+          autoTitledThreads.delete(threadId);
+          return Effect.logError("pi auto-title dispatch failed", { cause: error });
+        }),
+      ),
     );
   };
 
@@ -530,11 +546,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     const adv = advancePiWritePromptBuffer(pendingPiPromptBuffers, threadId, data);
     if (adv.kind !== "submitted") return;
     void Effect.runPromise(
-      piSessionManager.notifyPromptSubmitted(threadId).pipe(
-        Effect.catch((error: unknown) =>
-          Effect.logWarning("pi prompt submit hook failed", { cause: error }),
+      piSessionManager
+        .notifyPromptSubmitted(threadId)
+        .pipe(
+          Effect.catch((error: unknown) =>
+            Effect.logWarning("pi prompt submit hook failed", { cause: error }),
+          ),
         ),
-      ),
     );
     if (!autoTitledThreads.has(threadId)) {
       dispatchPiAutoTitleIfNeeded(threadId, adv.firstLineStripped);
@@ -555,29 +573,33 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   ) => {
     const createdAt = new Date().toISOString();
     void Effect.runPromise(
-      orchestrationEngine.dispatch({
-        type: "thread.activity.append",
-        commandId: CommandId.makeUnsafe(`hook:${kind}:${crypto.randomUUID()}`),
-        threadId: ThreadId.makeUnsafe(threadId),
-        activity: {
-          id: EventId.makeUnsafe(crypto.randomUUID()),
-          tone: "approval",
-          kind,
-          summary: kind === "approval.requested" ? "Approval requested" : "Approval resolved",
-          payload: {
-            requestId,
-            ...(kind === "approval.requested" ? { requestKind: "command" } : { decision: "accept" }),
-            ...(detail ? { detail } : {}),
+      orchestrationEngine
+        .dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.makeUnsafe(`hook:${kind}:${crypto.randomUUID()}`),
+          threadId: ThreadId.makeUnsafe(threadId),
+          activity: {
+            id: EventId.makeUnsafe(crypto.randomUUID()),
+            tone: "approval",
+            kind,
+            summary: kind === "approval.requested" ? "Approval requested" : "Approval resolved",
+            payload: {
+              requestId,
+              ...(kind === "approval.requested"
+                ? { requestKind: "command" }
+                : { decision: "accept" }),
+              ...(detail ? { detail } : {}),
+            },
+            turnId: null,
+            createdAt,
           },
-          turnId: null,
           createdAt,
-        },
-        createdAt,
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.logError("approval activity dispatch failed", { cause: error }),
+        })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logError("approval activity dispatch failed", { cause: error }),
+          ),
         ),
-      ),
     );
   };
 
@@ -643,7 +665,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               checkpointReactor.ensureBaseline({
                 threadId: ThreadId.makeUnsafe(threadId),
               }),
-            ).catch((err) => logger.warn("ensureBaseline promise rejected", { threadId, error: String(err) }));
+            ).catch((err) =>
+              logger.warn("ensureBaseline promise rejected", { threadId, error: String(err) }),
+            );
 
             // Auto-title: generate a thread title from the first prompt
             if (!autoTitledThreads.has(threadId)) {
@@ -651,33 +675,33 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               if (promptText) {
                 autoTitledThreads.add(threadId);
 
-                const fallbackTitle = promptText.length <= 50
-                  ? promptText
-                  : `${promptText.slice(0, 49)}\u2026`;
+                const fallbackTitle =
+                  promptText.length <= 50 ? promptText : `${promptText.slice(0, 49)}\u2026`;
 
                 void Effect.runPromise(
-                  textGeneration
-                    .generateThreadTitle({ promptText })
-                    .pipe(
-                      Effect.map(({ title }) => title),
-                      Effect.catch((error) => {
-                        logger.warn("auto-title AI failed, using fallback", { threadId, error: String(error) });
-                        return Effect.succeed(fallbackTitle);
-                      }),
-                      Effect.flatMap((title) =>
-                        orchestrationEngine.dispatch({
-                          type: "thread.meta.update",
-                          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
-                          threadId: ThreadId.makeUnsafe(threadId),
-                          title,
-                          titleSource: "auto",
-                        }),
-                      ),
-                      Effect.catch((error) => {
-                        autoTitledThreads.delete(threadId);
-                        return Effect.logError("auto-title dispatch failed", { cause: error });
+                  textGeneration.generateThreadTitle({ promptText }).pipe(
+                    Effect.map(({ title }) => title),
+                    Effect.catch((error) => {
+                      logger.warn("auto-title AI failed, using fallback", {
+                        threadId,
+                        error: String(error),
+                      });
+                      return Effect.succeed(fallbackTitle);
+                    }),
+                    Effect.flatMap((title) =>
+                      orchestrationEngine.dispatch({
+                        type: "thread.meta.update",
+                        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+                        threadId: ThreadId.makeUnsafe(threadId),
+                        title,
+                        titleSource: "auto",
                       }),
                     ),
+                    Effect.catch((error) => {
+                      autoTitledThreads.delete(threadId);
+                      return Effect.logError("auto-title dispatch failed", { cause: error });
+                    }),
+                  ),
                 );
               }
             }
@@ -730,7 +754,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               checkpointReactor.captureTerminalTurnCheckpoint({
                 threadId: ThreadId.makeUnsafe(threadId),
               }),
-            ).catch((err) => logger.warn("captureTerminalTurnCheckpoint promise rejected", { threadId, error: String(err) }));
+            ).catch((err) =>
+              logger.warn("captureTerminalTurnCheckpoint promise rejected", {
+                threadId,
+                error: String(err),
+              }),
+            );
           } else if (hookPath === "/hooks/notification") {
             events = buildNotificationEvents(threadId, body);
           } else {
@@ -1237,23 +1266,26 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribePiEvents()));
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
-
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
 
   // Phase 5: Graceful shutdown — hibernate all sessions BEFORE closing connections
   yield* Effect.addFinalizer(() =>
     Effect.all([
-      claudeSessionManager.hibernateAll().pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to hibernate claude sessions on shutdown", { cause: error }),
+      claudeSessionManager
+        .hibernateAll()
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to hibernate claude sessions on shutdown", { cause: error }),
+          ),
         ),
-      ),
-      piSessionManager.hibernateAll().pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to hibernate pi sessions on shutdown", { cause: error }),
+      piSessionManager
+        .hibernateAll()
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to hibernate pi sessions on shutdown", { cause: error }),
+          ),
         ),
-      ),
     ]).pipe(
       Effect.andThen(
         Effect.all([
@@ -1508,18 +1540,27 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case WS_METHODS.claudeStart: {
-        const { threadId, cwd: requestedCwd, cols, rows, resumeSessionId, dangerouslySkipPermissions } = stripRequestTag(request.body);
+        const {
+          threadId,
+          cwd: requestedCwd,
+          cols,
+          rows,
+          resumeSessionId,
+          dangerouslySkipPermissions,
+        } = stripRequestTag(request.body);
 
         // Validate cwd is under the workspace root or the thread's registered worktree
         const resolvedCwd = path.resolve(requestedCwd);
         const resolvedRoot = path.resolve(cwd);
-        const isUnderRoot = resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
+        const isUnderRoot =
+          resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
         if (!isUnderRoot) {
           // Allow if the cwd matches the thread's registered worktree path
           const snapshot = yield* projectionReadModelQuery.getSnapshot();
           const thread = snapshot.threads.find((t) => t.id === threadId);
           const threadWorktree = thread?.worktreePath ? path.resolve(thread.worktreePath) : null;
-          const isThreadWorktree = threadWorktree != null &&
+          const isThreadWorktree =
+            threadWorktree != null &&
             (resolvedCwd === threadWorktree || resolvedCwd.startsWith(`${threadWorktree}/`));
           if (!isThreadWorktree) {
             return yield* new RouteRequestError({
@@ -1546,7 +1587,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.claudeGetScrollback: {
         const body = stripRequestTag(request.body);
         const result = yield* claudeSessionManager.getScrollback(body.threadId, body.sinceOffset);
-        return { threadId: body.threadId, scrollback: result.scrollback, offset: result.offset, reset: result.reset };
+        return {
+          threadId: body.threadId,
+          scrollback: result.scrollback,
+          offset: result.offset,
+          reset: result.reset,
+        };
       }
 
       case WS_METHODS.claudeWrite: {
@@ -1650,9 +1696,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         yield* claudeSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
         yield* piSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
-        yield* macosSleepPreventer.setEnabled(
-          settings.preventMacosSleepWhenThreadInProgress,
-        );
+        yield* macosSleepPreventer.setEnabled(settings.preventMacosSleepWhenThreadInProgress);
 
         return settings;
       }
