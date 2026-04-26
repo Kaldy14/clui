@@ -92,6 +92,7 @@ import {
 import { extractPromptText } from "./terminal/titleGenerator";
 import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThreads.ts";
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
+import { MacosSleepPreventer } from "./macosSleepPreventer";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -275,7 +276,8 @@ export type ServerRuntimeServices =
   | Keybindings
   | Open
   | AnalyticsService
-  | ProjectionThreadRepository;
+  | ProjectionThreadRepository
+  | MacosSleepPreventer;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -315,6 +317,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const claudeSessionManager = yield* ClaudeSessionManager;
   const piSessionManager = yield* PiSessionManager;
+  const macosSleepPreventer = yield* MacosSleepPreventer;
   const keybindingsManager = yield* Keybindings;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -578,6 +581,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     );
   };
 
+  const updateMacosSleepPrevention = (event: ClaudeSessionEvent | PiSessionEvent) => {
+    if (event.type === "turnStart") {
+      return macosSleepPreventer.setThreadInProgress(event.threadId, true);
+    }
+    if (event.type === "hookStatus") {
+      return macosSleepPreventer.setThreadInProgress(
+        event.threadId,
+        event.hookStatus === "working",
+      );
+    }
+    if (event.type === "hibernated" || event.type === "exited" || event.type === "error") {
+      return macosSleepPreventer.clearThread(event.threadId);
+    }
+    return Effect.void;
+  };
+
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
     const respond = (
@@ -724,13 +743,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
           for (const event of events) {
             void Effect.runPromise(
-              broadcastPush({
-                type: "push",
-                channel: WS_CHANNELS.claudeSessionEvent,
-                data: event,
-              }).pipe(
+              Effect.all([
+                updateMacosSleepPrevention(event),
+                broadcastPush({
+                  type: "push",
+                  channel: WS_CHANNELS.claudeSessionEvent,
+                  data: event,
+                }),
+              ]).pipe(
                 Effect.catch((error) =>
-                  Effect.logError("hook broadcast failed", { cause: error }),
+                  Effect.logError("hook event handling failed", { cause: error }),
                 ),
               ),
             );
@@ -1086,6 +1108,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
 
   const onClaudeSessionEvent = Effect.fnUntraced(function* (event: ClaudeSessionEvent) {
+    yield* updateMacosSleepPrevention(event);
     yield* broadcastPush({
       type: "push",
       channel: WS_CHANNELS.claudeSessionEvent,
@@ -1147,6 +1170,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeClaudeEvents()));
 
   const onPiSessionEvent = Effect.fnUntraced(function* (event: PiSessionEvent) {
+    yield* updateMacosSleepPrevention(event);
     yield* broadcastPush({
       type: "push",
       channel: WS_CHANNELS.piSessionEvent,
@@ -1258,6 +1282,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         if (normalizedCommand.type === "thread.delete") {
           yield* claudeSessionManager.destroySession(normalizedCommand.threadId);
           yield* piSessionManager.destroySession(normalizedCommand.threadId);
+          yield* macosSleepPreventer.clearThread(normalizedCommand.threadId);
           pendingPiPromptBuffers.delete(normalizedCommand.threadId);
           autoTitledThreads.delete(normalizedCommand.threadId);
         }
@@ -1625,6 +1650,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         yield* claudeSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
         yield* piSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
+        yield* macosSleepPreventer.setEnabled(
+          settings.preventMacosSleepWhenThreadInProgress,
+        );
 
         return settings;
       }

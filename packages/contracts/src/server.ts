@@ -48,11 +48,23 @@ const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 export const DEFAULT_ACTIVE_HARNESS_SESSION_CAP = 10;
 export const MIN_ACTIVE_HARNESS_SESSION_CAP = 1;
 export const MAX_ACTIVE_HARNESS_SESSION_CAP = 100;
+export const DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS = true;
+
+const MaxActiveHarnessSessions = PositiveInt.check(
+  Schema.isLessThanOrEqualTo(MAX_ACTIVE_HARNESS_SESSION_CAP),
+);
 
 export const ServerSettings = Schema.Struct({
-  maxActiveHarnessSessions: PositiveInt.check(
-    Schema.isLessThanOrEqualTo(MAX_ACTIVE_HARNESS_SESSION_CAP),
-  ).pipe(Schema.withConstructorDefault(() => Option.some(DEFAULT_ACTIVE_HARNESS_SESSION_CAP))),
+  maxActiveHarnessSessions: MaxActiveHarnessSessions.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_ACTIVE_HARNESS_SESSION_CAP),
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_ACTIVE_HARNESS_SESSION_CAP)),
+  ),
+  preventMacosSleepWhenThreadInProgress: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS),
+    Schema.withConstructorDefault(() =>
+      Option.some(DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS),
+    ),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -67,7 +79,10 @@ export const ServerConfig = Schema.Struct({
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
-export const ServerUpdateSettingsInput = ServerSettings;
+export const ServerUpdateSettingsInput = Schema.Struct({
+  maxActiveHarnessSessions: Schema.optional(MaxActiveHarnessSessions),
+  preventMacosSleepWhenThreadInProgress: Schema.optional(Schema.Boolean),
+});
 export type ServerUpdateSettingsInput = typeof ServerUpdateSettingsInput.Type;
 
 export const ServerUpsertKeybindingInput = KeybindingRule;

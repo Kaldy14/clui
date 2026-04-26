@@ -3,10 +3,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import {
   DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+  DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
   MAX_ACTIVE_HARNESS_SESSION_CAP,
   MIN_ACTIVE_HARNESS_SESSION_CAP,
   type CodingHarness,
   type ProviderKind,
+  type ServerUpdateSettingsInput,
 } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
@@ -223,6 +225,30 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
+  const persistServerSettings = useCallback(
+    (patch: ServerUpdateSettingsInput) => {
+      setServerSettingsError(null);
+      setIsSavingServerSettings(true);
+      const api = ensureNativeApi();
+      void api.server
+        .updateSettings(patch)
+        .then((nextSettings) => {
+          queryClient.setQueryData(serverQueryKeys.config(), (previous) =>
+            previous ? { ...previous, settings: nextSettings } : previous,
+          );
+        })
+        .catch((error) => {
+          setServerSettingsError(
+            error instanceof Error ? error.message : "Unable to save server settings.",
+          );
+        })
+        .finally(() => {
+          setIsSavingServerSettings(false);
+        });
+    },
+    [queryClient],
+  );
+
   const saveServerSettings = useCallback(() => {
     const nextCap = Number.parseInt(maxActiveHarnessSessionsInput, 10);
     if (
@@ -236,25 +262,8 @@ function SettingsRouteView() {
       return;
     }
 
-    setServerSettingsError(null);
-    setIsSavingServerSettings(true);
-    const api = ensureNativeApi();
-    void api.server
-      .updateSettings({ maxActiveHarnessSessions: nextCap })
-      .then((nextSettings) => {
-        queryClient.setQueryData(serverQueryKeys.config(), (previous) =>
-          previous ? { ...previous, settings: nextSettings } : previous,
-        );
-      })
-      .catch((error) => {
-        setServerSettingsError(
-          error instanceof Error ? error.message : "Unable to save server settings.",
-        );
-      })
-      .finally(() => {
-        setIsSavingServerSettings(false);
-      });
-  }, [maxActiveHarnessSessionsInput, queryClient]);
+    persistServerSettings({ maxActiveHarnessSessions: nextCap });
+  }, [maxActiveHarnessSessionsInput, persistServerSettings]);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -323,6 +332,9 @@ function SettingsRouteView() {
   const configuredMaxActiveHarnessSessions =
     serverConfigQuery.data?.settings.maxActiveHarnessSessions ??
     DEFAULT_ACTIVE_HARNESS_SESSION_CAP;
+  const configuredPreventMacosSleepWhenThreadInProgress =
+    serverConfigQuery.data?.settings.preventMacosSleepWhenThreadInProgress ??
+    DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS;
   const parsedMaxActiveHarnessSessions = Number.parseInt(maxActiveHarnessSessionsInput, 10);
   const hasValidMaxActiveHarnessSessions =
     Number.isInteger(parsedMaxActiveHarnessSessions) &&
@@ -448,6 +460,32 @@ function SettingsRouteView() {
                 <p className="text-xs text-muted-foreground">
                   Current setting: {configuredMaxActiveHarnessSessions}. When a harness goes over the cap, Clui hibernates the oldest active thread and resumes it on demand later.
                 </p>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="prevent-macos-sleep-when-thread-in-progress"
+                        className="text-xs font-medium text-foreground"
+                      >
+                        Prevent macOS sleep while a thread is working
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        Keeps your Mac awake with <code>caffeinate</code> while Claude Code or pi is actively processing a turn. Sleep is allowed again when the thread completes, exits, hibernates, or waits for input.
+                      </p>
+                    </div>
+                    <Switch
+                      id="prevent-macos-sleep-when-thread-in-progress"
+                      checked={configuredPreventMacosSleepWhenThreadInProgress}
+                      disabled={serverConfigQuery.isLoading || isSavingServerSettings}
+                      onCheckedChange={(checked) => {
+                        persistServerSettings({
+                          preventMacosSleepWhenThreadInProgress: checked,
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
 
                 {serverSettingsError ? (
                   <p className="text-xs text-destructive">{serverSettingsError}</p>

@@ -9,6 +9,10 @@ const DEFAULT_SERVER_SETTINGS = ServerSettings.makeUnsafe({});
 const decodeServerSettingsJson = Schema.decodeSync(Schema.fromJsonString(ServerSettings));
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 
+export type ServerSettingsPatch = {
+  readonly [Key in keyof ServerSettings]?: ServerSettings[Key] | undefined;
+};
+
 export function getServerSettingsPath(stateDir: string): string {
   return path.join(stateDir, SERVER_SETTINGS_FILE_NAME);
 }
@@ -24,11 +28,14 @@ export async function loadServerSettings(stateDir: string): Promise<ServerSettin
 
 export async function saveServerSettings(
   stateDir: string,
-  patch: Partial<ServerSettings>,
+  patch: ServerSettingsPatch,
 ): Promise<ServerSettings> {
+  const definedPatch = Object.fromEntries(
+    Object.entries(patch).filter(([, value]) => value !== undefined),
+  );
   const next = decodeServerSettings({
     ...(await loadServerSettings(stateDir)),
-    ...patch,
+    ...definedPatch,
   });
   const settingsPath = getServerSettingsPath(stateDir);
   const tempPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`;

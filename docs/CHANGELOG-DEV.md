@@ -4,6 +4,27 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-26 — Prevent macOS sleep while threads are working
+
+**Problem:** Long-running Claude Code or pi turns could let macOS idle-sleep before the agent finished.
+
+**Root cause:** Clui tracked thread working/completed hook status for UI badges, but nothing translated that in-progress state into an OS-level sleep assertion.
+
+**Fix:** Added a server setting, defaulting to enabled, that starts a `caffeinate -dims` process while at least one thread is actively working and stops it when all working threads complete, hibernate, exit, error, or wait for input. The setting is persisted in server settings, exposed in Settings, applied live, and covered by server/runtime tests.
+
+**Affected files:**
+- `packages/contracts/src/server.ts`
+- `apps/server/src/serverSettings.ts`
+- `apps/server/src/macosSleepPreventer.ts`
+- `apps/server/src/macosSleepPreventer.test.ts`
+- `apps/server/src/serverLayers.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-25 — Release version bumped to `0.0.22` and Apple Silicon mac build produced
 
 **Problem:** The app version needed to be increased and a fresh macOS Apple Silicon desktop build produced from the current workspace state.

@@ -14,6 +14,7 @@ import { getServerSettingsPath } from "./serverSettings";
 
 import {
   DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+  DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
   DEFAULT_TERMINAL_ID,
   EDITORS,
   ORCHESTRATION_WS_METHODS,
@@ -52,6 +53,10 @@ import {
   PiSessionManager,
   type PiSessionManagerShape,
 } from "./terminal/Services/PiSession.ts";
+import {
+  MacosSleepPreventer,
+  type MacosSleepPreventerShape,
+} from "./macosSleepPreventer";
 
 interface PendingMessages {
   queue: unknown[];
@@ -211,6 +216,13 @@ const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   getClaudeSessionId: () => Effect.succeed(null),
   destroySession: () => Effect.void,
   purgeInactiveSessions: () => Effect.succeed(0),
+  dispose: Effect.void,
+};
+
+const defaultMacosSleepPreventer: MacosSleepPreventerShape = {
+  setEnabled: () => Effect.void,
+  setThreadInProgress: () => Effect.void,
+  clearThread: () => Effect.void,
   dispose: Effect.void,
 };
 
@@ -428,6 +440,7 @@ describe("WebSocket Server", () => {
       terminalManager?: TerminalManagerShape;
       claudeSessionManager?: ClaudeSessionManagerShape;
       piSessionManager?: PiSessionManagerShape;
+      macosSleepPreventer?: MacosSleepPreventerShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -468,6 +481,10 @@ describe("WebSocket Server", () => {
       options.piSessionManager
         ? Layer.succeed(PiSessionManager, options.piSessionManager)
         : Layer.empty,
+      Layer.succeed(
+        MacosSleepPreventer,
+        options.macosSleepPreventer ?? defaultMacosSleepPreventer,
+      ),
     );
 
     const runtimeLayer = Layer.merge(
@@ -790,7 +807,11 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
-      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
+      settings: {
+        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+        preventMacosSleepWhenThreadInProgress:
+          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -817,7 +838,11 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
-      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
+      settings: {
+        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+        preventMacosSleepWhenThreadInProgress:
+          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
@@ -854,7 +879,11 @@ describe("WebSocket Server", () => {
       ],
       providers: [],
       availableEditors: expect.any(Array),
-      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
+      settings: {
+        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+        preventMacosSleepWhenThreadInProgress:
+          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
@@ -890,7 +919,10 @@ describe("WebSocket Server", () => {
       issues: Array<{ kind: string; index?: number; message: string }>;
       providers: ReadonlyArray<unknown>;
       availableEditors: unknown;
-      settings: { maxActiveHarnessSessions: number };
+      settings: {
+        maxActiveHarnessSessions: number;
+        preventMacosSleepWhenThreadInProgress: boolean;
+      };
     };
     expect(result.cwd).toBe("/my/workspace");
     expect(result.keybindingsConfigPath).toBe(keybindingsPath);
@@ -910,7 +942,11 @@ describe("WebSocket Server", () => {
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
     expect(result.providers).toEqual([]);
-    expect(result.settings).toEqual({ maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP });
+    expect(result.settings).toEqual({
+      maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+      preventMacosSleepWhenThreadInProgress:
+        DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+    });
     expectAvailableEditors(result.availableEditors);
   });
 
@@ -941,6 +977,7 @@ describe("WebSocket Server", () => {
     const stateDir = makeTempDir("clui-state-update-server-settings-");
     const claudeCaps: number[] = [];
     const piCaps: number[] = [];
+    const sleepPreventionEnabled: boolean[] = [];
 
     server = await createTestServer({
       cwd: "/my/workspace",
@@ -959,6 +996,13 @@ describe("WebSocket Server", () => {
           return Effect.void;
         },
       },
+      macosSleepPreventer: {
+        ...defaultMacosSleepPreventer,
+        setEnabled: (enabled) => {
+          sleepPreventionEnabled.push(enabled);
+          return Effect.void;
+        },
+      },
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -972,14 +1016,26 @@ describe("WebSocket Server", () => {
     });
 
     expect(response.error).toBeUndefined();
-    expect(response.result).toEqual({ maxActiveHarnessSessions: 7 });
+    expect(response.result).toEqual({
+      maxActiveHarnessSessions: 7,
+      preventMacosSleepWhenThreadInProgress:
+        DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+    });
     expect(claudeCaps).toEqual([7]);
     expect(piCaps).toEqual([7]);
+    expect(sleepPreventionEnabled).toEqual([
+      DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+    ]);
     expect(
       JSON.parse(fs.readFileSync(getServerSettingsPath(stateDir), "utf8")) as {
         maxActiveHarnessSessions: number;
+        preventMacosSleepWhenThreadInProgress: boolean;
       },
-    ).toEqual({ maxActiveHarnessSessions: 7 });
+    ).toEqual({
+      maxActiveHarnessSessions: 7,
+      preventMacosSleepWhenThreadInProgress:
+        DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+    });
   });
 
   it("pushes server.configUpdated issues when keybindings file changes", async () => {
@@ -1080,7 +1136,11 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
-      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
+      settings: {
+        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+        preventMacosSleepWhenThreadInProgress:
+          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -1129,7 +1189,11 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: [],
       availableEditors: expect.any(Array),
-      settings: { maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP },
+      settings: {
+        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+        preventMacosSleepWhenThreadInProgress:
+          DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      },
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,
