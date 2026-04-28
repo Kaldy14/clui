@@ -49,6 +49,24 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-28 — Git action errors are copyable and Claude text generation falls back to Codex
+
+**Problem:** Git action failure toasts could show long Claude CLI errors without any way to copy the details, and Claude-only text generation failures blocked commit/PR automation even when Codex CLI was available.
+
+**Root cause:** `GitActionsControl` rendered action failures as plain toast descriptions with no clipboard action, and `ClaudeCliTextGeneration` only fell back to Codex for thread titles while commit messages, PR content, and branch names failed immediately on Claude CLI errors.
+
+**Fix:** Added a shared clipboard utility and a “Copy error” action to git action failure toasts. Reused the Codex text-generation implementation as a fallback for every Claude-backed text generation operation and normalized Claude JSON error payloads into concise messages before fallback/error reporting.
+
+**Affected files:**
+- `apps/web/src/components/GitActionsControl.tsx`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/lib/clipboard.ts`
+- `apps/server/src/git/Layers/ClaudeCliTextGeneration.ts`
+- `apps/server/src/git/Layers/CodexTextGeneration.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-28 — Sidebar shows active harness session usage
 
 **Problem:** The global active Claude Code/pi thread session count was only visible indirectly through per-thread status pills and the settings page cap, making it hard to know how close Clui was to hibernating sessions or where to clean up old inactive sessions.

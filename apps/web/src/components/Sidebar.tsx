@@ -51,6 +51,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { cn, isMacPlatform, newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
@@ -114,36 +115,6 @@ import {
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  // Try modern Clipboard API first, fall back to execCommand for cases where
-  // the browser's transient user activation has expired (e.g. after native
-  // context menu interactions in Electron).
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText !== undefined) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Permission denied — fall through to legacy fallback.
-    }
-  }
-  if (typeof document === "undefined") {
-    throw new Error("Clipboard API unavailable.");
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    if (!document.execCommand("copy")) {
-      throw new Error("execCommand('copy') returned false.");
-    }
-  } finally {
-    document.body.removeChild(textarea);
-  }
-}
 
 function CluiWordmark() {
   return (

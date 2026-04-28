@@ -31,6 +31,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
+import { copyTextToClipboard } from "~/lib/clipboard";
 import {
   gitBranchesQueryOptions,
   gitInitMutationOptions,
@@ -59,6 +60,16 @@ interface PendingDefaultBranchAction {
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
+
+function formatActionError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+  return "An error occurred.";
+}
 
 function getMenuActionDisabledReason(
   item: GitActionMenuItem,
@@ -417,11 +428,34 @@ export default function GitActionsControl({
         });
       } catch (err) {
         stopProgressUpdates();
+        const errorDescription = formatActionError(err);
         toastManager.update(resolvedProgressToastId, {
           type: "error",
           title: "Action failed",
-          description: err instanceof Error ? err.message : "An error occurred.",
+          description: errorDescription,
           data: threadToastData,
+          actionProps: {
+            children: "Copy error",
+            onClick: () => {
+              void copyTextToClipboard(errorDescription).then(
+                () => {
+                  toastManager.add({
+                    type: "success",
+                    title: "Error copied",
+                    data: threadToastData,
+                  });
+                },
+                (copyError) => {
+                  toastManager.add({
+                    type: "error",
+                    title: "Failed to copy error",
+                    description: formatActionError(copyError),
+                    data: threadToastData,
+                  });
+                },
+              );
+            },
+          },
         });
       }
     },

@@ -96,7 +96,7 @@ function sanitizePrTitle(raw: string): string {
   return "Update project changes";
 }
 
-const makeCodexTextGeneration = Effect.gen(function* () {
+export const makeCodexTextGeneration = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

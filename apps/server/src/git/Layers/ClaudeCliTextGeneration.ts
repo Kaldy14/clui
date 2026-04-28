@@ -7,16 +7,13 @@
  * @module ClaudeCliTextGeneration
  */
 
-import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@clui/shared/git";
 
 import { TextGenerationError } from "../Errors.ts";
-import {
-  generateThreadTitleWithCodex,
-  sanitizeGeneratedThreadTitle,
-} from "../threadTitleGeneration.ts";
+import { sanitizeGeneratedThreadTitle } from "../threadTitleGeneration.ts";
 import {
   type BranchNameGenerationResult,
   type CommitMessageGenerationResult,
@@ -25,6 +22,7 @@ import {
   type TextGenerationShape,
   TextGeneration,
 } from "../Services/TextGeneration.ts";
+import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 
 const SONNET_MODEL = "sonnet";
 const TIMEOUT_MS = 120_000;
@@ -75,11 +73,46 @@ function normalizeError(
   return new TextGenerationError({ operation, detail: fallback, cause: error });
 }
 
+function extractClaudeCliJsonErrorDetail(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+
+  const record = value as Record<string, unknown>;
+  const result = typeof record.result === "string" ? record.result.trim() : "";
+  if (result.length === 0) return null;
+
+  const status = record.api_error_status;
+  if (typeof status === "number" || typeof status === "string") {
+    return `${result} (Claude API status ${status})`;
+  }
+  return result;
+}
+
+function extractClaudeCliFailureDetail(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return "";
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const parsedDetail = extractClaudeCliJsonErrorDetail(parsed);
+    if (parsedDetail) return parsedDetail;
+  } catch {
+    // Non-JSON stderr/stdout is already a useful CLI failure detail.
+  }
+
+  return trimmed;
+}
+
+function formatClaudeCliFailure(stderr: string, stdout: string, exitCode: number): string {
+  const rawDetail = stderr.trim().length > 0 ? stderr : stdout;
+  const detail = extractClaudeCliFailureDetail(rawDetail);
+  return detail.length > 0
+    ? `Claude CLI failed: ${detail}`
+    : `Claude CLI failed with code ${exitCode}.`;
+}
 
 export const makeClaudeCliTextGeneration = Effect.gen(function* () {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+  const codexTextGeneration = yield* makeCodexTextGeneration;
 
   const readStreamAsString = <E>(
     operation: string,
@@ -98,6 +131,27 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       );
       return text;
     });
+
+  const withCodexFallback = <A, R1, R2>(
+    operation: string,
+    claudeEffect: Effect.Effect<A, TextGenerationError, R1>,
+    codexEffect: Effect.Effect<A, TextGenerationError, R2>,
+  ): Effect.Effect<A, TextGenerationError, R1 | R2> =>
+    claudeEffect.pipe(
+      Effect.catch((claudeError) =>
+        codexEffect.pipe(
+          Effect.catch((codexError) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: `Claude generation failed (${claudeError.detail}); Codex CLI fallback failed (${codexError.detail})`,
+                cause: codexError,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
 
   const runClaudeJson = <S extends Schema.Top>({
     operation,
@@ -162,12 +216,9 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       );
 
       if (exitCode !== 0) {
-        const detail = stderr.trim() || stdout.trim();
         return yield* new TextGenerationError({
           operation,
-          detail: detail.length > 0
-            ? `Claude CLI failed: ${detail}`
-            : `Claude CLI failed with code ${exitCode}.`,
+          detail: formatClaudeCliFailure(stderr, stdout, exitCode),
         });
       }
 
@@ -179,6 +230,13 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
             detail: "Claude CLI returned invalid JSON output.",
           }),
       });
+
+      if (parsed.is_error === true) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: formatClaudeCliFailure("", stdout, exitCode),
+        });
+      }
 
       // Extract result string, strip markdown code fences, parse as JSON
       const resultValue = parsed.result;
@@ -269,24 +327,28 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
           body: Schema.String,
         });
 
-    return runClaudeJson({
-      operation: "generateCommitMessage",
-      model: SONNET_MODEL,
-      systemPrompt,
-      userPrompt,
-      outputSchema,
-      cwd: input.cwd,
-    }).pipe(
-      Effect.map(
-        (generated) =>
-          ({
-            subject: sanitizeCommitSubject(generated.subject),
-            body: generated.body.trim(),
-            ...("branch" in generated && typeof generated.branch === "string"
-              ? { branch: sanitizeFeatureBranchName(generated.branch) }
-              : {}),
-          }) satisfies CommitMessageGenerationResult,
+    return withCodexFallback(
+      "generateCommitMessage",
+      runClaudeJson({
+        operation: "generateCommitMessage",
+        model: SONNET_MODEL,
+        systemPrompt,
+        userPrompt,
+        outputSchema,
+        cwd: input.cwd,
+      }).pipe(
+        Effect.map(
+          (generated) =>
+            ({
+              subject: sanitizeCommitSubject(generated.subject),
+              body: generated.body.trim(),
+              ...("branch" in generated && typeof generated.branch === "string"
+                ? { branch: sanitizeFeatureBranchName(generated.branch) }
+                : {}),
+            }) satisfies CommitMessageGenerationResult,
+        ),
       ),
+      codexTextGeneration.generateCommitMessage(input),
     );
   };
 
@@ -316,24 +378,28 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       limitSection(input.diffPatch, 40_000),
     ].join("\n");
 
-    return runClaudeJson({
-      operation: "generatePrContent",
-      model: SONNET_MODEL,
-      systemPrompt,
-      userPrompt,
-      outputSchema: Schema.Struct({
-        title: Schema.String,
-        body: Schema.String,
-      }),
-      cwd: input.cwd,
-    }).pipe(
-      Effect.map(
-        (generated) =>
-          ({
-            title: sanitizePrTitle(generated.title),
-            body: generated.body.trim(),
-          }) satisfies PrContentGenerationResult,
+    return withCodexFallback(
+      "generatePrContent",
+      runClaudeJson({
+        operation: "generatePrContent",
+        model: SONNET_MODEL,
+        systemPrompt,
+        userPrompt,
+        outputSchema: Schema.Struct({
+          title: Schema.String,
+          body: Schema.String,
+        }),
+        cwd: input.cwd,
+      }).pipe(
+        Effect.map(
+          (generated) =>
+            ({
+              title: sanitizePrTitle(generated.title),
+              body: generated.body.trim(),
+            }) satisfies PrContentGenerationResult,
+        ),
       ),
+      codexTextGeneration.generatePrContent(input),
     );
   };
 
@@ -361,18 +427,22 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       );
     }
 
-    return runClaudeJson({
-      operation: "generateBranchName",
-      model: SONNET_MODEL,
-      systemPrompt,
-      userPrompt: promptSections.join("\n"),
-      outputSchema: Schema.Struct({ branch: Schema.String }),
-      cwd: input.cwd,
-    }).pipe(
-      Effect.map(
-        (generated) =>
-          ({ branch: sanitizeBranchFragment(generated.branch) }) satisfies BranchNameGenerationResult,
+    return withCodexFallback(
+      "generateBranchName",
+      runClaudeJson({
+        operation: "generateBranchName",
+        model: SONNET_MODEL,
+        systemPrompt,
+        userPrompt: promptSections.join("\n"),
+        outputSchema: Schema.Struct({ branch: Schema.String }),
+        cwd: input.cwd,
+      }).pipe(
+        Effect.map(
+          (generated) =>
+            ({ branch: sanitizeBranchFragment(generated.branch) }) satisfies BranchNameGenerationResult,
+        ),
       ),
+      codexTextGeneration.generateBranchName(input),
     );
   };
 
@@ -425,15 +495,9 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       );
 
       if (exitCode !== 0) {
-        const stderrDetail = stderr.trim();
-        const stdoutDetail = stdout.trim();
-        const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
         return yield* new TextGenerationError({
           operation: "generateThreadTitle",
-          detail:
-            detail.length > 0
-              ? `Claude CLI failed: ${detail}`
-              : `Claude CLI failed with code ${exitCode}.`,
+          detail: formatClaudeCliFailure(stderr, stdout, exitCode),
         });
       }
 
@@ -445,6 +509,13 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
             detail: `Claude CLI returned invalid JSON. stdout length=${stdout.length}`,
           }),
       });
+      if (parsed.is_error === true) {
+        return yield* new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: formatClaudeCliFailure("", stdout, exitCode),
+        });
+      }
+
       const title = sanitizeGeneratedThreadTitle(
         typeof parsed.result === "string" ? parsed.result : null,
       );
@@ -469,23 +540,10 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       ),
     );
 
-    return generateWithClaude.pipe(
-      Effect.catch((claudeError) =>
-        generateThreadTitleWithCodex(input.promptText).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.catch((codexError) =>
-            Effect.fail(
-              new TextGenerationError({
-                operation: "generateThreadTitle",
-                detail: `Claude CLI title generation failed (${claudeError.detail}); Codex fallback failed (${codexError.detail})`,
-                cause: codexError,
-              }),
-            ),
-          ),
-        ),
-      ),
+    return withCodexFallback(
+      "generateThreadTitle",
+      generateWithClaude,
+      codexTextGeneration.generateThreadTitle(input),
     );
   };
 
