@@ -42,6 +42,42 @@ type ThreadStatusInput = Pick<
   | "hookStatus"
 >;
 
+type HarnessSessionStatsThread = Pick<Thread, "harness" | "terminalStatus">;
+
+export interface ActiveHarnessSessionStats {
+  activeByHarness: Record<CodingHarness, number>;
+  totalActive: number;
+  maxActivePerHarness: number;
+  busiestHarness: CodingHarness;
+  busiestHarnessActive: number;
+}
+
+export function getActiveHarnessSessionStats(input: {
+  threads: Iterable<HarnessSessionStatsThread>;
+  maxActivePerHarness: number;
+}): ActiveHarnessSessionStats {
+  const activeByHarness: Record<CodingHarness, number> = {
+    claudeCode: 0,
+    pi: 0,
+  };
+
+  for (const thread of input.threads) {
+    if (thread.terminalStatus !== "active") continue;
+    activeByHarness[thread.harness] += 1;
+  }
+
+  const busiestHarness =
+    activeByHarness.claudeCode >= activeByHarness.pi ? "claudeCode" : "pi";
+
+  return {
+    activeByHarness,
+    totalActive: activeByHarness.claudeCode + activeByHarness.pi,
+    maxActivePerHarness: input.maxActivePerHarness,
+    busiestHarness,
+    busiestHarnessActive: activeByHarness[busiestHarness],
+  };
+}
+
 export async function createThreadAndNavigate(input: {
   api: {
     orchestration: Pick<NativeApi["orchestration"], "dispatchCommand">;

@@ -20,29 +20,43 @@ import { SidebarMenuButton } from "./ui/sidebar";
 /** Hook statuses that indicate the thread is busy and should not be purged. */
 const BUSY_HOOK_STATUSES = new Set(["working", "needsInput", "pendingApproval"]);
 
-export function PurgeSessionsButton({ routeThreadId }: { routeThreadId: string | null }) {
-  const [open, setOpen] = useState(false);
-  const [result, setResult] = useState<{ sessionsKilled: number; snapshotsCleared: number } | null>(null);
+function collectPurgeExcludedThreadIds(routeThreadId: string | null): ThreadId[] {
+  const threads = useStore.getState().threads;
+  const excludeThreadIds: ThreadId[] = [];
+  if (routeThreadId) {
+    excludeThreadIds.push(routeThreadId as ThreadId);
+  }
+  for (const thread of threads) {
+    if (thread.terminalStatus === "active") {
+      excludeThreadIds.push(thread.id as ThreadId);
+      continue;
+    }
+    if (thread.hookStatus && BUSY_HOOK_STATUSES.has(thread.hookStatus)) {
+      excludeThreadIds.push(thread.id as ThreadId);
+    }
+  }
+  return excludeThreadIds;
+}
+
+export function PurgeSessionsDialog({
+  open,
+  onOpenChange,
+  routeThreadId,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  routeThreadId: string | null;
+}) {
+  const [result, setResult] = useState<{
+    sessionsKilled: number;
+    snapshotsCleared: number;
+  } | null>(null);
 
   const handlePurge = async () => {
     const api = readNativeApi();
     if (!api) return;
 
-    // Collect protected thread IDs: current thread + busy threads
-    const threads = useStore.getState().threads;
-    const excludeThreadIds: ThreadId[] = [];
-    if (routeThreadId) {
-      excludeThreadIds.push(routeThreadId as ThreadId);
-    }
-    for (const thread of threads) {
-      if (thread.terminalStatus === "active") {
-        excludeThreadIds.push(thread.id as ThreadId);
-        continue;
-      }
-      if (thread.hookStatus && BUSY_HOOK_STATUSES.has(thread.hookStatus)) {
-        excludeThreadIds.push(thread.id as ThreadId);
-      }
-    }
+    const excludeThreadIds = collectPurgeExcludedThreadIds(routeThreadId);
     const excludeSet = new Set(excludeThreadIds);
 
     try {
@@ -54,13 +68,56 @@ export function PurgeSessionsButton({ routeThreadId }: { routeThreadId: string |
       setResult(res);
       setTimeout(() => {
         setResult(null);
-        setOpen(false);
+        onOpenChange(false);
       }, 2000);
     } catch (err) {
       console.error("Failed to purge sessions:", err);
-      setOpen(false);
+      onOpenChange(false);
     }
   };
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogPopup>
+        {result ? (
+          <>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Sessions purged</AlertDialogTitle>
+              <AlertDialogDescription>
+                Killed {result.sessionsKilled} session
+                {result.sessionsKilled !== 1 ? "s" : ""}, cleared{" "}
+                {result.snapshotsCleared} snapshot
+                {result.snapshotsCleared !== 1 ? "s" : ""}.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogClose render={<Button variant="outline" />}>Done</AlertDialogClose>
+            </AlertDialogFooter>
+          </>
+        ) : (
+          <>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Purge inactive sessions?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will kill dormant terminal processes and clear cached scrollback for inactive
+                threads. Claude Code conversation history is not affected.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+              <Button variant="destructive" onClick={handlePurge}>
+                Purge
+              </Button>
+            </AlertDialogFooter>
+          </>
+        )}
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+export function PurgeSessionsButton({ routeThreadId }: { routeThreadId: string | null }) {
+  const [open, setOpen] = useState(false);
 
   return (
     <>
@@ -73,42 +130,7 @@ export function PurgeSessionsButton({ routeThreadId }: { routeThreadId: string |
         <span className="text-xs">Purge sessions</span>
       </SidebarMenuButton>
 
-      <AlertDialog open={open} onOpenChange={setOpen}>
-        <AlertDialogPopup>
-          {result ? (
-            <>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Sessions purged</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Killed {result.sessionsKilled} session
-                  {result.sessionsKilled !== 1 ? "s" : ""}, cleared{" "}
-                  {result.snapshotsCleared} snapshot
-                  {result.snapshotsCleared !== 1 ? "s" : ""}.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose render={<Button variant="outline" />}>Done</AlertDialogClose>
-              </AlertDialogFooter>
-            </>
-          ) : (
-            <>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Purge inactive sessions?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will kill dormant terminal processes and clear cached scrollback for inactive
-                  threads. Claude Code conversation history is not affected.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-                <Button variant="destructive" onClick={handlePurge}>
-                  Purge
-                </Button>
-              </AlertDialogFooter>
-            </>
-          )}
-        </AlertDialogPopup>
-      </AlertDialog>
+      <PurgeSessionsDialog open={open} onOpenChange={setOpen} routeThreadId={routeThreadId} />
     </>
   );
 }

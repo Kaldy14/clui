@@ -15,6 +15,7 @@ import {
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
+  Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
 import * as claudeCache from "../lib/claudeTerminalCache";
@@ -37,6 +38,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
@@ -73,6 +75,7 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -89,7 +92,7 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
-import { PurgeSessionsButton } from "./PurgeSessionsButton";
+import { PurgeSessionsButton, PurgeSessionsDialog } from "./PurgeSessionsButton";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import {
@@ -103,8 +106,10 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 import { getTopThreadForProject, orderThreadsForProject } from "../lib/threadOrdering";
 import {
   createThreadAndNavigate,
+  getActiveHarnessSessionStats,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
+  type ActiveHarnessSessionStats,
 } from "./Sidebar.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -148,6 +153,110 @@ function CluiWordmark() {
     >
       Clui
     </span>
+  );
+}
+
+const HARNESS_SESSION_STAT_ROWS = [
+  { key: "claudeCode", label: "Claude Code" },
+  { key: "pi", label: "pi" },
+] as const;
+
+function HarnessSessionUsageBadge({
+  onPurgeInactiveSessionsClick,
+  stats,
+}: {
+  onPurgeInactiveSessionsClick: () => void;
+  stats: ActiveHarnessSessionStats;
+}) {
+  const isAtLimit = stats.busiestHarnessActive >= stats.maxActivePerHarness;
+  const isNearLimit =
+    !isAtLimit && stats.busiestHarnessActive >= Math.ceil(stats.maxActivePerHarness * 0.8);
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label={
+              `Active harness sessions: ${stats.totalActive}/${stats.maxActivePerHarness}; ` +
+              "cap is per harness"
+            }
+            className={cn(
+              "inline-flex h-4 items-center rounded px-1 text-[9px] leading-none font-medium tracking-normal tabular-nums text-muted-foreground/45 transition-colors hover:bg-accent/70 hover:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
+              isAtLimit &&
+                "text-amber-600/75 hover:text-amber-600 dark:text-amber-300/75 dark:hover:text-amber-300",
+              isNearLimit && "text-muted-foreground/65",
+            )}
+          />
+        }
+      >
+        {stats.totalActive}/{stats.maxActivePerHarness}
+      </PopoverTrigger>
+      <PopoverPopup side="right" align="start" className="w-64">
+        <div className="space-y-3 text-xs">
+          <div>
+            <p className="font-medium text-foreground">Active thread sessions</p>
+            <p className="mt-1 leading-4 text-muted-foreground">
+              Live Claude Code and pi PTY sessions kept awake right now. The cap is per harness;
+              the oldest active thread is hibernated when a harness goes over it.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            {HARNESS_SESSION_STAT_ROWS.map((row) => {
+              const active = stats.activeByHarness[row.key];
+              const width =
+                stats.maxActivePerHarness > 0
+                  ? Math.min(100, (active / stats.maxActivePerHarness) * 100)
+                  : 0;
+              const rowAtLimit = active >= stats.maxActivePerHarness;
+
+              return (
+                <div key={row.key} className="rounded-md bg-muted/35 px-2 py-1.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">{row.label}</span>
+                    <span
+                      className={cn(
+                        "font-mono text-[11px] text-foreground tabular-nums",
+                        rowAtLimit && "text-amber-600 dark:text-amber-300",
+                      )}
+                    >
+                      {active}/{stats.maxActivePerHarness}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-background/70">
+                    <div
+                      className={cn(
+                        "h-full rounded-full bg-muted-foreground/45",
+                        rowAtLimit && "bg-amber-500/80",
+                      )}
+                      style={{ width: `${width}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="space-y-2 border-t border-border/70 pt-2">
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Badge shows {stats.totalActive} active globally against the configured{" "}
+              {stats.maxActivePerHarness} per-harness cap.
+            </p>
+            <Button
+              size="xs"
+              variant="outline"
+              className="w-full justify-start gap-1.5 text-[11px]"
+              onClick={onPurgeInactiveSessionsClick}
+            >
+              <Trash2Icon className="size-3.5" />
+              Purge inactive sessions
+            </Button>
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -555,10 +664,10 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
-  const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
-    ...serverConfigQueryOptions(),
-    select: (config) => config.keybindings,
-  });
+  const { data: serverConfig } = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfig?.keybindings ?? EMPTY_KEYBINDINGS;
+  const maxActiveHarnessSessions =
+    serverConfig?.settings.maxActiveHarnessSessions ?? DEFAULT_ACTIVE_HARNESS_SESSION_CAP;
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const [addingProject, setAddingProject] = useState(false);
@@ -587,6 +696,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   const [showArchivedThreads, setShowArchivedThreads] = useState(false);
+  const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -615,6 +725,14 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         ? threads
         : threads.filter((thread) => thread.archivedAt === null),
     [showArchivedThreads, threads],
+  );
+  const activeHarnessSessionStats = useMemo(
+    () =>
+      getActiveHarnessSessionStats({
+        threads,
+        maxActivePerHarness: maxActiveHarnessSessions,
+      }),
+    [maxActiveHarnessSessions, threads],
   );
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
@@ -1809,6 +1927,11 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
 
   return (
     <>
+      <PurgeSessionsDialog
+        open={purgeDialogOpen}
+        onOpenChange={setPurgeDialogOpen}
+        routeThreadId={routeThreadId}
+      />
       {isElectron ? (
         <>
           <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
@@ -1847,9 +1970,15 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         ) : null}
         <SidebarGroup className="px-2 py-2">
           <div className="mb-1 flex items-center justify-between px-2">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-              Projects
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                Projects
+              </span>
+              <HarnessSessionUsageBadge
+                onPurgeInactiveSessionsClick={() => setPurgeDialogOpen(true)}
+                stats={activeHarnessSessionStats}
+              />
+            </div>
             <div className="flex items-center gap-0.5">
               <Tooltip>
                 <TooltipTrigger

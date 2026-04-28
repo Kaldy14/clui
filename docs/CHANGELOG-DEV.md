@@ -49,6 +49,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-28 — Sidebar shows active harness session usage
+
+**Problem:** The global active Claude Code/pi thread session count was only visible indirectly through per-thread status pills and the settings page cap, making it hard to know how close Clui was to hibernating sessions or where to clean up old inactive sessions.
+
+**Root cause:** The sidebar did not summarize active terminal-backed harness sessions against the configured active-session cap, and the existing purge action was separated from the session usage context.
+
+**Fix:** Added a quiet session usage badge next to the sidebar “Projects” label, backed by shared sidebar logic that counts active sessions by harness. Clicking the badge opens a compact explanation with Claude Code and pi counts against the per-harness cap plus a purge button for inactive sessions.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/components/PurgeSessionsButton.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-25 — Release version bumped to `0.0.22` and Apple Silicon mac build produced
 
 **Problem:** The app version needed to be increased and a fresh macOS Apple Silicon desktop build produced from the current workspace state.

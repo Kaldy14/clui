@@ -1,8 +1,15 @@
-import { CommandId, ProjectId, ThreadId } from "@clui/contracts";
+import {
+  CommandId,
+  ProjectId,
+  ThreadId,
+  type CodingHarness,
+  type TerminalStatus,
+} from "@clui/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   createThreadAndNavigate,
+  getActiveHarnessSessionStats,
   hasUnseenCompletion,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -21,6 +28,39 @@ function makeLatestTurn(overrides?: {
     completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
   };
 }
+
+function makeHarnessSessionStatsThread(
+  harness: CodingHarness,
+  terminalStatus: TerminalStatus,
+) {
+  return { harness, terminalStatus };
+}
+
+describe("getActiveHarnessSessionStats", () => {
+  it("counts active sessions globally and by harness", () => {
+    expect(
+      getActiveHarnessSessionStats({
+        maxActivePerHarness: 10,
+        threads: [
+          makeHarnessSessionStatsThread("claudeCode", "active"),
+          makeHarnessSessionStatsThread("claudeCode", "active"),
+          makeHarnessSessionStatsThread("claudeCode", "dormant"),
+          makeHarnessSessionStatsThread("pi", "active"),
+          makeHarnessSessionStatsThread("pi", "new"),
+        ],
+      }),
+    ).toEqual({
+      activeByHarness: {
+        claudeCode: 2,
+        pi: 1,
+      },
+      busiestHarness: "claudeCode",
+      busiestHarnessActive: 2,
+      maxActivePerHarness: 10,
+      totalActive: 3,
+    });
+  });
+});
 
 describe("createThreadAndNavigate", () => {
   it("waits for the server thread.create ack before adding local state or navigating", async () => {
