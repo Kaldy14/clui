@@ -1,7 +1,13 @@
 import type { CodingHarness, GitStackedAction, GitStatusResult, ThreadId } from "@clui/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CloudUploadIcon,
+  GitBranchIcon,
+  GitCommitIcon,
+  InfoIcon,
+} from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -26,6 +32,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Group, GroupSeparator } from "~/components/ui/group";
+import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -34,6 +41,7 @@ import { toastManager } from "~/components/ui/toast";
 import { copyTextToClipboard } from "~/lib/clipboard";
 import {
   gitBranchesQueryOptions,
+  gitCreateAndCheckoutBranchMutationOptions,
   gitInitMutationOptions,
   gitMutationKeys,
   gitPullMutationOptions,
@@ -93,6 +101,13 @@ function getMenuActionDisabledReason(
     return "Commit is currently unavailable.";
   }
 
+  if (item.id === "create_branch") {
+    if (!hasBranch) {
+      return "Detached HEAD: checkout a branch before creating another branch.";
+    }
+    return "Create branch is currently unavailable.";
+  }
+
   if (item.id === "push") {
     if (!hasBranch) {
       return "Detached HEAD: checkout a branch before pushing.";
@@ -134,6 +149,7 @@ const COMMIT_DIALOG_DESCRIPTION =
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
   if (icon === "commit") return <GitCommitIcon />;
   if (icon === "push") return <CloudUploadIcon />;
+  if (icon === "branch") return <GitBranchIcon />;
   return <GitHubIcon />;
 }
 
@@ -162,7 +178,9 @@ export default function GitActionsControl({
   );
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+  const [isCreateBranchDialogOpen, setIsCreateBranchDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
+  const [createBranchNameInput, setCreateBranchNameInput] = useState("");
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
   const [featureBranchNameInput, setFeatureBranchNameInput] = useState("feature/NO_TASK");
@@ -189,11 +207,16 @@ export default function GitActionsControl({
     gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
   );
   const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
+  const createBranchMutation = useMutation(
+    gitCreateAndCheckoutBranchMutationOptions({ cwd: gitCwd, queryClient }),
+  );
 
   const isRunStackedActionRunning =
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
-  const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
+  const isCreateBranchRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.createBranch(gitCwd) }) > 0;
+  const isGitActionRunning = isRunStackedActionRunning || isPullRunning || isCreateBranchRunning;
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
     if (!branchName) return false;
@@ -202,8 +225,8 @@ export default function GitActionsControl({
   }, [branchList?.branches, gitStatusForActions?.branch]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning),
-    [gitStatusForActions, isGitActionRunning],
+    () => buildMenuItems(gitStatusForActions, isGitActionRunning, isDefaultBranch),
+    [gitStatusForActions, isDefaultBranch, isGitActionRunning],
   );
   const quickAction = useMemo(
     () => resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch),
@@ -517,6 +540,30 @@ export default function GitActionsControl({
     });
   }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction, featureBranchNameInput]);
 
+  const runCreateBranch = useCallback(() => {
+    const branchName = createBranchNameInput.trim();
+    if (!branchName || createBranchMutation.isPending) return;
+
+    setIsCreateBranchDialogOpen(false);
+    setCreateBranchNameInput("");
+
+    const promise = createBranchMutation.mutateAsync(branchName);
+    toastManager.promise(promise, {
+      loading: { title: `Creating ${branchName}...`, data: threadToastData },
+      success: () => ({
+        title: "Created branch",
+        description: `Checked out ${branchName}`,
+        data: threadToastData,
+      }),
+      error: (err) => ({
+        title: "Failed to create branch",
+        description: err instanceof Error ? err.message : "An error occurred.",
+        data: threadToastData,
+      }),
+    });
+    void promise.catch(() => undefined);
+  }, [createBranchMutation, createBranchNameInput, threadToastData]);
+
   const runDialogActionOnNewBranch = useCallback(() => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
@@ -593,9 +640,13 @@ export default function GitActionsControl({
         void runGitActionWithToast({ action: "commit_push_pr" });
         return;
       }
+      if (item.dialogAction === "create_branch") {
+        setIsCreateBranchDialogOpen(true);
+        return;
+      }
       setIsCommitDialogOpen(true);
     },
-    [openExistingPr, runGitActionWithToast, setIsCommitDialogOpen],
+    [openExistingPr, runGitActionWithToast, setIsCommitDialogOpen, setIsCreateBranchDialogOpen],
   );
 
   const runDialogAction = useCallback(() => {
@@ -763,6 +814,72 @@ export default function GitActionsControl({
           </Menu>
         </Group>
       )}
+
+      <Dialog
+        open={isCreateBranchDialogOpen}
+        onOpenChange={(open) => {
+          setIsCreateBranchDialogOpen(open);
+          if (!open) {
+            setCreateBranchNameInput("");
+          }
+        }}
+      >
+        <DialogPopup className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create branch</DialogTitle>
+            <DialogDescription>
+              Create and checkout a feature branch from{" "}
+              {gitStatusForActions?.branch ?? "the current branch"}.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1 rounded-lg border border-input bg-muted/40 p-3 text-xs">
+              <span className="text-muted-foreground">From</span>
+              <span className="font-medium">
+                {gitStatusForActions?.branch ?? "(detached HEAD)"}
+              </span>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium" htmlFor="git-create-branch-name">
+                Branch name
+              </label>
+              <Input
+                id="git-create-branch-name"
+                value={createBranchNameInput}
+                onChange={(event) => setCreateBranchNameInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && createBranchNameInput.trim()) {
+                    event.preventDefault();
+                    runCreateBranch();
+                  }
+                }}
+                placeholder="feature/my-change"
+                size="sm"
+                spellCheck={false}
+              />
+            </div>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsCreateBranchDialogOpen(false);
+                setCreateBranchNameInput("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!createBranchNameInput.trim() || createBranchMutation.isPending}
+              onClick={runCreateBranch}
+            >
+              {createBranchMutation.isPending ? "Creating..." : "Create Branch"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
       <Dialog
         open={isCommitDialogOpen}

@@ -1,15 +1,11 @@
-import type {
-  GitRunStackedActionResult,
-  GitStackedAction,
-  GitStatusResult,
-} from "@clui/contracts";
+import type { GitRunStackedActionResult, GitStackedAction, GitStatusResult } from "@clui/contracts";
 
-export type GitActionIconName = "commit" | "push" | "pr";
+export type GitActionIconName = "commit" | "push" | "pr" | "branch";
 
-export type GitDialogAction = "commit" | "push" | "create_pr";
+export type GitDialogAction = "commit" | "push" | "create_pr" | "create_branch";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "commit" | "push" | "pr" | "create_branch";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
@@ -113,6 +109,7 @@ export function summarizeGitResult(result: GitRunStackedActionResult): {
 export function buildMenuItems(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
+  isDefaultBranch = false,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
@@ -125,6 +122,19 @@ export function buildMenuItems(
   const canCreatePr =
     !isBusy && hasBranch && !hasChanges && !hasOpenPr && gitStatus.aheadCount > 0 && !isBehind;
   const canOpenPr = !isBusy && hasOpenPr;
+  const canCreateBranch = !isBusy && hasBranch && isDefaultBranch;
+  const createBranchItem: GitActionMenuItem[] = isDefaultBranch
+    ? [
+        {
+          id: "create_branch",
+          label: "Create Branch",
+          disabled: !canCreateBranch,
+          icon: "branch",
+          kind: "open_dialog",
+          dialogAction: "create_branch",
+        },
+      ]
+    : [];
 
   return [
     {
@@ -135,6 +145,7 @@ export function buildMenuItems(
       kind: "open_dialog",
       dialogAction: "commit",
     },
+    ...createBranchItem,
     {
       id: "push",
       label: "Push",

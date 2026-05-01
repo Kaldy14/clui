@@ -4,6 +4,24 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-04-27 — Add default-branch create branch git menu option
+
+**Problem:** When working on `main`, the Git action dropdown did not offer a direct create-branch path unless the user entered another commit/default-branch flow.
+
+**Root cause:** The Git actions menu only exposed commit, push, and PR actions; branch creation was handled elsewhere or as part of stacked git actions, so the default branch menu had no non-primary branch action.
+
+**Fix:** Added a `Create Branch` menu item only when the active branch is the detected default branch, kept `Commit` as the first menu item/primary option, and wired a focused create-and-checkout branch dialog with query invalidation and toast feedback.
+
+**Affected files:**
+
+- `apps/web/src/components/GitActionsControl.logic.ts`
+- `apps/web/src/components/GitActionsControl.logic.test.ts`
+- `apps/web/src/components/GitActionsControl.tsx`
+- `apps/web/src/lib/gitReactQuery.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-26 — Prevent macOS sleep while threads are working
 
 **Problem:** Long-running Claude Code or pi turns could let macOS idle-sleep before the agent finished.

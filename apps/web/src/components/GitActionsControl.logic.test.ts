@@ -402,6 +402,49 @@ describe("when: working tree has local changes", () => {
 });
 
 describe("when: on default branch without open PR", () => {
+  it("buildMenuItems keeps Commit first and adds Create Branch as a secondary option", () => {
+    const items = buildMenuItems(
+      status({ branch: "main", hasWorkingTreeChanges: true }),
+      false,
+      true,
+    );
+
+    assert.deepEqual(items, [
+      {
+        id: "commit",
+        label: "Commit",
+        disabled: false,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+      {
+        id: "create_branch",
+        label: "Create Branch",
+        disabled: false,
+        icon: "branch",
+        kind: "open_dialog",
+        dialogAction: "create_branch",
+      },
+      {
+        id: "push",
+        label: "Push",
+        disabled: true,
+        icon: "push",
+        kind: "open_dialog",
+        dialogAction: "push",
+      },
+      {
+        id: "pr",
+        label: "Create PR",
+        disabled: true,
+        icon: "pr",
+        kind: "open_dialog",
+        dialogAction: "create_pr",
+      },
+    ]);
+  });
+
   it("resolveQuickAction returns commit & push when local changes exist", () => {
     const quick = resolveQuickAction(
       status({ branch: "main", hasWorkingTreeChanges: true }),
