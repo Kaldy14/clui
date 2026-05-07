@@ -1534,19 +1534,34 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         return;
       }
 
-      if (projectThreads.length > 0) {
-        toastManager.add({
-          type: "warning",
-          title: "Project is not empty",
-          description: "Delete all threads in this project before deleting it.",
-        });
-        return;
-      }
-
       const confirmed = await api.dialogs.confirm(
-        [`Delete project "${project.name}"?`, "This action cannot be undone."].join("\n"),
+        (projectThreads.length > 0
+          ? [
+              `Remove project "${project.name}" from Clui?`,
+              `Its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"} will be kept and restored if you add this folder again.`,
+            ]
+          : [`Delete project "${project.name}"?`, "This action cannot be undone."]
+        ).join("\n"),
       );
       if (!confirmed) return;
+
+      const activeThread = routeThreadId
+        ? threads.find((thread) => thread.id === routeThreadId)
+        : null;
+      if (activeThread?.projectId === projectId) {
+        const fallbackThread = threads.find(
+          (thread) => thread.projectId !== projectId && thread.archivedAt === null,
+        );
+        if (fallbackThread) {
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: fallbackThread.id },
+            replace: true,
+          });
+        } else {
+          await navigate({ to: "/", replace: true });
+        }
+      }
 
       try {
         clearProjectDraftThreadId(projectId);
@@ -1555,6 +1570,17 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
           commandId: newCommandId(),
           projectId,
         });
+        const snapshot = await api.orchestration.getSnapshot().catch(() => null);
+        if (snapshot) {
+          useStore.getState().syncServerReadModel(snapshot);
+        }
+        const projectTerminalId = projectTerminalThreadId(projectId);
+        storeSetTerminalOpen(projectTerminalId, false);
+        clearTerminalState(projectTerminalId);
+        for (const thread of projectThreads) {
+          claudeCache.dispose(thread.id);
+          clearTerminalState(thread.id);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error deleting project.";
         console.error("Failed to remove project", { projectId, error });

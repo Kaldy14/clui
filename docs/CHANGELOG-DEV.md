@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-05-07 — Project deletion preserves threads
+
+**Problem:** The sidebar blocked deleting a project while it still had threads, even though users expected removing/re-adding the folder to restore the existing thread history.
+
+**Root cause:** The delete action enforced an empty-project UI guard and the server always projected `project.delete` as a permanent project tombstone, which would hide associated threads without a restore path.
+
+**Fix:** Removed the empty-project guard, changed `project.delete` to archive/hide projects that still have non-deleted threads, and updated the confirmation/cleanup flow so re-adding the same folder unhides the project and shows its existing threads.
+
+**Affected files:**
+
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/decider.projectScripts.test.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-04-27 — Add default-branch create branch git menu option
 
 **Problem:** When working on `main`, the Git action dropdown did not offer a direct create-branch path unless the user entered another commit/default-branch flow.

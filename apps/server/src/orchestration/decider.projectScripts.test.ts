@@ -142,6 +142,79 @@ describe("decider project scripts", () => {
     expect((event.payload as { hiddenAt?: string | null }).hiddenAt).toBe(hiddenAt);
   });
 
+  it("soft-deletes projects with kept threads by hiding them", async () => {
+    const now = new Date().toISOString();
+    const projectId = asProjectId("project-delete-with-threads");
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-delete-with-threads"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-delete-with-threads"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-delete-with-threads"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Delete With Threads",
+          workspaceRoot: "/tmp/project-delete-with-threads",
+          defaultModel: null,
+          scripts: [],
+          prompts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create-delete-with-threads"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-delete-with-project"),
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-create-delete-with-threads"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-create-delete-with-threads"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-delete-with-project"),
+          projectId,
+          title: "Kept Thread",
+          model: "gpt-5-codex",
+          harness: "claudeCode",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: CommandId.makeUnsafe("cmd-project-delete-with-threads"),
+          projectId,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.meta-updated");
+    expect(event.payload).toMatchObject({ projectId });
+    expect((event.payload as { hiddenAt?: string | null }).hiddenAt).toEqual(expect.any(String));
+  });
+
   it("emits user message and turn-start-requested events for thread.turn.start", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);

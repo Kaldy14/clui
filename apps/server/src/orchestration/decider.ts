@@ -9,6 +9,7 @@ import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  listThreadsByProjectId,
   requireProject,
   requireProjectAbsent,
   requireThread,
@@ -125,6 +126,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         projectId: command.projectId,
       });
       const occurredAt = nowIso();
+      const hasKeptThreads = listThreadsByProjectId(readModel, command.projectId).some(
+        (thread) => thread.deletedAt === null,
+      );
+      if (hasKeptThreads) {
+        return {
+          ...withEventBase({
+            aggregateKind: "project",
+            aggregateId: command.projectId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "project.meta-updated",
+          payload: {
+            projectId: command.projectId,
+            hiddenAt: occurredAt,
+            updatedAt: occurredAt,
+          },
+        };
+      }
       return {
         ...withEventBase({
           aggregateKind: "project",
