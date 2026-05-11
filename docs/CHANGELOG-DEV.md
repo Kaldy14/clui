@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-05-11 — Cmd+V image paste in pi terminals
+
+**Problem:** In Clui pi terminal sessions, users had to press Ctrl+V to paste images even though Cmd+V worked in Warp.
+
+**Root cause:** xterm/browser paste handling only forwarded text paste data to the PTY. Image clipboard payloads from Cmd+V were never translated into pi's `app.clipboard.pasteImage` keybinding byte.
+
+**Fix:** Added a capture-phase terminal paste handler that detects image file clipboard items for pi sessions, suppresses the browser paste flow, and sends Ctrl+V (`\x16`) to pi. Text-only pastes continue through the normal xterm path. Added coverage for image clipboard item detection.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/clipboard.ts`
+- `apps/web/src/lib/clipboard.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-05-11 — Preserve pi bracketed paste after terminal replay reset
 
 **Problem:** In long pi threads, pasting multiline text could submit the first row and queue the remaining rows as separate messages.

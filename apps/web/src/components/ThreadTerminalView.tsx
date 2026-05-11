@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAppSettings } from "../appSettings";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
+import { clipboardItemsContainImageFile } from "../lib/clipboard";
 import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import {
@@ -57,6 +58,8 @@ function setWorktreeBranchPrefix(projectCwd: string, prefix: string): void {
 
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
 type HarnessKind = Thread["harness"];
+
+const PI_IMAGE_PASTE_KEYSTROKE = "\x16";
 
 function startHarnessSession(
   api: NativeApi,
@@ -912,6 +915,18 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       return true;
     });
 
+    const onPaste = (event: ClipboardEvent) => {
+      if (disposed || harness !== "pi") return;
+      if (!clipboardItemsContainImageFile(event.clipboardData?.items)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      void writeHarnessData(api, "pi", threadId, PI_IMAGE_PASTE_KEYSTROKE).catch(
+        () => undefined,
+      );
+    };
+    el.addEventListener("paste", onPaste, { capture: true });
+
     // Forward keystrokes to the server, filtering out terminal query
     // responses (OSC 11 background color, CPR cursor position) that
     // xterm.js generates internally — these would echo as garbage text.
@@ -1060,6 +1075,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       if (stickyMirrorRafId !== null) cancelAnimationFrame(stickyMirrorRafId);
       if (scrollbackTimeoutId != null) clearTimeout(scrollbackTimeoutId);
+      el.removeEventListener("paste", onPaste, { capture: true });
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onWheelClearIndicator);
       window.removeEventListener("resize", onWindowResize);

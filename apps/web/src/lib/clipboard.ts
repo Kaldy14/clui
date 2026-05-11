@@ -1,3 +1,20 @@
+type ClipboardDataTransferItem = Pick<DataTransferItem, "kind" | "type">;
+
+export function clipboardItemsContainImageFile(
+  items: ArrayLike<ClipboardDataTransferItem | null | undefined> | null | undefined,
+): boolean {
+  if (!items) return false;
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item?.kind === "file" && item.type.startsWith("image/")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export async function copyTextToClipboard(text: string): Promise<void> {
   // Try the modern Clipboard API first, then fall back to execCommand for cases
   // where browser user activation has expired (for example native context menus
