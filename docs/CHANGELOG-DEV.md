@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-05-11 — Preserve pi bracketed paste after terminal replay reset
+
+**Problem:** In long pi threads, pasting multiline text could submit the first row and queue the remaining rows as separate messages.
+
+**Root cause:** Clui full-reset xterm.js before replaying fresh scrollback snapshots. For long threads, the retained scrollback can omit pi's startup bracketed-paste enable sequence, leaving xterm's local `bracketedPasteMode` disabled even though pi expects bracketed paste input.
+
+**Fix:** Added terminal replay helpers that restore harness-specific input modes after reset/replay, and re-enable bracketed paste for pi terminals before and after scrollback replay. Added xterm-backed regression coverage for the reset behavior.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/terminalReplay.ts`
+- `apps/web/src/lib/terminalReplay.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-05-07 — Project deletion preserves threads
 
 **Problem:** The sidebar blocked deleting a project while it still had threads, even though users expected removing/re-adding the folder to restore the existing thread history.

@@ -13,6 +13,10 @@ import {
   type PiStickyInputMirror,
 } from "../lib/piStickyInputMirror";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
+import {
+  restoreTerminalInputModesForHarness,
+  writeTerminalFullResetForReplay,
+} from "../lib/terminalReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import { setupProjectScript } from "../projectScripts";
 import { readNativeApi } from "../nativeApi";
@@ -646,6 +650,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const { terminal, fitAddon } = entry;
     searchAddonRef.current = entry.searchAddon;
     terminal.options.disableStdin = false;
+    // Reattached pi terminals can have lost local bracketed-paste mode before
+    // scrollback replay completes; restore it immediately, then again after
+    // any replay reset below.
+    restoreTerminalInputModesForHarness(terminal, harness);
 
     // ── Scroll preservation ──────────────────────────────────────────────
     // xterm.js v6 natively preserves scroll position via the internal
@@ -768,14 +776,15 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // (e.g. duplicate Claude Code banners).
       const needsReset = sinceOffset == null || reset;
 
+      if (needsReset) {
+        writeTerminalFullResetForReplay(terminal, harness);
+      } else {
+        restoreTerminalInputModesForHarness(terminal, harness);
+      }
+
       if (scrollback) {
-        if (needsReset) {
-          terminal.write("\u001bc");
-        }
         terminal.write(scrollback);
-      } else if (reset) {
-        // Buffer was reset but no content yet — just clear stale content
-        terminal.write("\u001bc");
+        restoreTerminalInputModesForHarness(terminal, harness);
       }
       if (offset != null) {
         entry.lastServerOffset = offset;
