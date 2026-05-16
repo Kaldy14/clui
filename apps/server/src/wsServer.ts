@@ -513,7 +513,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (autoTitledThreads.has(threadId)) return;
     autoTitledThreads.add(threadId);
 
-    const fallbackTitle = promptText.length <= 50 ? promptText : `${promptText.slice(0, 49)}\u2026`;
+    const fallbackTitle = promptText.length <= 120 ? promptText : `${promptText.slice(0, 119)}\u2026`;
 
     void Effect.runPromise(
       textGeneration.generateThreadTitle({ promptText }).pipe(
@@ -676,7 +676,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
                 autoTitledThreads.add(threadId);
 
                 const fallbackTitle =
-                  promptText.length <= 50 ? promptText : `${promptText.slice(0, 49)}\u2026`;
+                  promptText.length <= 120 ? promptText : `${promptText.slice(0, 119)}\u2026`;
 
                 void Effect.runPromise(
                   textGeneration.generateThreadTitle({ promptText }).pipe(

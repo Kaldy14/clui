@@ -461,7 +461,7 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
           "--tools", "",
           "--max-turns", "1",
           "--effort", "low",
-          "--system-prompt", "Generate a concise title (max 60 chars) for a coding session. Summarize the intent in title case. Respond with ONLY the title text, nothing else.",
+          "--system-prompt", "Generate a descriptive thread title (up to 120 chars) for a coding session. Summarize the intent in title case. Prefer enough detail to distinguish similar sessions. Respond with ONLY the title text, nothing else.",
           "--no-session-persistence",
           "-",
         ],

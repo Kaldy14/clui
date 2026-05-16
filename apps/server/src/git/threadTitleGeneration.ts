@@ -6,7 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { TextGenerationError } from "./Errors.ts";
 import type { ThreadTitleGenerationResult } from "./Services/TextGeneration.ts";
 
-const TITLE_MAX_LENGTH = 60;
+const TITLE_MAX_LENGTH = 120;
 const TITLE_PROMPT_MAX_CHARS = 500;
 const CODEX_MODEL = "gpt-5.3-codex";
 const CODEX_REASONING_EFFORT = "low";
@@ -176,13 +176,14 @@ export const generateThreadTitleWithCodex = (
             stream: Stream.make(
               new TextEncoder().encode(
                 [
-                  "You generate concise titles for coding sessions.",
+                  "You generate descriptive titles for coding sessions.",
                   "Return a JSON object with key: title.",
                   "Rules:",
                   "- Summarize the user's intent, not the literal wording.",
                   "- Use title case.",
+                  "- Use enough detail to distinguish similar sessions.",
                   "- Do not wrap the title in quotes.",
-                  "- Keep it under 60 characters.",
+                  "- Keep it under 120 characters.",
                   "",
                   "User prompt:",
                   limitSection(promptText, TITLE_PROMPT_MAX_CHARS),

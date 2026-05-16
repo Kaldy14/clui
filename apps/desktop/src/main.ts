@@ -42,6 +42,7 @@ const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const SET_BADGE_COUNT_CHANNEL = "desktop:set-badge-count";
+const MOVE_WINDOW_BY_CHANNEL = "desktop:move-window-by";
 const STATE_DIR =
   process.env.CLUI_STATE_DIR?.trim() || Path.join(OS.homedir(), ".clui", "userdata");
 const DESKTOP_SCHEME = "clui";
@@ -1178,6 +1179,28 @@ function registerIpcHandlers(): void {
     if (typeof count !== "number") return;
     if (process.platform === "darwin" && app.dock) {
       app.dock.setBadge(count > 0 ? String(count) : "");
+    }
+  });
+
+  ipcMain.removeAllListeners(MOVE_WINDOW_BY_CHANNEL);
+  ipcMain.on(MOVE_WINDOW_BY_CHANNEL, (event, deltaX: unknown, deltaY: unknown) => {
+    if (typeof deltaX !== "number" || typeof deltaY !== "number") return;
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return;
+
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed() || window.isFullScreen()) return;
+
+    const safeDeltaX = Math.max(-2_000, Math.min(2_000, Math.trunc(deltaX)));
+    const safeDeltaY = Math.max(-2_000, Math.min(2_000, Math.trunc(deltaY)));
+    if (safeDeltaX === 0 && safeDeltaY === 0) return;
+
+    const position = window.getPosition();
+    const x = position[0] ?? 0;
+    const y = position[1] ?? 0;
+    try {
+      window.setPosition(x + safeDeltaX, y + safeDeltaY, false);
+    } catch {
+      // setPosition can fail on some Linux Wayland environments.
     }
   });
 }

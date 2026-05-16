@@ -19,7 +19,15 @@ import {
   RotateCcwIcon,
   ShieldOffIcon,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { stripDiffSearchParams } from "../diffRouteSearch";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../keybindings";
@@ -90,10 +98,22 @@ function TerminalStatusBadge({ thread }: { thread: Thread }) {
 
 // ── Editable Title ────────────────────────────────────────────────────
 
+type TitleDragState = {
+  pointerId: number;
+  startScreenX: number;
+  startScreenY: number;
+  lastScreenX: number;
+  lastScreenY: number;
+  dragging: boolean;
+};
+
+const TITLE_DRAG_THRESHOLD_PX = 3;
+
 function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dragStateRef = useRef<TitleDragState | null>(null);
 
   useEffect(() => {
     if (!editing) setDraft(title);
@@ -121,6 +141,56 @@ function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string 
     });
   }, [draft, title, threadId]);
 
+  const handleTitlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!isElectron || event.button !== 0 || window.desktopBridge?.moveWindowBy === undefined) {
+        return;
+      }
+
+      dragStateRef.current = {
+        pointerId: event.pointerId,
+        startScreenX: event.screenX,
+        startScreenY: event.screenY,
+        lastScreenX: event.screenX,
+        lastScreenY: event.screenY,
+        dragging: false,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [],
+  );
+
+  const handleTitlePointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    const totalDeltaX = event.screenX - dragState.startScreenX;
+    const totalDeltaY = event.screenY - dragState.startScreenY;
+    if (!dragState.dragging) {
+      if (Math.hypot(totalDeltaX, totalDeltaY) < TITLE_DRAG_THRESHOLD_PX) return;
+      dragState.dragging = true;
+    }
+
+    const deltaX = event.screenX - dragState.lastScreenX;
+    const deltaY = event.screenY - dragState.lastScreenY;
+    dragState.lastScreenX = event.screenX;
+    dragState.lastScreenY = event.screenY;
+    if (deltaX === 0 && deltaY === 0) return;
+
+    event.preventDefault();
+    window.desktopBridge?.moveWindowBy(deltaX, deltaY);
+  }, []);
+
+  const handleTitlePointerEnd = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    dragStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
   if (editing) {
     return (
       <input
@@ -132,7 +202,7 @@ function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string 
           if (e.key === "Enter") commit();
           if (e.key === "Escape") setEditing(false);
         }}
-        className="h-5 w-full min-w-0 rounded-sm border border-primary/40 bg-background/80 px-1 text-xs font-medium text-foreground outline-none ring-1 ring-primary/20"
+        className="h-5 w-full min-w-0 rounded-sm border border-primary/40 bg-background/80 px-1 font-[inherit] text-xs font-medium text-foreground outline-none ring-1 ring-primary/20"
         spellCheck={false}
       />
     );
@@ -141,9 +211,24 @@ function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string 
   return (
     <button
       type="button"
-      onClick={() => setEditing(true)}
-      className="min-w-0 w-full rounded-sm px-1 text-left text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
-      title="Click to rename"
+      onPointerDown={handleTitlePointerDown}
+      onPointerMove={handleTitlePointerMove}
+      onPointerUp={handleTitlePointerEnd}
+      onPointerCancel={handleTitlePointerEnd}
+      onLostPointerCapture={handleTitlePointerEnd}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setEditing(true);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " " && event.key !== "F2") return;
+        event.preventDefault();
+        setEditing(true);
+      }}
+      className="min-w-0 w-full cursor-default select-none rounded-sm px-1 text-left text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [-webkit-app-region:no-drag]"
+      title="Double-click to rename"
+      aria-label={`Rename ${title}`}
     >
       <span className="thread-title-fade block min-w-0 overflow-hidden whitespace-nowrap">
         {title}

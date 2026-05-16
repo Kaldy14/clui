@@ -149,6 +149,7 @@ export interface DesktopBridge {
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   setBadgeCount: (count: number) => void;
+  moveWindowBy: (deltaX: number, deltaY: number) => void;
 }
 
 export interface NativeApi {

@@ -4,6 +4,27 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-05-16 — Toolbar thread title double-click rename, longer titles, consistent font
+
+**Problem:** The top toolbar thread title started rename on single-click, which blocked Electron window dragging on that text. Auto-generated thread titles were truncated aggressively to 50/60 characters despite ample space. The inline rename input rendered in monospace while the read-only title used the UI sans-serif font, causing inconsistent width.
+
+**Root cause:** `EditableTitle` used `onClick` to enter edit mode, and the display element was a `<button>` which also applied `-webkit-app-region: no-drag` via the toolbar's `drag-region` CSS. Native Electron drag regions cannot also receive reliable double-click events, so the title needed a renderer-driven drag fallback once it became a double-click target. Title generation/sanitization capped titles to 60 characters (50 for raw-prompt fallbacks). The `<input>` inherited the global monospace rule for inputs.
+
+**Fix:** Changed `EditableTitle` to start rename on `onDoubleClick`, matching the sidebar behavior. Kept the title clickable with `no-drag` for double-click/keyboard rename, and added a small desktop bridge IPC that moves the Electron window while dragging the title text. Set the rename input to `font-[inherit]` so it matches the read-only title. Raised auto-title limits to 120 characters and adjusted prompts to request descriptive titles across `threadTitleGeneration.ts`, `ClaudeCliTextGeneration.ts`, and `wsServer.ts`.
+
+**Affected files:**
+
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/desktop/src/main.ts`
+- `apps/desktop/src/preload.ts`
+- `packages/contracts/src/ipc.ts`
+- `apps/server/src/git/threadTitleGeneration.ts`
+- `apps/server/src/git/Layers/ClaudeCliTextGeneration.ts`
+- `apps/server/src/wsServer.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-05-11 — Cmd+V image paste in pi terminals
 
 **Problem:** In Clui pi terminal sessions, users had to press Ctrl+V to paste images even though Cmd+V worked in Warp.
