@@ -6,7 +6,12 @@ import { Effect, Layer } from "effect";
 import { createLogger } from "../../logger";
 import { buildHookSettingsJson } from "../../hooks/hookSettings";
 import { loadServerSettings } from "../../serverSettings";
-import { PtyAdapter, type PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
+import {
+  PtyAdapter,
+  type PtyAdapterShape,
+  type PtyExitEvent,
+  type PtyProcess,
+} from "../Services/PTY";
 import {
   ClaudeSessionError,
   ClaudeSessionManager,
@@ -14,6 +19,11 @@ import {
   type ClaudeSessionState,
 } from "../Services/ClaudeSession";
 import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
+import {
+  getSessionProcessRegistryDir,
+  removeSessionProcessRegistryEntry,
+  writeSessionProcessRegistryEntry,
+} from "../sessionProcessRegistry";
 import { ServerConfig } from "../../config";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
@@ -87,7 +97,6 @@ class ScrollbackRingBuffer {
     this._totalBytes = 0;
     this._droppedBytes = 0;
   }
-
 }
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -115,6 +124,7 @@ interface ClaudeSessionManagerOptions {
   maxActiveSessions?: number;
   hookConfig?: HookConfig | undefined;
   dangerouslySkipPermissions?: boolean;
+  stateDir?: string;
 }
 
 export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManagerEvents> {
@@ -127,6 +137,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private maxActiveSessions: number;
   private readonly hookConfig: HookConfig | null;
   private readonly dangerouslySkipPermissions: boolean;
+  private readonly processRegistryDir: string | null;
   private readonly logger = createLogger("claude-session");
 
   constructor(options: ClaudeSessionManagerOptions) {
@@ -137,6 +148,9 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     this.maxActiveSessions = options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
     this.hookConfig = options.hookConfig ?? null;
     this.dangerouslySkipPermissions = options.dangerouslySkipPermissions ?? false;
+    this.processRegistryDir = options.stateDir
+      ? getSessionProcessRegistryDir(options.stateDir)
+      : null;
   }
 
   async startSession(input: {
@@ -227,6 +241,11 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         );
 
         entry.process = ptyProcess;
+        this.registerProcess(entry, ptyProcess);
+        const registerProcessTimer = setTimeout(() => {
+          this.registerProcess(entry, ptyProcess);
+        }, 100);
+        registerProcessTimer.unref?.();
 
         entry.unsubscribeData = ptyProcess.onData((data) => {
           this.onProcessData(entry, data);
@@ -263,6 +282,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         // Fire-and-forget reconciliation
         void this.reconcileActiveSessions(this.maxActiveSessions);
       } catch (error) {
+        this.unregisterProcess(entry);
         entry.status = "new";
         entry.process = null;
         const message = error instanceof Error ? error.message : "Failed to start claude session";
@@ -305,7 +325,10 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     });
   }
 
-  getScrollback(threadId: string, sinceOffset?: number): { scrollback: string | null; offset: number; reset: boolean } {
+  getScrollback(
+    threadId: string,
+    sinceOffset?: number,
+  ): { scrollback: string | null; offset: number; reset: boolean } {
     const entry = this.sessions.get(threadId);
     if (!entry) return { scrollback: null, offset: 0, reset: false };
 
@@ -346,6 +369,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     }
     entry.cols = cols;
     entry.rows = rows;
+    entry.lastInteractedAt = Date.now();
     entry.process.resize(cols, rows);
   }
 
@@ -361,9 +385,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
 
     if (activeSessions.length <= maxActive) return;
 
-    const sorted = activeSessions.toSorted(
-      (a, b) => a.lastInteractedAt - b.lastInteractedAt,
-    );
+    const sorted = activeSessions.toSorted((a, b) => a.lastInteractedAt - b.lastInteractedAt);
 
     const toHibernate = sorted.slice(0, sorted.length - maxActive);
     for (const entry of toHibernate) {
@@ -384,22 +406,19 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     const results = await Promise.race([
       Promise.allSettled(activeSessions.map((entry) => this.hibernateSession(entry.threadId))),
       new Promise<PromiseSettledResult<string>[]>((resolve) =>
-        setTimeout(
-          () => {
-            // Force-kill any PTYs that haven't hibernated yet to avoid
-            // orphaned promises holding locks after shutdown proceeds.
-            for (const entry of activeSessions) {
-              if (entry.process) this.stopProcess(entry);
-            }
-            resolve(
-              activeSessions.map(() => ({
-                status: "rejected" as const,
-                reason: new Error("timeout"),
-              })),
-            );
-          },
-          TIMEOUT_MS,
-        ),
+        setTimeout(() => {
+          // Force-kill any PTYs that haven't hibernated yet to avoid
+          // orphaned promises holding locks after shutdown proceeds.
+          for (const entry of activeSessions) {
+            if (entry.process) this.stopProcess(entry);
+          }
+          resolve(
+            activeSessions.map(() => ({
+              status: "rejected" as const,
+              reason: new Error("timeout"),
+            })),
+          );
+        }, TIMEOUT_MS),
       ),
     ]);
     for (const result of results) {
@@ -468,6 +487,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   }
 
   private onProcessExit(entry: ClaudeSessionEntry, event: PtyExitEvent): void {
+    this.unregisterProcess(entry);
     this.cleanupProcessHandles(entry);
     this.clearKillEscalationTimer(entry.process);
     entry.process = null;
@@ -488,6 +508,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   }
 
   private stopProcess(entry: ClaudeSessionEntry): void {
+    this.unregisterProcess(entry);
     const ptyProcess = entry.process;
     if (!ptyProcess) return;
     this.cleanupProcessHandles(entry);
@@ -500,6 +521,36 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     entry.unsubscribeData = null;
     entry.unsubscribeExit?.();
     entry.unsubscribeExit = null;
+  }
+
+  private registerProcess(entry: ClaudeSessionEntry, expectedProcess: PtyProcess): void {
+    if (!this.processRegistryDir || entry.process !== expectedProcess || entry.status !== "active")
+      return;
+    try {
+      writeSessionProcessRegistryEntry(this.processRegistryDir, {
+        harness: "claudeCode",
+        threadId: entry.threadId,
+        pid: expectedProcess.pid,
+      });
+    } catch (error) {
+      this.logger.warn("failed to register claude session process", {
+        threadId: entry.threadId,
+        pid: expectedProcess.pid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private unregisterProcess(entry: ClaudeSessionEntry): void {
+    if (!this.processRegistryDir) return;
+    try {
+      removeSessionProcessRegistryEntry(this.processRegistryDir, "claudeCode", entry.threadId);
+    } catch (error) {
+      this.logger.warn("failed to unregister claude session process", {
+        threadId: entry.threadId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private clearKillEscalationTimer(process: PtyProcess | null): void {
@@ -561,12 +612,16 @@ export const ClaudeSessionManagerLive = Layer.effect(
     };
 
     const runtime = yield* Effect.acquireRelease(
-      Effect.sync(() => new ClaudeSessionManagerRuntime({
-        ptyAdapter,
-        hookConfig,
-        maxActiveSessions: settings.maxActiveHarnessSessions,
-        dangerouslySkipPermissions: serverConfig.dangerouslySkipPermissions,
-      })),
+      Effect.sync(
+        () =>
+          new ClaudeSessionManagerRuntime({
+            ptyAdapter,
+            hookConfig,
+            maxActiveSessions: settings.maxActiveHarnessSessions,
+            dangerouslySkipPermissions: serverConfig.dangerouslySkipPermissions,
+            stateDir: serverConfig.stateDir,
+          }),
+      ),
       (r) => Effect.sync(() => r.dispose()),
     );
 
@@ -597,14 +652,12 @@ export const ClaudeSessionManagerLive = Layer.effect(
           catch: (cause) =>
             new ClaudeSessionError({ message: "Failed to resize claude session", cause }),
         }),
-      getSessionStatus: (threadId) =>
-        Effect.sync(() => runtime.getSessionStatus(threadId)),
+      getSessionStatus: (threadId) => Effect.sync(() => runtime.getSessionStatus(threadId)),
       reconcileActiveSessions: (maxActive) =>
         Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
       setMaxActiveSessions: (maxActive) =>
         Effect.promise(() => runtime.setMaxActiveSessions(maxActive)),
-      hibernateAll: () =>
-        Effect.promise(() => runtime.hibernateAll()),
+      hibernateAll: () => Effect.promise(() => runtime.hibernateAll()),
       subscribe: (listener) =>
         Effect.sync(() => {
           runtime.on("event", listener);
@@ -612,10 +665,8 @@ export const ClaudeSessionManagerLive = Layer.effect(
             runtime.off("event", listener);
           };
         }),
-      getClaudeSessionId: (threadId) =>
-        Effect.sync(() => runtime.getClaudeSessionId(threadId)),
-      destroySession: (threadId) =>
-        Effect.promise(() => runtime.destroySession(threadId)),
+      getClaudeSessionId: (threadId) => Effect.sync(() => runtime.getClaudeSessionId(threadId)),
+      destroySession: (threadId) => Effect.promise(() => runtime.destroySession(threadId)),
       purgeInactiveSessions: (excludeThreadIds) =>
         Effect.promise(() => runtime.purgeInactiveSessions(excludeThreadIds)),
       dispose: Effect.sync(() => runtime.dispose()),

@@ -89,29 +89,37 @@ class FakePtyAdapter implements PtyAdapterShape {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function makeRuntime(options: {
-  processKillGraceMs?: number;
-  historyLineLimit?: number;
-  maxActiveSessions?: number;
-  ptyAdapter?: FakePtyAdapter;
-} = {}) {
+function makeRuntime(
+  options: {
+    processKillGraceMs?: number;
+    historyLineLimit?: number;
+    maxActiveSessions?: number;
+    ptyAdapter?: FakePtyAdapter;
+  } = {},
+) {
   const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
   const runtime = new ClaudeSessionManagerRuntime({
     ptyAdapter,
-    ...(options.processKillGraceMs !== undefined && { processKillGraceMs: options.processKillGraceMs }),
+    ...(options.processKillGraceMs !== undefined && {
+      processKillGraceMs: options.processKillGraceMs,
+    }),
     ...(options.historyLineLimit !== undefined && { historyLineLimit: options.historyLineLimit }),
-    ...(options.maxActiveSessions !== undefined && { maxActiveSessions: options.maxActiveSessions }),
+    ...(options.maxActiveSessions !== undefined && {
+      maxActiveSessions: options.maxActiveSessions,
+    }),
   });
   return { ptyAdapter, runtime };
 }
 
-function defaultInput(overrides: Partial<{
-  threadId: string;
-  cwd: string;
-  resumeSessionId: string;
-  cols: number;
-  rows: number;
-}> = {}) {
+function defaultInput(
+  overrides: Partial<{
+    threadId: string;
+    cwd: string;
+    resumeSessionId: string;
+    cols: number;
+    rows: number;
+  }> = {},
+) {
   return {
     threadId: "thread-1",
     cwd: process.cwd(),
@@ -134,6 +142,7 @@ describe("ClaudeSessionManagerRuntime", () => {
 
   afterEach(() => {
     runtime?.dispose();
+    vi.restoreAllMocks();
   });
 
   // ── startSession ────────────────────────────────────────────────
@@ -364,6 +373,27 @@ describe("ClaudeSessionManagerRuntime", () => {
       expect(runtime.getSessionStatus("thread-3")).toBe("active");
     });
 
+    it("treats resize from a visible terminal as LRU interaction", async () => {
+      const result = makeRuntime({ maxActiveSessions: 100 });
+      runtime = result.runtime;
+      const now = vi.spyOn(Date, "now");
+
+      now.mockReturnValue(1_000);
+      await runtime.startSession(defaultInput({ threadId: "thread-1" }));
+      now.mockReturnValue(2_000);
+      await runtime.startSession(defaultInput({ threadId: "thread-2" }));
+      now.mockReturnValue(3_000);
+      await runtime.startSession(defaultInput({ threadId: "thread-3" }));
+
+      now.mockReturnValue(4_000);
+      runtime.resizeSession("thread-1", 120, 40);
+      await runtime.reconcileActiveSessions(1);
+
+      expect(runtime.getSessionStatus("thread-1")).toBe("active");
+      expect(runtime.getSessionStatus("thread-2")).toBe("dormant");
+      expect(runtime.getSessionStatus("thread-3")).toBe("dormant");
+    });
+
     it("does nothing when under the limit", async () => {
       const result = makeRuntime({ maxActiveSessions: 100 });
       runtime = result.runtime;
@@ -492,9 +522,9 @@ describe("ClaudeSessionManagerRuntime", () => {
       // Should emit sessionId event with the provided resume ID
       const sessionIdEvents = events.filter((e) => e.type === "sessionId");
       expect(sessionIdEvents).toHaveLength(1);
-      expect(
-        sessionIdEvents[0]!.type === "sessionId" && sessionIdEvents[0]!.claudeSessionId,
-      ).toBe("existing-session-abc");
+      expect(sessionIdEvents[0]!.type === "sessionId" && sessionIdEvents[0]!.claudeSessionId).toBe(
+        "existing-session-abc",
+      );
 
       // Should pass --resume (not --session-id) to the CLI
       const spawnInput = result.ptyAdapter.spawnInputs[0]!;

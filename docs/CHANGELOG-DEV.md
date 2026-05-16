@@ -4,6 +4,25 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-05-17 — Protect active harness sessions from sibling kill commands
+
+**Problem:** Active pi threads could suddenly pause/restart while still being viewed, and logs showed `pi session exited` with `signal=15` for PIDs that matched a visible `kill ...` command from another thread.
+
+**Root cause:** Clui did not identify its harness PTY PIDs as protected resources inside pi sessions, so an agent bash command could kill sibling Clui-managed `pi` processes. Server-side recency also did not count terminal resize/view activity, making quiet visible sessions easier LRU candidates.
+
+**Fix:** Added a shared session-process registry for active pi/Claude harness PIDs, injected its path into Clui-managed pi sessions, and extended the pi runtime extension to block bash tool calls that target other Clui-managed session PIDs or broad pi/Claude/Clui kill patterns. Server resize now refreshes session recency, and the active terminal view sends a quiet periodic resize heartbeat while visible so viewed threads remain fresh.
+
+**Affected files:**
+- `apps/server/src/terminal/sessionProcessRegistry.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-05-16 — Toolbar thread title double-click rename, longer titles, consistent font
 
 **Problem:** The top toolbar thread title started rename on single-click, which blocked Electron window dragging on that text. Auto-generated thread titles were truncated aggressively to 50/60 characters despite ample space. The inline rename input rendered in monospace while the read-only title used the UI sans-serif font, causing inconsistent width.

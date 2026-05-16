@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -13,6 +13,12 @@ import {
   type PtySpawnInput,
 } from "../Services/PTY";
 import { PiSessionManagerRuntime } from "./PiSessionManager";
+import {
+  CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV,
+  CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV,
+  getSessionProcessRegistryDir,
+  readSessionProcessRegistryEntries,
+} from "../sessionProcessRegistry";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
@@ -106,6 +112,7 @@ describe("PiSessionManagerRuntime", () => {
   afterEach(async () => {
     runtime?.dispose();
     runtime = null;
+    vi.restoreAllMocks();
     if (stateDir) {
       await rm(stateDir, { recursive: true, force: true });
       stateDir = null;
@@ -147,6 +154,13 @@ describe("PiSessionManagerRuntime", () => {
     expect(spawnInput.env.PI_CODING_AGENT_DIR).toBe(path.join(stateDir, "user-agent-dir"));
     expect(spawnInput.env.CLUI_PI_THREAD_ID).toBe("thread-1");
     expect(spawnInput.env.CLUI_PI_SESSION_SYNC_DIR).toBe(path.join(stateDir, "pi-session-sync"));
+    expect(spawnInput.env[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV]).toBe(
+      getSessionProcessRegistryDir(stateDir),
+    );
+    expect(spawnInput.env[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV]).toBe(String(process.pid));
+    expect(readSessionProcessRegistryEntries(getSessionProcessRegistryDir(stateDir))).toEqual([
+      expect.objectContaining({ harness: "pi", threadId: "thread-1", pid: 9100 }),
+    ]);
 
     const extensionSource = await readFile(
       path.join(stateDir, "pi-runtime", "clui-pi-session-sync.js"),
@@ -155,6 +169,8 @@ describe("PiSessionManagerRuntime", () => {
     expect(extensionSource).toContain("session_start");
     expect(extensionSource).toContain("tool_execution_start");
     expect(extensionSource).toContain("questionnaire");
+    expect(extensionSource).toContain("protectedSessionKillReason");
+    expect(extensionSource).toContain("args.matchAll(/\\b\\d{2,}\\b/g)");
   });
 
   it("reopens an explicit pi session file with --session", async () => {
@@ -259,6 +275,29 @@ describe("PiSessionManagerRuntime", () => {
     expect(runtime.getSessionFile("thread-1")).toBe(migratedFile);
   });
 
+  it("treats resize from a visible terminal as LRU interaction", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir, maxActiveSessions: 100 });
+    const now = vi.spyOn(Date, "now");
+
+    now.mockReturnValue(1_000);
+    await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
+    now.mockReturnValue(2_000);
+    await runtime.startSession({ threadId: "thread-2", cwd, cols: 100, rows: 24 });
+    now.mockReturnValue(3_000);
+    await runtime.startSession({ threadId: "thread-3", cwd, cols: 100, rows: 24 });
+
+    now.mockReturnValue(4_000);
+    runtime.resizeSession("thread-1", 120, 40);
+    await runtime.reconcileActiveSessions(1);
+
+    expect(runtime.getSessionStatus("thread-1")).toBe("active");
+    expect(runtime.getSessionStatus("thread-2")).toBe("dormant");
+    expect(runtime.getSessionStatus("thread-3")).toBe("dormant");
+  });
+
   it("tracks active session file updates from the pi sync sidecar", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);
@@ -293,7 +332,9 @@ describe("PiSessionManagerRuntime", () => {
 
     await waitFor(() => {
       expect(runtime!.getSessionFile("thread-1")).toBe(sessionFile);
-      expect(events.some((event) => event.type === "sessionFile" && event.sessionFile === sessionFile)).toBe(true);
+      expect(
+        events.some((event) => event.type === "sessionFile" && event.sessionFile === sessionFile),
+      ).toBe(true);
     });
   });
 

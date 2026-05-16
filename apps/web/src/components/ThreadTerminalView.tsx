@@ -43,7 +43,9 @@ function getWorktreeBranchPrefix(projectCwd: string): string {
       const prefixes = JSON.parse(raw) as Record<string, string>;
       if (typeof prefixes[projectCwd] === "string") return prefixes[projectCwd];
     }
-  } catch { /* best-effort */ }
+  } catch {
+    /* best-effort */
+  }
   return DEFAULT_BRANCH_PREFIX;
 }
 
@@ -53,7 +55,9 @@ function setWorktreeBranchPrefix(projectCwd: string, prefix: string): void {
     const prefixes: Record<string, string> = raw ? JSON.parse(raw) : {};
     prefixes[projectCwd] = prefix;
     localStorage.setItem(BRANCH_PREFIX_STORAGE_KEY, JSON.stringify(prefixes));
-  } catch { /* best-effort */ }
+  } catch {
+    /* best-effort */
+  }
 }
 
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
@@ -110,9 +114,7 @@ function writeHarnessData(
   threadId: ThreadId,
   data: string,
 ): Promise<void> {
-  return harness === "pi"
-    ? api.pi.write({ threadId, data })
-    : api.claude.write({ threadId, data });
+  return harness === "pi" ? api.pi.write({ threadId, data }) : api.claude.write({ threadId, data });
 }
 
 function resizeHarnessSession(
@@ -129,20 +131,17 @@ function resizeHarnessSession(
 
 // ── NewThreadView ─────────────────────────────────────────────────────
 
-function NewThreadView({
-  threadId,
-  thread,
-}: {
-  threadId: ThreadId;
-  thread: Thread;
-}) {
+function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Thread }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dangerouslySkipPermissions = useTerminalStateStore((s) =>
-    selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  const dangerouslySkipPermissions = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
   );
   const setDangerouslySkipPermissions = useTerminalStateStore((s) => s.setYoloMode);
-  const setYolo = useCallback((v: boolean) => setDangerouslySkipPermissions(threadId, v), [threadId, setDangerouslySkipPermissions]);
+  const setYolo = useCallback(
+    (v: boolean) => setDangerouslySkipPermissions(threadId, v),
+    [threadId, setDangerouslySkipPermissions],
+  );
   const [envMode, setEnvMode] = useState<EnvMode>("local");
   const [prDialogOpen, setPrDialogOpen] = useState(false);
   const [prInitialReference, setPrInitialReference] = useState<string | null>(null);
@@ -153,11 +152,17 @@ function NewThreadView({
   const projectCwd = project?.cwd ?? "";
   const [branchPrefix, setBranchPrefix] = useState(() => getWorktreeBranchPrefix(projectCwd));
   const [editingPrefix, setEditingPrefix] = useState(false);
-  const [worktreeBranchName, setWorktreeBranchName] = useState(() => getWorktreeBranchPrefix(projectCwd));
+  const [worktreeBranchName, setWorktreeBranchName] = useState(() =>
+    getWorktreeBranchPrefix(projectCwd),
+  );
   const effectiveEnvMode: EnvMode = thread.worktreePath ? "worktree" : envMode;
   const isWorktreePending = effectiveEnvMode === "worktree" && !thread.worktreePath;
   const trimmedWorktreeBranch = worktreeBranchName.trim();
-  const isWorktreeBranchValid = !isWorktreePending || (trimmedWorktreeBranch.length > 0 && !trimmedWorktreeBranch.endsWith("/") && !trimmedWorktreeBranch.endsWith("-"));
+  const isWorktreeBranchValid =
+    !isWorktreePending ||
+    (trimmedWorktreeBranch.length > 0 &&
+      !trimmedWorktreeBranch.endsWith("/") &&
+      !trimmedWorktreeBranch.endsWith("-"));
 
   const handleStart = useCallback(async () => {
     const api = readNativeApi();
@@ -237,10 +242,15 @@ function NewThreadView({
     (e: React.KeyboardEvent) => {
       if (
         e.key === "Enter" &&
-        !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
         !(e.target instanceof HTMLInputElement) &&
         !(e.target instanceof HTMLTextAreaElement) &&
-        !starting && (cwd || isWorktreePending) && isWorktreeBranchValid
+        !starting &&
+        (cwd || isWorktreePending) &&
+        isWorktreeBranchValid
       ) {
         e.preventDefault();
         handleStart();
@@ -250,7 +260,12 @@ function NewThreadView({
   );
 
   return (
-    <div ref={containerRef} tabIndex={-1} onKeyDown={handleKeyDown} className="flex h-full flex-col items-center justify-center p-8 outline-none">
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+      className="flex h-full flex-col items-center justify-center p-8 outline-none"
+    >
       <div className="flex w-72 flex-col items-center gap-5 animate-fade-in">
         {/* App logo with subtle glow */}
         <div className="relative animate-zoom-fade-in">
@@ -268,8 +283,12 @@ function NewThreadView({
             title={isWorktreePending && thread.branch ? `Worktree from ${thread.branch}` : cwd}
           >
             {isWorktreePending && thread.branch ? (
-              <>Worktree from <span className="text-muted-foreground/80">{thread.branch}</span></>
-            ) : cwd || "\u00A0"}
+              <>
+                Worktree from <span className="text-muted-foreground/80">{thread.branch}</span>
+              </>
+            ) : (
+              cwd || "\u00A0"
+            )}
           </p>
         </div>
 
@@ -303,7 +322,10 @@ function NewThreadView({
             {/* Animated expand/collapse via CSS grid trick */}
             <div
               className="grid w-full transition-[grid-template-rows,opacity] duration-200 ease-out"
-              style={{ gridTemplateRows: showBranchInput ? "1fr" : "0fr", opacity: showBranchInput ? 1 : 0 }}
+              style={{
+                gridTemplateRows: showBranchInput ? "1fr" : "0fr",
+                opacity: showBranchInput ? 1 : 0,
+              }}
             >
               <div className="overflow-hidden">
                 <label className="flex flex-col gap-1 pb-0.5">
@@ -329,7 +351,10 @@ function NewThreadView({
                           const next = e.target.value;
                           setBranchPrefix(next);
                           setWorktreeBranchPrefix(projectCwd, next);
-                          if (worktreeBranchName === branchPrefix || worktreeBranchName.length === 0) {
+                          if (
+                            worktreeBranchName === branchPrefix ||
+                            worktreeBranchName.length === 0
+                          ) {
                             setWorktreeBranchName(next);
                           }
                         }}
@@ -383,7 +408,9 @@ function NewThreadView({
 
         {/* Auto-accept toggle */}
         {thread.harness === "claudeCode" ? (
-          <label className={`flex items-center gap-2 text-xs animate-fade-in-up-delay ${dangerouslySkipPermissions ? "text-red-500" : "text-muted-foreground/70"}`}>
+          <label
+            className={`flex items-center gap-2 text-xs animate-fade-in-up-delay ${dangerouslySkipPermissions ? "text-red-500" : "text-muted-foreground/70"}`}
+          >
             <input
               type="checkbox"
               checked={dangerouslySkipPermissions}
@@ -458,21 +485,15 @@ function pruneAutoResumeMap() {
   }
 }
 
-function DormantTerminalView({
-  threadId,
-  thread,
-}: {
-  threadId: ThreadId;
-  thread: Thread;
-}) {
+function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread: Thread }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const resumeButtonRef = useRef<HTMLButtonElement>(null);
   const [resuming, setResuming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const project = useStore((s) => s.projects.find((p) => p.id === thread.projectId));
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
-  const yoloMode = useTerminalStateStore((s) =>
-    selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  const yoloMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
   );
 
   // Render scrollback in a read-only xterm.js instance (or reuse cached)
@@ -583,7 +604,10 @@ function DormantTerminalView({
   return (
     <div className="flex h-full flex-col">
       {/* Scrollback area — dimmed to signal read-only */}
-      <div ref={containerRef} className="min-h-0 flex-1 opacity-70 saturate-75 transition-opacity hover:opacity-85 hover:saturate-100" />
+      <div
+        ref={containerRef}
+        className="min-h-0 flex-1 opacity-70 saturate-75 transition-opacity hover:opacity-85 hover:saturate-100"
+      />
 
       {/* Resume bar — compact, glass-like */}
       <div className="flex items-center justify-center gap-3 border-t border-border/40 bg-card/60 px-4 py-2 backdrop-blur-sm dark:border-border/20 dark:bg-card/40">
@@ -647,7 +671,11 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const eventBuffer: HarnessSessionEvent[] = [];
     let terminalReady = false;
     let fitComplete = false;
-    let pendingScrollback: { scrollback: string | null; offset: number | null; reset: boolean } | null = null;
+    let pendingScrollback: {
+      scrollback: string | null;
+      offset: number | null;
+      reset: boolean;
+    } | null = null;
 
     const entry = claudeCache.attach(threadId, el);
     const { terminal, fitAddon } = entry;
@@ -691,7 +719,11 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     };
     const refreshStickyPiInputMirror = () => {
       if (disposed) return;
-      if (harness !== "pi" || !settings.stickyPiInputMirror || !stickyMirrorScrollThresholdReached()) {
+      if (
+        harness !== "pi" ||
+        !settings.stickyPiInputMirror ||
+        !stickyMirrorScrollThresholdReached()
+      ) {
         commitStickyPiInputMirror(null);
         return;
       }
@@ -819,12 +851,15 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     // terminal already has scrollback (lastServerOffset > 0), request only the
     // delta to avoid resetting the terminal and losing old scrollback history.
     const sinceOffset = entry.lastServerOffset > 0 ? entry.lastServerOffset : undefined;
-    const scrollbackRequest =
-      sinceOffset != null ? { threadId, sinceOffset } : { threadId };
+    const scrollbackRequest = sinceOffset != null ? { threadId, sinceOffset } : { threadId };
     void getHarnessScrollback(api, harness, scrollbackRequest)
       .then((result) => {
         if (disposed) return;
-        pendingScrollback = { scrollback: result.scrollback, offset: result.offset ?? null, reset: result.reset ?? false };
+        pendingScrollback = {
+          scrollback: result.scrollback,
+          offset: result.offset ?? null,
+          reset: result.reset ?? false,
+        };
         flushIfReady();
       })
       .catch(() => {
@@ -855,7 +890,9 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         event.key.toLowerCase() === "f" &&
         !event.altKey &&
         !event.shiftKey &&
-        (isMacPlatform(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
+        (isMacPlatform(navigator.platform)
+          ? event.metaKey && !event.ctrlKey
+          : event.ctrlKey && !event.metaKey)
       ) {
         event.preventDefault();
         event.stopPropagation();
@@ -881,7 +918,13 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // Shift+Enter / Option+Enter — send CSI 13;2u so Claude Code CLI
       // inserts a newline instead of submitting. xterm.js onData sends \r
       // for all Enter variants, losing the modifier, so we intercept here.
-      if (event.type === "keydown" && event.key === "Enter" && (event.shiftKey || event.altKey) && !event.metaKey && !event.ctrlKey) {
+      if (
+        event.type === "keydown" &&
+        event.key === "Enter" &&
+        (event.shiftKey || event.altKey) &&
+        !event.metaKey &&
+        !event.ctrlKey
+      ) {
         event.preventDefault();
         event.stopPropagation();
         void writeHarnessData(api, harness, threadId, "\x1b[13;2u").catch(() => undefined);
@@ -891,7 +934,14 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // Ctrl+Z — prevent browser "undo" so SIGTSTP (suspend) reaches the PTY.
       // On Mac Cmd+Z is the undo shortcut so Ctrl+Z is free; on other platforms
       // we still want it to go to the terminal when focused.
-      if (event.type === "keydown" && event.key === "z" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      if (
+        event.type === "keydown" &&
+        event.key === "z" &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
         event.preventDefault();
         event.stopPropagation();
         void writeHarnessData(api, harness, threadId, "\x1a").catch(() => undefined);
@@ -904,7 +954,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         event.type === "keydown" &&
         event.key.toLowerCase() === "f" &&
         isMacPlatform(navigator.platform) &&
-        event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey
       ) {
         event.preventDefault();
         event.stopPropagation();
@@ -921,9 +974,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
       event.preventDefault();
       event.stopPropagation();
-      void writeHarnessData(api, "pi", threadId, PI_IMAGE_PASTE_KEYSTROKE).catch(
-        () => undefined,
-      );
+      void writeHarnessData(api, "pi", threadId, PI_IMAGE_PASTE_KEYSTROKE).catch(() => undefined);
     };
     el.addEventListener("paste", onPaste, { capture: true });
 
@@ -953,7 +1004,9 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // Always send resize after reattach — even if cols/rows look unchanged,
       // the PTY may have been started with default dimensions or the previous
       // attach may have sent wrong values.
-      void resizeHarnessSession(api, harness, threadId, terminal.cols, terminal.rows).catch(() => undefined);
+      void resizeHarnessSession(api, harness, threadId, terminal.cols, terminal.rows).catch(
+        () => undefined,
+      );
       terminal.focus();
       // Signal that dimensions are now correct — safe to write content
       fitComplete = true;
@@ -968,6 +1021,15 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       scheduleStickyPiInputMirrorRefresh();
     };
     window.addEventListener("resize", onWindowResize);
+
+    // Keep the visible terminal fresh in the server-side LRU. Looking at a
+    // quiet thread is still active use, even if it is not producing output.
+    const activeViewTouchIntervalId = window.setInterval(() => {
+      if (disposed || document.visibilityState !== "visible") return;
+      void resizeHarnessSession(api, harness, threadId, terminal.cols, terminal.rows).catch(
+        () => undefined,
+      );
+    }, 30_000);
 
     // ── Alternate-buffer scroll: convert wheel → arrow keys ──────────
     // Claude Code runs in alternate screen buffer (TUI mode). xterm.js has
@@ -1075,6 +1137,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       if (stickyMirrorRafId !== null) cancelAnimationFrame(stickyMirrorRafId);
       if (scrollbackTimeoutId != null) clearTimeout(scrollbackTimeoutId);
+      window.clearInterval(activeViewTouchIntervalId);
       el.removeEventListener("paste", onPaste, { capture: true });
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onWheelClearIndicator);
@@ -1137,7 +1200,8 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       }
 
       const accumulatedDelta = stickyPiInputMirrorWheelRemainderRef.current + lineDelta;
-      const wholeLines = accumulatedDelta > 0 ? Math.floor(accumulatedDelta) : Math.ceil(accumulatedDelta);
+      const wholeLines =
+        accumulatedDelta > 0 ? Math.floor(accumulatedDelta) : Math.ceil(accumulatedDelta);
       stickyPiInputMirrorWheelRemainderRef.current = accumulatedDelta - wholeLines;
 
       if (wholeLines !== 0) {
@@ -1152,10 +1216,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
   return (
     <div className="relative h-full w-full">
       {searchOpen && searchAddonRef.current && (
-        <TerminalSearchBar
-          searchAddon={searchAddonRef.current}
-          onClose={handleSearchClose}
-        />
+        <TerminalSearchBar searchAddon={searchAddonRef.current} onClose={handleSearchClose} />
       )}
       <div ref={containerRef} className="h-full w-full" />
       {stickyPiInputMirror && harness === "pi" && settings.stickyPiInputMirror && (
@@ -1206,11 +1267,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
 // ── ThreadTerminalView (three-state router) ───────────────────────────
 
-export default function ThreadTerminalView({
-  threadId,
-}: {
-  threadId: ThreadId;
-}) {
+export default function ThreadTerminalView({ threadId }: { threadId: ThreadId }) {
   const thread = useStore((s) => s.threads.find((t) => t.id === threadId));
 
   if (!thread) return null;

@@ -10,7 +10,12 @@ import { createLogger } from "../../logger";
 import { ServerConfig } from "../../config";
 import { loadServerSettings } from "../../serverSettings";
 import { PiSessionJsonlHookWatcher } from "../../PiSessionJsonlHook";
-import { PtyAdapter, type PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
+import {
+  PtyAdapter,
+  type PtyAdapterShape,
+  type PtyExitEvent,
+  type PtyProcess,
+} from "../Services/PTY";
 import {
   PiSessionError,
   PiSessionManager,
@@ -18,6 +23,13 @@ import {
   type PiSessionState,
 } from "../Services/PiSession";
 import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
+import {
+  CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV,
+  CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV,
+  getSessionProcessRegistryDir,
+  removeSessionProcessRegistryEntry,
+  writeSessionProcessRegistryEntry,
+} from "../sessionProcessRegistry";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -130,11 +142,13 @@ function encodePiSessionDirName(cwd: string): string {
 
 function buildPiSessionSyncExtensionSource(): string {
   return `
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const syncDir = process.env.${CLUI_PI_SESSION_SYNC_DIR_ENV};
 const threadId = process.env.${CLUI_PI_THREAD_ID_ENV};
+const processRegistryDir = process.env.${CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV};
+const processRegistryOwnerPid = Number(process.env.${CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV} ?? 0);
 const userInputToolNames = new Set([
   "ask",
   "askfollowupquestion",
@@ -179,6 +193,89 @@ function setHookStatus(ctx, hookStatus, reason) {
   writePayload(ctx, reason, hookStatus);
 }
 
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readProtectedSessionPids() {
+  if (!processRegistryDir) return new Set();
+  let files;
+  try {
+    files = readdirSync(processRegistryDir, { encoding: "utf8" });
+  } catch {
+    return new Set();
+  }
+
+  const pids = new Set();
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    try {
+      const entry = JSON.parse(readFileSync(path.join(processRegistryDir, file), "utf8"));
+      if (
+        typeof entry?.pid === "number" &&
+        Number.isSafeInteger(entry.pid) &&
+        entry.pid > 0 &&
+        typeof entry?.ownerPid === "number" &&
+        Number.isSafeInteger(entry.ownerPid) &&
+        entry.ownerPid === processRegistryOwnerPid &&
+        entry.pid !== process.pid &&
+        isProcessAlive(entry.pid) &&
+        typeof entry?.threadId === "string" &&
+        entry.threadId !== threadId
+      ) {
+        pids.add(entry.pid);
+      }
+    } catch {
+      // Ignore malformed or concurrently replaced files.
+    }
+  }
+  return pids;
+}
+
+function extractNumericKillTargets(command) {
+  const targets = [];
+  const killPattern = /(?:^|[\\s;&|()])(?:command\\s+|builtin\\s+|env\\s+)?(?:\\/(?:usr\\/)?bin\\/)?kill(?:\\s+|$)([^;&|()]*)/g;
+  let match;
+  while ((match = killPattern.exec(command)) !== null) {
+    const args = match[1] ?? "";
+    const pidMatches = args.matchAll(/\\b\\d{2,}\\b/g);
+    for (const pidMatch of pidMatches) {
+      const pid = Number(pidMatch[0]);
+      if (Number.isSafeInteger(pid) && pid > 0) targets.push(pid);
+    }
+  }
+  return targets;
+}
+
+function isBroadSessionKillCommand(command) {
+  const lowered = command.toLowerCase();
+  const referencesHarnessProcess = /\\b(clui|claude|pi|pty-host|node-pty)\\b/.test(lowered);
+  if (!referencesHarnessProcess) return false;
+  if (/(?:^|[\\s;&|()])(?:command\\s+|env\\s+)?(?:pkill|killall)\\b/.test(lowered)) return true;
+  return /\\bxargs\\b[\\s\\S]*\\bkill\\b/.test(lowered);
+}
+
+function protectedSessionKillReason(command) {
+  const protectedPids = readProtectedSessionPids();
+  if (protectedPids.size === 0) return null;
+
+  const targetedPids = extractNumericKillTargets(command).filter((pid) => protectedPids.has(pid));
+  if (targetedPids.length > 0) {
+    return "Blocked: command would kill other Clui-managed session process(es): " + targetedPids.join(", ");
+  }
+
+  if (isBroadSessionKillCommand(command)) {
+    return "Blocked: broad process kill may terminate other Clui-managed sessions.";
+  }
+
+  return null;
+}
+
 export default function (pi) {
   pi.on("session_start", async (event, ctx) => {
     pendingUserInputToolCallIds.clear();
@@ -203,6 +300,12 @@ export default function (pi) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    if (normalizeToolName(event.toolName) === "bash") {
+      const command = typeof event.input?.command === "string" ? event.input.command : "";
+      const reason = protectedSessionKillReason(command);
+      if (reason) return { block: true, reason };
+    }
+
     if (!isUserInputTool(event.toolName)) return;
     pendingUserInputToolCallIds.add(event.toolCallId);
     setHookStatus(ctx, "needsInput", "tool_call:" + event.toolName);
@@ -241,6 +344,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private readonly sessionsRootDir: string;
   private readonly legacySessionsRootDir: string;
   private readonly sessionSyncDir: string;
+  private readonly processRegistryDir: string;
   private readonly extensionFilePath: string;
   private runtimeFilesPromise: Promise<void> | null = null;
   private readonly logger = createLogger("pi-session");
@@ -255,6 +359,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.sessionsRootDir = path.join(this.agentRootDir, "sessions");
     this.legacySessionsRootDir = path.join(options.stateDir, PI_LEGACY_THREAD_SESSION_DIR_NAME);
     this.sessionSyncDir = path.join(options.stateDir, PI_SESSION_SYNC_DIR_NAME);
+    this.processRegistryDir = getSessionProcessRegistryDir(options.stateDir);
     this.extensionFilePath = path.join(
       options.stateDir,
       PI_RUNTIME_EXTENSION_DIR_NAME,
@@ -317,12 +422,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         : await this.resolveStartSessionFile(input.threadId, input.cwd, preferredSessionFile);
       entry.activeSessionFile = resolvedSessionFile;
 
-      const args: string[] = [
-        "--session-dir",
-        sessionDir,
-        "--extension",
-        this.extensionFilePath,
-      ];
+      const args: string[] = ["--session-dir", sessionDir, "--extension", this.extensionFilePath];
       if (resolvedSessionFile) {
         args.push("--session", resolvedSessionFile);
       }
@@ -335,6 +435,8 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         const spawnEnv = createSpawnEnv(process.env);
         spawnEnv[CLUI_PI_THREAD_ID_ENV] = input.threadId;
         spawnEnv[CLUI_PI_SESSION_SYNC_DIR_ENV] = this.sessionSyncDir;
+        spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV] = this.processRegistryDir;
+        spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV] = String(process.pid);
 
         const ptyProcess = await Effect.runPromise(
           this.ptyAdapter.spawn({
@@ -348,6 +450,12 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         );
 
         entry.process = ptyProcess;
+        this.registerProcess(entry, ptyProcess);
+        const registerProcessTimer = setTimeout(() => {
+          this.registerProcess(entry, ptyProcess);
+        }, 100);
+        registerProcessTimer.unref?.();
+
         entry.unsubscribeData = ptyProcess.onData((data) => {
           this.onProcessData(entry, data);
         });
@@ -382,6 +490,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
         void this.reconcileActiveSessions(this.maxActiveSessions);
       } catch (error) {
+        this.unregisterProcess(entry);
         entry.status = "new";
         entry.process = null;
         this.stopSessionSyncWatcher(entry);
@@ -422,7 +531,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     });
   }
 
-  getScrollback(threadId: string, sinceOffset?: number): { scrollback: string | null; offset: number; reset: boolean } {
+  getScrollback(
+    threadId: string,
+    sinceOffset?: number,
+  ): { scrollback: string | null; offset: number; reset: boolean } {
     const entry = this.sessions.get(threadId);
     if (!entry) return { scrollback: null, offset: 0, reset: false };
     const offset = entry.scrollbackBuffer.offset;
@@ -464,6 +576,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }
     entry.cols = cols;
     entry.rows = rows;
+    entry.lastInteractedAt = Date.now();
     entry.process.resize(cols, rows);
   }
 
@@ -674,9 +787,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     return results;
   }
 
-  private async readSessionHeader(
-    filePath: string,
-  ): Promise<{ cwd: string } | null> {
+  private async readSessionHeader(filePath: string): Promise<{ cwd: string } | null> {
     try {
       const content = await readFile(filePath, "utf8");
       const firstLine = content.split("\n", 1)[0]?.trim();
@@ -743,10 +854,14 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       // ignore stale file cleanup failures
     }
     try {
-      entry.syncWatcher = watch(this.sessionSyncDir, { persistent: false }, (_eventType, fileName) => {
-        if (fileName && fileName.toString() !== path.basename(entry.syncFilePath!)) return;
-        this.scheduleSessionSyncRefresh(entry);
-      });
+      entry.syncWatcher = watch(
+        this.sessionSyncDir,
+        { persistent: false },
+        (_eventType, fileName) => {
+          if (fileName && fileName.toString() !== path.basename(entry.syncFilePath!)) return;
+          this.scheduleSessionSyncRefresh(entry);
+        },
+      );
     } catch (error) {
       this.logger.warn("failed to watch pi session sync dir", {
         threadId: entry.threadId,
@@ -839,6 +954,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   }
 
   private onProcessExit(entry: PiSessionEntry, event: PtyExitEvent): void {
+    this.unregisterProcess(entry);
     this.cleanupProcessHandles(entry);
     this.clearKillEscalationTimer(entry.process);
     entry.process = null;
@@ -864,6 +980,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private stopProcess(entry: PiSessionEntry): void {
     this.stopSessionSyncWatcher(entry);
     this.stopJsonlHookWatcher(entry);
+    this.unregisterProcess(entry);
     const ptyProcess = entry.process;
     if (!ptyProcess) {
       this.resetHookStatus(entry);
@@ -880,6 +997,34 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     entry.unsubscribeData = null;
     entry.unsubscribeExit?.();
     entry.unsubscribeExit = null;
+  }
+
+  private registerProcess(entry: PiSessionEntry, expectedProcess: PtyProcess): void {
+    if (entry.process !== expectedProcess || entry.status !== "active") return;
+    try {
+      writeSessionProcessRegistryEntry(this.processRegistryDir, {
+        harness: "pi",
+        threadId: entry.threadId,
+        pid: expectedProcess.pid,
+      });
+    } catch (error) {
+      this.logger.warn("failed to register pi session process", {
+        threadId: entry.threadId,
+        pid: expectedProcess.pid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private unregisterProcess(entry: PiSessionEntry): void {
+    try {
+      removeSessionProcessRegistryEntry(this.processRegistryDir, "pi", entry.threadId);
+    } catch (error) {
+      this.logger.warn("failed to unregister pi session process", {
+        threadId: entry.threadId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private clearKillEscalationTimer(process: PtyProcess | null): void {
@@ -936,12 +1081,13 @@ export const PiSessionManagerLive = Layer.effect(
     const settings = yield* Effect.promise(() => loadServerSettings(serverConfig.stateDir));
 
     const runtime = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        new PiSessionManagerRuntime({
-          ptyAdapter,
-          stateDir: serverConfig.stateDir,
-          maxActiveSessions: settings.maxActiveHarnessSessions,
-        }),
+      Effect.sync(
+        () =>
+          new PiSessionManagerRuntime({
+            ptyAdapter,
+            stateDir: serverConfig.stateDir,
+            maxActiveSessions: settings.maxActiveHarnessSessions,
+          }),
       ),
       (r) => Effect.sync(() => r.dispose()),
     );
@@ -978,8 +1124,10 @@ export const PiSessionManagerLive = Layer.effect(
         }),
       getSessionStatus: (threadId) => Effect.sync(() => runtime.getSessionStatus(threadId)),
       getSessionFile: (threadId) => Effect.sync(() => runtime.getSessionFile(threadId)),
-      reconcileActiveSessions: (maxActive) => Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
-      setMaxActiveSessions: (maxActive) => Effect.promise(() => runtime.setMaxActiveSessions(maxActive)),
+      reconcileActiveSessions: (maxActive) =>
+        Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
+      setMaxActiveSessions: (maxActive) =>
+        Effect.promise(() => runtime.setMaxActiveSessions(maxActive)),
       hibernateAll: () => Effect.promise(() => runtime.hibernateAll()),
       subscribe: (listener) =>
         Effect.sync(() => {
