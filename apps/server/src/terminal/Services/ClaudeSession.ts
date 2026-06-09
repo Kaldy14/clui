@@ -60,6 +60,10 @@ export interface ClaudeSessionManagerShape {
   ) => Effect.Effect<void>;
   readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;
+  /** Hibernate active sessions except the excluded thread IDs. Returns hibernated thread IDs. */
+  readonly hibernateActiveSessions: (
+    excludeThreadIds: ReadonlySet<string>,
+  ) => Effect.Effect<ReadonlyArray<string>>;
   readonly subscribe: (
     listener: (event: ClaudeSessionEvent) => void,
   ) => Effect.Effect<() => void>;

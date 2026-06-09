@@ -102,10 +102,12 @@ export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
 
 export const PurgeInactiveSessionsInput = Schema.Struct({
   excludeThreadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(500)),
+  hibernateActiveSessions: Schema.optional(Schema.Boolean),
 });
 export type PurgeInactiveSessionsInput = typeof PurgeInactiveSessionsInput.Type;
 
 export const PurgeInactiveSessionsResult = Schema.Struct({
+  sessionsHibernated: Schema.Number,
   sessionsKilled: Schema.Number,
   snapshotsCleared: Schema.Number,
 });

@@ -54,6 +54,12 @@ class FakePtyProcess implements PtyProcess {
       this.exitListeners.delete(callback);
     };
   }
+
+  emitData(data: string): void {
+    for (const listener of this.dataListeners) {
+      listener(data);
+    }
+  }
 }
 
 class FakePtyAdapter implements PtyAdapterShape {
@@ -168,6 +174,7 @@ describe("PiSessionManagerRuntime", () => {
     );
     expect(extensionSource).toContain("session_start");
     expect(extensionSource).toContain("tool_execution_start");
+    expect(extensionSource).toContain("planreview");
     expect(extensionSource).toContain("questionnaire");
     expect(extensionSource).toContain("protectedSessionKillReason");
     expect(extensionSource).toContain("args.matchAll(/\\b\\d{2,}\\b/g)");
@@ -296,6 +303,45 @@ describe("PiSessionManagerRuntime", () => {
     expect(runtime.getSessionStatus("thread-1")).toBe("active");
     expect(runtime.getSessionStatus("thread-2")).toBe("dormant");
     expect(runtime.getSessionStatus("thread-3")).toBe("dormant");
+  });
+
+  it("does not treat background output as LRU interaction", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir, maxActiveSessions: 100 });
+    const now = vi.spyOn(Date, "now");
+
+    now.mockReturnValue(1_000);
+    await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
+    now.mockReturnValue(2_000);
+    await runtime.startSession({ threadId: "thread-2", cwd, cols: 100, rows: 24 });
+    now.mockReturnValue(3_000);
+    await runtime.startSession({ threadId: "thread-3", cwd, cols: 100, rows: 24 });
+
+    now.mockReturnValue(4_000);
+    ptyAdapter.processes[0]!.emitData("background output");
+    await runtime.reconcileActiveSessions(2);
+
+    expect(runtime.getSessionStatus("thread-1")).toBe("dormant");
+    expect(runtime.getSessionStatus("thread-2")).toBe("active");
+    expect(runtime.getSessionStatus("thread-3")).toBe("active");
+  });
+
+  it("keeps scrollback readable after hibernation", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+
+    await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
+    ptyAdapter.processes[0]!.emitData("hello pi\n");
+
+    const scrollback = await runtime.hibernateSession("thread-1");
+
+    expect(runtime.getSessionStatus("thread-1")).toBe("dormant");
+    expect(scrollback).toContain("hello pi");
+    expect(runtime.getScrollback("thread-1").scrollback).toContain("hello pi");
   });
 
   it("tracks active session file updates from the pi sync sidecar", async () => {

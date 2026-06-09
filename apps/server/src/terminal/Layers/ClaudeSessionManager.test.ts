@@ -244,6 +244,7 @@ describe("ClaudeSessionManagerRuntime", () => {
       expect(events.some((e) => e.type === "hibernated" && e.threadId === "thread-1")).toBe(true);
       expect(runtime.getSessionStatus("thread-1")).toBe("dormant");
       expect(scrollback).toContain("hello world");
+      expect(runtime.getScrollback("thread-1").scrollback).toContain("hello world");
     });
 
     it("throws when no session exists", async () => {
@@ -392,6 +393,27 @@ describe("ClaudeSessionManagerRuntime", () => {
       expect(runtime.getSessionStatus("thread-1")).toBe("active");
       expect(runtime.getSessionStatus("thread-2")).toBe("dormant");
       expect(runtime.getSessionStatus("thread-3")).toBe("dormant");
+    });
+
+    it("does not treat background output as LRU interaction", async () => {
+      const result = makeRuntime({ maxActiveSessions: 100 });
+      runtime = result.runtime;
+      const now = vi.spyOn(Date, "now");
+
+      now.mockReturnValue(1_000);
+      await runtime.startSession(defaultInput({ threadId: "thread-1" }));
+      now.mockReturnValue(2_000);
+      await runtime.startSession(defaultInput({ threadId: "thread-2" }));
+      now.mockReturnValue(3_000);
+      await runtime.startSession(defaultInput({ threadId: "thread-3" }));
+
+      now.mockReturnValue(4_000);
+      result.ptyAdapter.processes[0]!.emitData("background output");
+      await runtime.reconcileActiveSessions(2);
+
+      expect(runtime.getSessionStatus("thread-1")).toBe("dormant");
+      expect(runtime.getSessionStatus("thread-2")).toBe("active");
+      expect(runtime.getSessionStatus("thread-3")).toBe("active");
     });
 
     it("does nothing when under the limit", async () => {

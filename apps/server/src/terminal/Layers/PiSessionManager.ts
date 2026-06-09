@@ -155,6 +155,7 @@ const userInputToolNames = new Set([
   "askquestion",
   "askuser",
   "askuserquestion",
+  "planreview",
   "question",
   "questionnaire",
 ]);
@@ -518,7 +519,6 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       }
 
       const scrollback = entry.scrollbackBuffer.materialize();
-      entry.scrollbackBuffer.clear();
       this.stopProcess(entry);
       entry.status = "dormant";
 
@@ -635,6 +635,32 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         });
       }
     }
+  }
+
+  async hibernateActiveSessions(excludeThreadIds: ReadonlySet<string>): Promise<string[]> {
+    const candidates = [...this.sessions.values()]
+      .filter(
+        (entry) =>
+          !excludeThreadIds.has(entry.threadId) &&
+          entry.status === "active" &&
+          entry.process !== null,
+      )
+      .toSorted((left, right) => left.lastInteractedAt - right.lastInteractedAt)
+      .map((entry) => entry.threadId);
+
+    const hibernated: string[] = [];
+    for (const threadId of candidates) {
+      try {
+        await this.hibernateSession(threadId);
+        hibernated.push(threadId);
+      } catch (error) {
+        this.logger.warn("failed to hibernate pi session during bulk hibernate", {
+          threadId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return hibernated;
   }
 
   async destroySession(threadId: string): Promise<void> {
@@ -804,7 +830,6 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   private onProcessData(entry: PiSessionEntry, data: string): void {
     entry.scrollbackBuffer.append(data);
-    entry.lastInteractedAt = Date.now();
     this.emitEvent({
       type: "output",
       threadId: entry.threadId,
@@ -1129,6 +1154,8 @@ export const PiSessionManagerLive = Layer.effect(
       setMaxActiveSessions: (maxActive) =>
         Effect.promise(() => runtime.setMaxActiveSessions(maxActive)),
       hibernateAll: () => Effect.promise(() => runtime.hibernateAll()),
+      hibernateActiveSessions: (excludeThreadIds) =>
+        Effect.promise(() => runtime.hibernateActiveSessions(excludeThreadIds)),
       subscribe: (listener) =>
         Effect.sync(() => {
           runtime.on("event", listener);

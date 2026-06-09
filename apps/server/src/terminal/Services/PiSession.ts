@@ -50,6 +50,10 @@ export interface PiSessionManagerShape {
   readonly reconcileActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;
+  /** Hibernate active sessions except the excluded thread IDs. Returns hibernated thread IDs. */
+  readonly hibernateActiveSessions: (
+    excludeThreadIds: ReadonlySet<string>,
+  ) => Effect.Effect<ReadonlyArray<string>>;
   readonly subscribe: (listener: (event: PiSessionEvent) => void) => Effect.Effect<() => void>;
   readonly destroySession: (threadId: string) => Effect.Effect<void>;
   readonly purgeInactiveSessions: (excludeThreadIds: ReadonlySet<string>) => Effect.Effect<number>;

@@ -1703,9 +1703,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.serverPurgeInactiveSessions: {
         const body = stripRequestTag(request.body);
-        const excludeSet = new Set(body.excludeThreadIds);
+        const excludeSet = new Set<string>(body.excludeThreadIds);
 
-        logger.info("purge inactive sessions: starting", { excludeCount: excludeSet.size });
+        logger.info("purge inactive sessions: starting", {
+          excludeCount: excludeSet.size,
+          hibernateActiveSessions: body.hibernateActiveSessions === true,
+        });
+
+        let sessionsHibernated = 0;
+        if (body.hibernateActiveSessions === true) {
+          const [claudeHibernatedThreadIds, piHibernatedThreadIds] = yield* Effect.all([
+            claudeSessionManager.hibernateActiveSessions(excludeSet),
+            piSessionManager.hibernateActiveSessions(excludeSet),
+          ]);
+          for (const threadId of claudeHibernatedThreadIds) excludeSet.add(threadId);
+          for (const threadId of piHibernatedThreadIds) excludeSet.add(threadId);
+          sessionsHibernated = claudeHibernatedThreadIds.length + piHibernatedThreadIds.length;
+        }
 
         // Kill dormant PTY sessions
         const claudeSessionsKilled = yield* claudeSessionManager.purgeInactiveSessions(excludeSet);
@@ -1714,11 +1728,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         // Clear scrollback snapshots in SQLite
         const snapshotsCleared = yield* projectionThreadRepository.clearScrollbackSnapshotBulk({
-          excludeThreadIds: body.excludeThreadIds,
+          excludeThreadIds: [...excludeSet],
         });
 
-        logger.info("purge inactive sessions: completed", { sessionsKilled, snapshotsCleared });
-        return { sessionsKilled, snapshotsCleared };
+        logger.info("purge inactive sessions: completed", {
+          sessionsHibernated,
+          sessionsKilled,
+          snapshotsCleared,
+        });
+        return { sessionsHibernated, sessionsKilled, snapshotsCleared };
       }
 
       case MCP_WS_METHODS.mcpGetStatus: {

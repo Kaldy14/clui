@@ -205,6 +205,7 @@ const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   reconcileActiveSessions: () => Effect.void,
   setMaxActiveSessions: () => Effect.void,
   hibernateAll: () => Effect.void,
+  hibernateActiveSessions: () => Effect.succeed([]),
   subscribe: () => Effect.succeed(() => {}),
   getClaudeSessionId: () => Effect.succeed(null),
   destroySession: () => Effect.void,
@@ -231,6 +232,7 @@ const defaultPiSessionManager: PiSessionManagerShape = {
   reconcileActiveSessions: () => Effect.void,
   setMaxActiveSessions: () => Effect.void,
   hibernateAll: () => Effect.void,
+  hibernateActiveSessions: () => Effect.succeed([]),
   subscribe: () => Effect.succeed(() => {}),
   destroySession: () => Effect.void,
   purgeInactiveSessions: () => Effect.succeed(0),
@@ -1013,6 +1015,89 @@ describe("WebSocket Server", () => {
     ).toEqual({
       maxActiveHarnessSessions: 7,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+    });
+  });
+
+  it("purges dormant sessions and hibernates eligible active sessions", async () => {
+    const claudeCalls: Array<{ method: string; excludeThreadIds: string[] }> = [];
+    const piCalls: Array<{ method: string; excludeThreadIds: string[] }> = [];
+
+    server = await createTestServer({
+      cwd: "/my/workspace",
+      claudeSessionManager: {
+        ...defaultClaudeSessionManager,
+        hibernateActiveSessions: (excludeThreadIds) => {
+          claudeCalls.push({
+            method: "hibernateActiveSessions",
+            excludeThreadIds: [...excludeThreadIds],
+          });
+          return Effect.succeed(["claude-old"]);
+        },
+        purgeInactiveSessions: (excludeThreadIds) => {
+          claudeCalls.push({
+            method: "purgeInactiveSessions",
+            excludeThreadIds: [...excludeThreadIds],
+          });
+          return Effect.succeed(1);
+        },
+      },
+      piSessionManager: {
+        ...defaultPiSessionManager,
+        hibernateActiveSessions: (excludeThreadIds) => {
+          piCalls.push({ method: "hibernateActiveSessions", excludeThreadIds: [...excludeThreadIds] });
+          return Effect.succeed(["pi-old-1", "pi-old-2"]);
+        },
+        purgeInactiveSessions: (excludeThreadIds) => {
+          piCalls.push({ method: "purgeInactiveSessions", excludeThreadIds: [...excludeThreadIds] });
+          return Effect.succeed(2);
+        },
+      },
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.serverPurgeInactiveSessions, {
+      excludeThreadIds: ["current-thread", "busy-thread"],
+      hibernateActiveSessions: true,
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      sessionsHibernated: 3,
+      sessionsKilled: 3,
+      snapshotsCleared: 0,
+    });
+    expect(claudeCalls[0]).toEqual({
+      method: "hibernateActiveSessions",
+      excludeThreadIds: ["current-thread", "busy-thread"],
+    });
+    expect(piCalls[0]).toEqual({
+      method: "hibernateActiveSessions",
+      excludeThreadIds: ["current-thread", "busy-thread"],
+    });
+    expect(claudeCalls[1]).toEqual({
+      method: "purgeInactiveSessions",
+      excludeThreadIds: [
+        "current-thread",
+        "busy-thread",
+        "claude-old",
+        "pi-old-1",
+        "pi-old-2",
+      ],
+    });
+    expect(piCalls[1]).toEqual({
+      method: "purgeInactiveSessions",
+      excludeThreadIds: [
+        "current-thread",
+        "busy-thread",
+        "claude-old",
+        "pi-old-1",
+        "pi-old-2",
+      ],
     });
   });
 
@@ -1821,6 +1906,7 @@ describe("WebSocket Server", () => {
         reconcileActiveSessions: () => Effect.void,
         setMaxActiveSessions: () => Effect.void,
         hibernateAll: () => Effect.void,
+        hibernateActiveSessions: () => Effect.succeed([]),
         subscribe: () => Effect.succeed(() => {}),
         getClaudeSessionId: () => Effect.succeed(null),
         destroySession: () => Effect.void,

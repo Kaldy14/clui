@@ -4,6 +4,146 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-08 — Version bumped to `0.0.25` and Apple Silicon mac build produced
+
+**Problem:** The app needed a fresh macOS Apple Silicon desktop build containing the latest Pi plan-review status fix and current workspace changes.
+
+**Root cause:** Release package metadata still pointed at `0.0.24`, so a new macOS arm64 build would otherwise reuse the previous app version.
+
+**Fix:** Bumped release package versions to `0.0.25`, refreshed `bun.lock`, and rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
+
+**Affected files/artifacts:**
+- `apps/server/package.json`
+- `apps/desktop/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.25-arm64.dmg`
+- `release/Clui-0.0.25-arm64.dmg.blockmap`
+- `release/Clui-0.0.25-arm64.zip`
+- `release/Clui-0.0.25-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-08 — Pi plan review now shows Needs Input
+
+**Problem:** Pi-backed threads showed the sidebar status as “Working” while the global Pi `plan_review` tool was presenting a plan and waiting for approval.
+
+**Root cause:** Clui’s injected Pi runtime sync extension only classified questionnaire/question-style tools as user-input tools. The normalized `plan_review` tool name (`planreview`) was missing, so the sidecar kept the thread in the working state while the tool UI was blocked for input.
+
+**Fix:** Added `planreview` to the Pi user-input tool allowlist so `plan_review` emits `hookStatus: "needsInput"` until it resolves, and added a regression assertion for the generated runtime extension.
+
+**Affected files:**
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-08 — Version bumped to `0.0.24` and Apple Silicon mac build produced
+
+**Problem:** The app needed a fresh macOS Apple Silicon desktop build containing the current CPU/purge fixes.
+
+**Root cause:** Release package metadata still pointed at `0.0.23`, and the existing `0.0.24` artifacts in `release/` were stale from an earlier build.
+
+**Fix:** Bumped release package versions to `0.0.24`, updated `bun.lock`, rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`, and revalidated with `bun lint` and `bun typecheck`.
+
+**Affected files/artifacts:**
+- `apps/server/package.json`
+- `apps/desktop/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.24-arm64.dmg`
+- `release/Clui-0.0.24-arm64.dmg.blockmap`
+- `release/Clui-0.0.24-arm64.zip`
+- `release/Clui-0.0.24-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-08 — Purge active idle sessions and fix harness LRU recency
+
+**Problem:** Clui could keep CPU high with old hidden pi sessions still active and streaming terminal output. The purge action appeared to do nothing, the active-session badge could hide over-cap states, and over-cap hibernation could choose newer quiet sessions before older noisy ones.
+
+**Root cause:** Purge excluded every active terminal and the server only deleted already-dormant manager entries. The scrollback cleanup SQL failed for non-empty exclude lists. Harness LRU recency was refreshed by PTY output, so noisy old sessions looked recent. The active-session count lacked an over-cap regression test.
+
+**Fix:** Added purge support for hibernating non-excluded active sessions before purging dormant entries, preserved hibernated sessions and their scrollback during the same purge call, fixed scrollback cleanup with non-empty excludes, stopped counting PTY output as LRU interaction, and added route/manager/sidebar regression tests.
+
+**Affected files:**
+- `packages/contracts/src/server.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/server/src/terminal/Services/ClaudeSession.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/web/src/components/PurgeSessionsButton.tsx`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-05-31 — macOS Apple Silicon desktop artifact rebuilt
+
+**Problem:** The app needed a fresh macOS Apple Silicon desktop build containing the latest Clui terminal scrolling changes.
+
+**Root cause:** Existing `0.0.23` arm64 release artifacts were built before the wheel batching fix, so they did not include the current workspace changes.
+
+**Fix:** Rebuilt the macOS arm64 desktop DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`, then revalidated the workspace with `bun lint` and `bun typecheck`.
+
+**Affected files/artifacts:**
+- `release/Clui-0.0.23-arm64.dmg`
+- `release/Clui-0.0.23-arm64.dmg.blockmap`
+- `release/Clui-0.0.23-arm64.zip`
+- `release/Clui-0.0.23-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-05-31 — Alt-buffer wheel scrolling is batched before reaching pi
+
+**Problem:** Scrolling inside pi/plan-review alternate-buffer screens in Clui felt laggy because trackpads produced many wheel events that were converted into immediate arrow-key WebSocket writes.
+
+**Root cause:** `ActiveTerminalView` forwarded wheel-generated cursor movement to the PTY once per wheel event. Under fast scroll gestures this created many small browser → WebSocket → server → PTY writes and let cursor movement trail behind the gesture.
+
+**Fix:** Batched alternate-buffer wheel deltas with `requestAnimationFrame`, accumulated signed fractional scroll lines, coalesced opposite directions before sending, and capped each frame to a bounded number of arrow-key steps while carrying remaining queued steps forward.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-05-17 — Release version bumped to `0.0.23` and Apple Silicon mac build produced
+
+**Problem:** The app needed a fresh patch release and macOS Apple Silicon desktop binary from the current workspace state.
+
+**Root cause:** Release package metadata still pointed at `0.0.22`, so packaging would continue to emit artifacts with the previous version number.
+
+**Fix:** Bumped release package versions to `0.0.23`, refreshed `bun.lock`, built the macOS arm64 desktop artifacts via `bun run dist:desktop:dmg:arm64`, and revalidated the workspace with `bun lint` and `bun typecheck`.
+
+**Affected files:**
+- `apps/server/package.json`
+- `apps/desktop/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.23-arm64.dmg`
+- `release/Clui-0.0.23-arm64.zip`
+- `release/Clui-0.0.23-arm64.dmg.blockmap`
+- `release/Clui-0.0.23-arm64.zip.blockmap`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-05-17 — Protect active harness sessions from sibling kill commands
 
 **Problem:** Active pi threads could suddenly pause/restart while still being viewed, and logs showed `pi session exited` with `signal=15` for PIDs that matched a visible `kill ...` command from another thread.

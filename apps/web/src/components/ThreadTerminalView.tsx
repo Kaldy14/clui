@@ -64,6 +64,9 @@ type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
 type HarnessKind = Thread["harness"];
 
 const PI_IMAGE_PASTE_KEYSTROKE = "\x16";
+const ALT_BUFFER_WHEEL_PIXELS_PER_LINE = 50;
+const ALT_BUFFER_WHEEL_DELTA_LINE_PIXELS = 40;
+const ALT_BUFFER_WHEEL_MAX_STEPS_PER_FRAME = 24;
 
 function startHarnessSession(
   api: NativeApi,
@@ -660,6 +663,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
     const api = readNativeApi();
     if (!api) return;
+    const activeApi = api;
 
     let disposed = false;
 
@@ -1043,12 +1047,82 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     // We always intercept wheel in alternate buffer and send arrow keys,
     // even when mouse tracking is active — see note inside the handler.
     let wheelPartialScroll = 0;
+    let queuedWheelUpLines = 0;
+    let queuedWheelDownLines = 0;
+    let wheelFlushRafId: number | null = null;
+
+    const resetQueuedAltBufferWheel = () => {
+      wheelPartialScroll = 0;
+      queuedWheelUpLines = 0;
+      queuedWheelDownLines = 0;
+      if (wheelFlushRafId !== null) {
+        cancelAnimationFrame(wheelFlushRafId);
+        wheelFlushRafId = null;
+      }
+    };
+
+    const scheduleAltBufferWheelFlush = () => {
+      if (wheelFlushRafId !== null) return;
+      wheelFlushRafId = requestAnimationFrame(() => {
+        wheelFlushRafId = null;
+        flushAltBufferWheel();
+      });
+    };
+
+    const enqueueAltBufferWheelSteps = (direction: "up" | "down", steps: number) => {
+      if (steps <= 0) return;
+      if (direction === "up") {
+        const canceled = Math.min(queuedWheelDownLines, steps);
+        queuedWheelDownLines -= canceled;
+        queuedWheelUpLines += steps - canceled;
+      } else {
+        const canceled = Math.min(queuedWheelUpLines, steps);
+        queuedWheelUpLines -= canceled;
+        queuedWheelDownLines += steps - canceled;
+      }
+      if (queuedWheelUpLines > 0 || queuedWheelDownLines > 0) {
+        scheduleAltBufferWheelFlush();
+      }
+    };
+
+    function flushAltBufferWheel() {
+      if (disposed) {
+        resetQueuedAltBufferWheel();
+        return;
+      }
+      if (terminal.buffer.active.type !== "alternate") {
+        resetQueuedAltBufferWheel();
+        return;
+      }
+
+      // Use SS3 prefix (ESC O) when application cursor keys is active,
+      // otherwise CSI prefix (ESC [) — matches xterm.js's own fallback.
+      const prefix = terminal.modes.applicationCursorKeysMode ? "\x1bO" : "\x1b[";
+      let data = "";
+      if (queuedWheelUpLines > 0) {
+        const steps = Math.min(queuedWheelUpLines, ALT_BUFFER_WHEEL_MAX_STEPS_PER_FRAME);
+        queuedWheelUpLines -= steps;
+        data = (prefix + "A").repeat(steps); // A = up
+      } else if (queuedWheelDownLines > 0) {
+        const steps = Math.min(queuedWheelDownLines, ALT_BUFFER_WHEEL_MAX_STEPS_PER_FRAME);
+        queuedWheelDownLines -= steps;
+        data = (prefix + "B").repeat(steps); // B = down
+      }
+
+      if (data) {
+        void writeHarnessData(activeApi, harness, threadId, data).catch(() => undefined);
+      }
+      if (queuedWheelUpLines > 0 || queuedWheelDownLines > 0) {
+        scheduleAltBufferWheelFlush();
+      }
+    }
+
     const onAltBufferWheel = (ev: WheelEvent) => {
       if (disposed) return;
       if (terminal.buffer.active.type !== "alternate") return;
       // Shift+scroll = horizontal intent — don't convert to vertical arrows
       if (ev.shiftKey) return;
-      const deltaY = ev.deltaY;
+      let deltaY = ev.deltaY;
       if (deltaY === 0) return;
       // NOTE: We intentionally do NOT bail out when xterm.js has mouse tracking
       // active (enable-mouse-events class). xterm.js's internal wheel→mouse
@@ -1059,28 +1133,21 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       ev.preventDefault();
       ev.stopPropagation();
 
-      // Accumulate partial scrolls for trackpad precision (mirrors xterm.js
-      // consumeWheelEvent logic). Mouse wheel events have larger deltaY (~100)
-      // while trackpad gestures send many small values (1-20).
-      let amount = Math.abs(deltaY);
+      // Accumulate signed partial scrolls for trackpad precision (mirrors
+      // xterm.js consumeWheelEvent scaling). Mouse wheel events have larger
+      // deltaY (~100) while trackpad gestures send many small values (1-20).
       if (ev.deltaMode === WheelEvent.DOM_DELTA_LINE) {
         // Firefox on some systems: deltaY is already in line units
-        amount *= 40;
+        deltaY *= ALT_BUFFER_WHEEL_DELTA_LINE_PIXELS;
       } else if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-        amount *= terminal.rows * 40;
+        deltaY *= terminal.rows * ALT_BUFFER_WHEEL_DELTA_LINE_PIXELS;
       }
-      wheelPartialScroll += amount / 50;
-      const lines = Math.floor(wheelPartialScroll);
-      wheelPartialScroll -= lines;
-      if (lines === 0) return;
+      const accumulated = wheelPartialScroll + deltaY / ALT_BUFFER_WHEEL_PIXELS_PER_LINE;
+      const wholeLines = accumulated > 0 ? Math.floor(accumulated) : Math.ceil(accumulated);
+      wheelPartialScroll = accumulated - wholeLines;
+      if (wholeLines === 0) return;
 
-      // Use SS3 prefix (ESC O) when application cursor keys is active,
-      // otherwise CSI prefix (ESC [) — matches xterm.js's own fallback
-      const prefix = terminal.modes.applicationCursorKeysMode ? "\x1bO" : "\x1b[";
-      const key = deltaY < 0 ? "A" : "B"; // A = up, B = down
-      const data = (prefix + key).repeat(Math.min(lines, 15));
-
-      void writeHarnessData(api, harness, threadId, data).catch(() => undefined);
+      enqueueAltBufferWheelSteps(wholeLines < 0 ? "up" : "down", Math.abs(wholeLines));
     };
     el.addEventListener("wheel", onAltBufferWheel, { capture: true, passive: false });
 
@@ -1137,6 +1204,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       if (stickyMirrorRafId !== null) cancelAnimationFrame(stickyMirrorRafId);
       if (scrollbackTimeoutId != null) clearTimeout(scrollbackTimeoutId);
+      resetQueuedAltBufferWheel();
       window.clearInterval(activeViewTouchIntervalId);
       el.removeEventListener("paste", onPaste, { capture: true });
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });

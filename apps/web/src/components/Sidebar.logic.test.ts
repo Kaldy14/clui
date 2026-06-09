@@ -60,6 +60,20 @@ describe("getActiveHarnessSessionStats", () => {
       totalActive: 3,
     });
   });
+
+  it("does not clamp over-cap active session counts", () => {
+    const threads = Array.from({ length: 25 }, () =>
+      makeHarnessSessionStatsThread("pi", "active"),
+    );
+
+    expect(getActiveHarnessSessionStats({ maxActivePerHarness: 20, threads })).toMatchObject({
+      activeByHarness: { claudeCode: 0, pi: 25 },
+      busiestHarness: "pi",
+      busiestHarnessActive: 25,
+      maxActivePerHarness: 20,
+      totalActive: 25,
+    });
+  });
 });
 
 describe("createThreadAndNavigate", () => {

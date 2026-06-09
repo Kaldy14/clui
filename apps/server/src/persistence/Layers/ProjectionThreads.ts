@@ -195,19 +195,29 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
               WHERE deleted_at IS NULL
                 AND scrollback_snapshot IS NOT NULL
             `;
-          } else {
-            const ids = input.excludeThreadIds;
+            // changes() must run on the same connection as the UPDATE — transaction ensures this
+            const [row] = yield* sql<{ count: number }>`SELECT changes() AS count`;
+            return row?.count ?? 0;
+          }
+
+          const excludedThreadIds = new Set(input.excludeThreadIds);
+          const rows = yield* sql<{ thread_id: string }>`
+            SELECT thread_id
+            FROM projection_threads
+            WHERE deleted_at IS NULL
+              AND scrollback_snapshot IS NOT NULL
+          `;
+          const threadIdsToClear = rows
+            .map((row) => row.thread_id)
+            .filter((threadId) => !excludedThreadIds.has(threadId));
+          for (const threadId of threadIdsToClear) {
             yield* sql`
               UPDATE projection_threads
               SET scrollback_snapshot = NULL
-              WHERE deleted_at IS NULL
-                AND scrollback_snapshot IS NOT NULL
-                AND thread_id NOT IN (${sql.in(ids)})
+              WHERE thread_id = ${threadId}
             `;
           }
-          // changes() must run on the same connection as the UPDATE — transaction ensures this
-          const [row] = yield* sql<{ count: number }>`SELECT changes() AS count`;
-          return row?.count ?? 0;
+          return threadIdsToClear.length;
         }),
       ).pipe(
         Effect.mapError(

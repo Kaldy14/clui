@@ -27,10 +27,6 @@ function collectPurgeExcludedThreadIds(routeThreadId: string | null): ThreadId[]
     excludeThreadIds.push(routeThreadId as ThreadId);
   }
   for (const thread of threads) {
-    if (thread.terminalStatus === "active") {
-      excludeThreadIds.push(thread.id as ThreadId);
-      continue;
-    }
     if (thread.hookStatus && BUSY_HOOK_STATUSES.has(thread.hookStatus)) {
       excludeThreadIds.push(thread.id as ThreadId);
     }
@@ -48,6 +44,7 @@ export function PurgeSessionsDialog({
   routeThreadId: string | null;
 }) {
   const [result, setResult] = useState<{
+    sessionsHibernated: number;
     sessionsKilled: number;
     snapshotsCleared: number;
   } | null>(null);
@@ -60,7 +57,10 @@ export function PurgeSessionsDialog({
     const excludeSet = new Set(excludeThreadIds);
 
     try {
-      const res = await api.server.purgeInactiveSessions({ excludeThreadIds });
+      const res = await api.server.purgeInactiveSessions({
+        excludeThreadIds,
+        hibernateActiveSessions: true,
+      });
 
       // Dispose client-side terminals for purged threads
       disposeAllExcept(excludeSet);
@@ -84,10 +84,8 @@ export function PurgeSessionsDialog({
             <AlertDialogHeader>
               <AlertDialogTitle>Sessions purged</AlertDialogTitle>
               <AlertDialogDescription>
-                Killed {result.sessionsKilled} session
-                {result.sessionsKilled !== 1 ? "s" : ""}, cleared{" "}
-                {result.snapshotsCleared} snapshot
-                {result.snapshotsCleared !== 1 ? "s" : ""}.
+                Hibernated {result.sessionsHibernated}, killed {result.sessionsKilled}, cleared{" "}
+                {result.snapshotsCleared}.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -99,8 +97,7 @@ export function PurgeSessionsDialog({
             <AlertDialogHeader>
               <AlertDialogTitle>Purge inactive sessions?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will kill dormant terminal processes and clear cached scrollback for inactive
-                threads. Claude Code conversation history is not affected.
+                This will hibernate inactive active sessions and clear dormant session cache.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
