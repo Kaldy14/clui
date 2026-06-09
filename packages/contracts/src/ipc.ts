@@ -46,6 +46,10 @@ import type {
 } from "./server";
 import type {
   ClientOrchestrationCommand,
+  OrchestrationAskDiffReviewInput,
+  OrchestrationAskDiffReviewResult,
+  OrchestrationGenerateDiffReviewInput,
+  OrchestrationGenerateDiffReviewResult,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetWorkingTreeDiffInput,
@@ -214,6 +218,10 @@ export interface NativeApi {
     getWorkingTreeDiff: (
       input: OrchestrationGetWorkingTreeDiffInput,
     ) => Promise<OrchestrationGetWorkingTreeDiffResult>;
+    generateDiffReview: (
+      input: OrchestrationGenerateDiffReviewInput,
+    ) => Promise<OrchestrationGenerateDiffReviewResult>;
+    askDiffReview: (input: OrchestrationAskDiffReviewInput) => Promise<OrchestrationAskDiffReviewResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     getSessionMetrics: (
       input: OrchestrationGetSessionMetricsInput,

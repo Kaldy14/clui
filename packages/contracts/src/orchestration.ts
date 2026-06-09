@@ -8,6 +8,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -21,6 +22,8 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   getWorkingTreeDiff: "orchestration.getWorkingTreeDiff",
+  generateDiffReview: "orchestration.generateDiffReview",
+  askDiffReview: "orchestration.askDiffReview",
   replayEvents: "orchestration.replayEvents",
   getSessionMetrics: "orchestration.getSessionMetrics",
   getSlashCommands: "orchestration.getSlashCommands",
@@ -1139,6 +1142,90 @@ export const OrchestrationGetWorkingTreeDiffResult = Schema.Struct({
 });
 export type OrchestrationGetWorkingTreeDiffResult = typeof OrchestrationGetWorkingTreeDiffResult.Type;
 
+export const OrchestrationDiffReviewScope = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("branch") }),
+  Schema.Struct({ type: Schema.Literal("workingTree") }),
+  Schema.Struct({
+    type: Schema.Literal("turn"),
+    fromTurnCount: NonNegativeInt,
+    toTurnCount: NonNegativeInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("fullThread"),
+    toTurnCount: NonNegativeInt,
+  }),
+]);
+export type OrchestrationDiffReviewScope = typeof OrchestrationDiffReviewScope.Type;
+
+export const OrchestrationDiffReviewAnchor = Schema.Struct({
+  filePath: TrimmedNonEmptyString,
+  oldStartLine: NonNegativeInt.pipe(Schema.NullOr),
+  oldEndLine: NonNegativeInt.pipe(Schema.NullOr),
+  newStartLine: NonNegativeInt.pipe(Schema.NullOr),
+  newEndLine: NonNegativeInt.pipe(Schema.NullOr),
+  hunkHeader: Schema.String.pipe(Schema.NullOr),
+});
+export type OrchestrationDiffReviewAnchor = typeof OrchestrationDiffReviewAnchor.Type;
+
+export const OrchestrationDiffReviewSignificance = Schema.Literals(["high", "medium", "low"]);
+export type OrchestrationDiffReviewSignificance =
+  typeof OrchestrationDiffReviewSignificance.Type;
+
+export const OrchestrationDiffReviewChange = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  rank: PositiveInt,
+  significance: OrchestrationDiffReviewSignificance,
+  filePath: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  summary: Schema.String,
+  whyItMatters: Schema.String,
+  reviewFocus: Schema.Array(Schema.String),
+  risks: Schema.Array(Schema.String),
+  anchors: Schema.Array(OrchestrationDiffReviewAnchor),
+});
+export type OrchestrationDiffReviewChange = typeof OrchestrationDiffReviewChange.Type;
+
+export const OrchestrationGenerateDiffReviewInput = Schema.Struct({
+  threadId: ThreadId,
+  scope: OrchestrationDiffReviewScope,
+});
+export type OrchestrationGenerateDiffReviewInput =
+  typeof OrchestrationGenerateDiffReviewInput.Type;
+
+export const OrchestrationGenerateDiffReviewResult = Schema.Struct({
+  threadId: ThreadId,
+  scope: OrchestrationDiffReviewScope,
+  sourceLabel: TrimmedNonEmptyString,
+  baseBranch: Schema.String.pipe(Schema.NullOr),
+  headBranch: Schema.String.pipe(Schema.NullOr),
+  defaultBranchSafety: Schema.Boolean,
+  diffStat: Schema.String,
+  totalFileCount: NonNegativeInt,
+  coveredFileCount: NonNegativeInt,
+  summarizedFileCount: NonNegativeInt,
+  overview: Schema.String,
+  keyChanges: Schema.Array(OrchestrationDiffReviewChange),
+  testFocus: Schema.Array(Schema.String),
+  followUps: Schema.Array(Schema.String),
+  generatedAt: IsoDateTime,
+});
+export type OrchestrationGenerateDiffReviewResult =
+  typeof OrchestrationGenerateDiffReviewResult.Type;
+
+export const OrchestrationAskDiffReviewInput = Schema.Struct({
+  threadId: ThreadId,
+  filePath: TrimmedNonEmptyString,
+  lineNumber: NonNegativeInt.pipe(Schema.NullOr),
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(8_000)),
+  contextPatch: Schema.String.check(Schema.isMaxLength(80_000)),
+});
+export type OrchestrationAskDiffReviewInput = typeof OrchestrationAskDiffReviewInput.Type;
+
+export const OrchestrationAskDiffReviewResult = Schema.Struct({
+  answer: Schema.String,
+});
+export type OrchestrationAskDiffReviewResult = typeof OrchestrationAskDiffReviewResult.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -1182,6 +1269,18 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getWorkingTreeDiff: {
+    input: OrchestrationGetWorkingTreeDiffInput,
+    output: OrchestrationGetWorkingTreeDiffResult,
+  },
+  generateDiffReview: {
+    input: OrchestrationGenerateDiffReviewInput,
+    output: OrchestrationGenerateDiffReviewResult,
+  },
+  askDiffReview: {
+    input: OrchestrationAskDiffReviewInput,
+    output: OrchestrationAskDiffReviewResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,

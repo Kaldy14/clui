@@ -14,6 +14,7 @@ import { getServerSettingsPath } from "./serverSettings";
 
 import {
   DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+  DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
   DEFAULT_TERMINAL_ID,
   EDITORS,
@@ -798,6 +799,7 @@ describe("WebSocket Server", () => {
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -828,6 +830,7 @@ describe("WebSocket Server", () => {
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -868,6 +871,7 @@ describe("WebSocket Server", () => {
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -907,6 +911,7 @@ describe("WebSocket Server", () => {
       settings: {
         maxActiveHarnessSessions: number;
         preventMacosSleepWhenThreadInProgress: boolean;
+        autoArchiveInactiveThreadDays: number;
       };
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -930,6 +935,7 @@ describe("WebSocket Server", () => {
     expect(result.settings).toEqual({
       maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
     });
     expectAvailableEditors(result.availableEditors);
   });
@@ -1003,6 +1009,7 @@ describe("WebSocket Server", () => {
     expect(response.result).toEqual({
       maxActiveHarnessSessions: 7,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
     });
     expect(claudeCaps).toEqual([7]);
     expect(piCaps).toEqual([7]);
@@ -1011,10 +1018,12 @@ describe("WebSocket Server", () => {
       JSON.parse(fs.readFileSync(getServerSettingsPath(stateDir), "utf8")) as {
         maxActiveHarnessSessions: number;
         preventMacosSleepWhenThreadInProgress: boolean;
+        autoArchiveInactiveThreadDays: number;
       },
     ).toEqual({
       maxActiveHarnessSessions: 7,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+      autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
     });
   });
 
@@ -1202,6 +1211,7 @@ describe("WebSocket Server", () => {
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -1254,6 +1264,7 @@ describe("WebSocket Server", () => {
       settings: {
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
       },
     });
     expectAvailableEditors(
@@ -1329,6 +1340,45 @@ describe("WebSocket Server", () => {
       toTurnCount: 2,
     });
     expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Thread 'thread-missing' not found.");
+  });
+
+  it("routes AI diff review generation through the backend diff-review service", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.generateDiffReview, {
+      threadId: "thread-missing",
+      scope: { type: "branch" },
+    });
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Diff review failed in DiffReview.resolveThreadCwd");
+    expect(response.error?.message).toContain("Thread 'thread-missing' not found.");
+  });
+
+  it("routes AI diff review questions through the backend diff-review service", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.askDiffReview, {
+      threadId: "thread-missing",
+      filePath: "src/auth.ts",
+      lineNumber: 1,
+      prompt: "Explain this change.",
+      contextPatch: "@@ -1 +1 @@\n-old\n+new",
+    });
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Diff review failed in DiffReview.resolveThreadCwd");
     expect(response.error?.message).toContain("Thread 'thread-missing' not found.");
   });
 

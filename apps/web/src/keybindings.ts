@@ -215,6 +215,14 @@ export function isDiffToggleShortcut(
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
 }
 
+export function isDiffAiReviewToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "diff.aiReview.toggle", options);
+}
+
 export function isChatNewShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

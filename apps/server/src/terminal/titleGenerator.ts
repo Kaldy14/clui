@@ -4,6 +4,54 @@
  * @module titleGenerator
  */
 
+const SIDE_EFFECT_ONLY_SLASH_COMMANDS: ReadonlySet<string> = new Set([
+  "changelog",
+  "clone",
+  "compact",
+  "copy",
+  "export",
+  "fast",
+  "fork",
+  "hotkeys",
+  "import",
+  "login",
+  "logout",
+  "model",
+  "name",
+  "new",
+  "quit",
+  "reload",
+  "resume",
+  "scoped-models",
+  "session",
+  "settings",
+  "share",
+  "tree",
+]);
+
+const SLASH_COMMAND_PATTERN = /^\/([A-Za-z][\w.-]*(?::[A-Za-z][\w.-]*)?)(?:\s+([\s\S]*))?$/u;
+
+/**
+ * Returns true when a prompt has enough user intent to generate a useful title.
+ *
+ * Bare slash commands like `/fast` and side-effect-only commands like
+ * `/model gpt-5` should leave the thread as "New thread" so the next real
+ * message can title it. Slash commands with task text, such as
+ * `/impeccable improve this ui`, are title-worthy.
+ */
+export function shouldGenerateTitleFromPrompt(promptText: string): boolean {
+  const trimmed = promptText.trim();
+  if (trimmed.length === 0) return false;
+
+  const slashCommandMatch = SLASH_COMMAND_PATTERN.exec(trimmed);
+  if (!slashCommandMatch) return true;
+
+  const command = slashCommandMatch[1]?.toLowerCase() ?? "";
+  const rest = slashCommandMatch[2]?.trim() ?? "";
+  if (rest.length === 0) return false;
+  return !SIDE_EFFECT_ONLY_SLASH_COMMANDS.has(command);
+}
+
 /**
  * Extract the user's prompt text from a UserPromptSubmit hook body.
  *

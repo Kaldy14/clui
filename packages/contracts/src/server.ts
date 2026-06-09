@@ -1,5 +1,11 @@
 import { Option, Schema } from "effect";
-import { IsoDateTime, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
@@ -49,9 +55,16 @@ export const DEFAULT_ACTIVE_HARNESS_SESSION_CAP = 10;
 export const MIN_ACTIVE_HARNESS_SESSION_CAP = 1;
 export const MAX_ACTIVE_HARNESS_SESSION_CAP = 100;
 export const DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS = true;
+export const DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS = 14;
+export const MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS = 0;
+export const MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS = 365;
 
 const MaxActiveHarnessSessions = PositiveInt.check(
   Schema.isLessThanOrEqualTo(MAX_ACTIVE_HARNESS_SESSION_CAP),
+);
+
+const AutoArchiveInactiveThreadDays = NonNegativeInt.check(
+  Schema.isLessThanOrEqualTo(MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS),
 );
 
 export const ServerSettings = Schema.Struct({
@@ -64,6 +77,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withConstructorDefault(() =>
       Option.some(DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS),
     ),
+  ),
+  autoArchiveInactiveThreadDays: AutoArchiveInactiveThreadDays.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS),
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS)),
   ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -82,6 +99,7 @@ export type ServerConfig = typeof ServerConfig.Type;
 export const ServerUpdateSettingsInput = Schema.Struct({
   maxActiveHarnessSessions: Schema.optional(MaxActiveHarnessSessions),
   preventMacosSleepWhenThreadInProgress: Schema.optional(Schema.Boolean),
+  autoArchiveInactiveThreadDays: Schema.optional(AutoArchiveInactiveThreadDays),
 });
 export type ServerUpdateSettingsInput = typeof ServerUpdateSettingsInput.Type;
 

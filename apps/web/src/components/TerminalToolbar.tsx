@@ -9,7 +9,7 @@ import {
 } from "@clui/contracts";
 import { isElectron } from "../env";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   DiffIcon,
@@ -18,6 +18,7 @@ import {
   PlayIcon,
   RotateCcwIcon,
   ShieldOffIcon,
+  SparklesIcon,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -29,7 +30,7 @@ import {
   useState,
 } from "react";
 
-import { stripDiffSearchParams } from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripAiReviewSearchParams, stripDiffSearchParams } from "../diffRouteSearch";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../keybindings";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -418,6 +419,7 @@ export default function TerminalToolbar({
   threadId: ThreadId;
   diffOpen: boolean;
 }) {
+  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const thread = useStore((s) => s.threads.find((t) => t.id === threadId));
   const project = useStore((s) => s.projects.find((p) => p.id === thread?.projectId));
   const gitCwd = thread?.worktreePath ?? project?.cwd ?? null;
@@ -598,6 +600,11 @@ export default function TerminalToolbar({
     () => shortcutLabelForCommand(keybindings, "diff.toggle"),
     [keybindings],
   );
+  const aiReviewShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "diff.aiReview.toggle"),
+    [keybindings],
+  );
+  const aiReviewOpen = diffSearch.diffAiReview === "1";
 
   const onToggleDiff = useCallback(() => {
     void navigate({
@@ -606,10 +613,28 @@ export default function TerminalToolbar({
       replace: true,
       search: (previous: Record<string, unknown>) => {
         const rest = stripDiffSearchParams(previous);
+        if (diffOpen && aiReviewOpen) return { ...rest, diff: "1" };
         return diffOpen ? rest : { ...rest, diff: "1" };
       },
     });
-  }, [navigate, threadId, diffOpen]);
+  }, [navigate, threadId, diffOpen, aiReviewOpen]);
+
+  const onOpenAiReview = useCallback(() => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous: Record<string, unknown>) => {
+        const rest = stripAiReviewSearchParams(previous);
+        return {
+          ...rest,
+          diff: "1" as const,
+          diffAiReview: "1" as const,
+          diffAiReviewRun: String(Date.now()),
+        };
+      },
+    });
+  }, [navigate, threadId]);
 
   // ── YOLO mode ──
   const yoloMode = useTerminalStateStore(
@@ -761,6 +786,25 @@ export default function TerminalToolbar({
               />
               <TooltipPopup side="bottom">
                 Toggle diff panel{diffShortcutLabel ? ` (${diffShortcutLabel})` : ""}
+              </TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={aiReviewOpen}
+                    onPressedChange={onOpenAiReview}
+                    aria-label="Open AI Review workbench"
+                    variant="outline"
+                    size="xs"
+                  >
+                    <SparklesIcon className="size-3" />
+                  </Toggle>
+                }
+              />
+              <TooltipPopup side="bottom">
+                AI Review{aiReviewShortcutLabel ? ` (${aiReviewShortcutLabel})` : ""}
               </TooltipPopup>
             </Tooltip>
           </>

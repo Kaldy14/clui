@@ -1,14 +1,18 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+  DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
   MAX_ACTIVE_HARNESS_SESSION_CAP,
+  MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   MIN_ACTIVE_HARNESS_SESSION_CAP,
+  MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   type CodingHarness,
   type ProviderKind,
   type ServerUpdateSettingsInput,
+  type ThreadId,
 } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
@@ -28,12 +32,16 @@ import * as claudeCache from "../lib/claudeTerminalCache";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
+import { dispatchThreadArchiveUpdate } from "../lib/threadArchive";
+import { formatRelativeTime } from "../lib/threadStatus";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { useStore } from "../store";
+import { groupByProject, searchThreads } from "../components/ThreadSearchDialog.logic";
 
 const THEME_OPTIONS = [
   {
@@ -151,11 +159,21 @@ function SettingsRouteView() {
   const { settings, defaults, updateSettings } = useAppSettings();
   const queryClient = useQueryClient();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const navigate = useNavigate();
+  const projects = useStore((state) => state.projects);
+  const threads = useStore((state) => state.threads);
+  const setThreadArchived = useStore((state) => state.setThreadArchived);
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [maxActiveHarnessSessionsInput, setMaxActiveHarnessSessionsInput] = useState("");
+  const [autoArchiveInactiveThreadDaysInput, setAutoArchiveInactiveThreadDaysInput] = useState("");
   const [serverSettingsError, setServerSettingsError] = useState<string | null>(null);
   const [isSavingServerSettings, setIsSavingServerSettings] = useState(false);
+  const [archivedThreadQuery, setArchivedThreadQuery] = useState("");
+  const [archivedThreadsError, setArchivedThreadsError] = useState<string | null>(null);
+  const [restoringArchivedThreadIds, setRestoringArchivedThreadIds] = useState<
+    ReadonlySet<ThreadId>
+  >(() => new Set<ThreadId>());
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -180,6 +198,14 @@ function SettingsRouteView() {
       setServerSettingsError(null);
     }
   }, [serverConfigQuery.data?.settings.maxActiveHarnessSessions]);
+
+  useEffect(() => {
+    const currentDays = serverConfigQuery.data?.settings.autoArchiveInactiveThreadDays;
+    if (typeof currentDays === "number") {
+      setAutoArchiveInactiveThreadDaysInput(String(currentDays));
+      setServerSettingsError(null);
+    }
+  }, [serverConfigQuery.data?.settings.autoArchiveInactiveThreadDays]);
 
   // Scroll to section when navigated with hash (e.g. /settings#speech-to-text)
   useEffect(() => {
@@ -249,6 +275,46 @@ function SettingsRouteView() {
     [queryClient],
   );
 
+  const restoreArchivedThread = useCallback(
+    (threadId: ThreadId) => {
+      setArchivedThreadsError(null);
+      setRestoringArchivedThreadIds((current) => new Set(current).add(threadId));
+
+      let api: ReturnType<typeof ensureNativeApi>;
+      try {
+        api = ensureNativeApi();
+      } catch (error) {
+        setArchivedThreadsError(
+          error instanceof Error ? error.message : "Unable to restore archived chat.",
+        );
+        setRestoringArchivedThreadIds((current) => {
+          const next = new Set(current);
+          next.delete(threadId);
+          return next;
+        });
+        return;
+      }
+
+      void dispatchThreadArchiveUpdate(api, threadId, null)
+        .then(() => {
+          setThreadArchived(threadId, null);
+        })
+        .catch((error) => {
+          setArchivedThreadsError(
+            error instanceof Error ? error.message : "Unable to restore archived chat.",
+          );
+        })
+        .finally(() => {
+          setRestoringArchivedThreadIds((current) => {
+            const next = new Set(current);
+            next.delete(threadId);
+            return next;
+          });
+        });
+    },
+    [setThreadArchived],
+  );
+
   const saveServerSettings = useCallback(() => {
     const nextCap = Number.parseInt(maxActiveHarnessSessionsInput, 10);
     if (
@@ -264,6 +330,22 @@ function SettingsRouteView() {
 
     persistServerSettings({ maxActiveHarnessSessions: nextCap });
   }, [maxActiveHarnessSessionsInput, persistServerSettings]);
+
+  const saveAutoArchiveSettings = useCallback(() => {
+    const nextDays = Number.parseInt(autoArchiveInactiveThreadDaysInput, 10);
+    if (
+      !Number.isInteger(nextDays) ||
+      nextDays < MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS ||
+      nextDays > MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS
+    ) {
+      setServerSettingsError(
+        `Enter a whole number between ${MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS} and ${MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS}.`,
+      );
+      return;
+    }
+
+    persistServerSettings({ autoArchiveInactiveThreadDays: nextDays });
+  }, [autoArchiveInactiveThreadDaysInput, persistServerSettings]);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -334,14 +416,45 @@ function SettingsRouteView() {
   const configuredPreventMacosSleepWhenThreadInProgress =
     serverConfigQuery.data?.settings.preventMacosSleepWhenThreadInProgress ??
     DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS;
+  const configuredAutoArchiveInactiveThreadDays =
+    serverConfigQuery.data?.settings.autoArchiveInactiveThreadDays ??
+    DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS;
   const parsedMaxActiveHarnessSessions = Number.parseInt(maxActiveHarnessSessionsInput, 10);
+  const parsedAutoArchiveInactiveThreadDays = Number.parseInt(
+    autoArchiveInactiveThreadDaysInput,
+    10,
+  );
   const hasValidMaxActiveHarnessSessions =
     Number.isInteger(parsedMaxActiveHarnessSessions) &&
     parsedMaxActiveHarnessSessions >= MIN_ACTIVE_HARNESS_SESSION_CAP &&
     parsedMaxActiveHarnessSessions <= MAX_ACTIVE_HARNESS_SESSION_CAP;
+  const hasValidAutoArchiveInactiveThreadDays =
+    Number.isInteger(parsedAutoArchiveInactiveThreadDays) &&
+    parsedAutoArchiveInactiveThreadDays >= MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS &&
+    parsedAutoArchiveInactiveThreadDays <= MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS;
   const hasPendingServerSettingsChange =
     hasValidMaxActiveHarnessSessions &&
     parsedMaxActiveHarnessSessions !== configuredMaxActiveHarnessSessions;
+  const hasPendingAutoArchiveSettingsChange =
+    hasValidAutoArchiveInactiveThreadDays &&
+    parsedAutoArchiveInactiveThreadDays !== configuredAutoArchiveInactiveThreadDays;
+  const archivedThreads = useMemo(
+    () => threads.filter((thread) => thread.archivedAt !== null),
+    [threads],
+  );
+  const archivedSearchResults = useMemo(
+    () => searchThreads(archivedThreads, projects, archivedThreadQuery),
+    [archivedThreadQuery, archivedThreads, projects],
+  );
+  const archivedGroups = useMemo(() => {
+    const groupsByProject = new Map(
+      groupByProject(archivedSearchResults, projects).map((group) => [group.project.id, group]),
+    );
+    return projects.flatMap((project) => {
+      const group = groupsByProject.get(project.id);
+      return group ? [group] : [];
+    });
+  }, [archivedSearchResults, projects]);
 
   return (
     <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -525,6 +638,187 @@ function SettingsRouteView() {
                   >
                     {isSavingServerSettings ? "Saving…" : "Save session cap"}
                   </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Chat history</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Keep inactive chats out of the sidebar without deleting their history.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="space-y-3">
+                    <label htmlFor="auto-archive-inactive-days" className="block space-y-1">
+                      <span className="text-xs font-medium text-foreground">
+                        Auto-archive inactive chats
+                      </span>
+                      <p className="text-xs text-muted-foreground">
+                        Threads are archived when their last server update is older than this many
+                        days. Use 0 to disable automatic archiving.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Input
+                          id="auto-archive-inactive-days"
+                          type="number"
+                          min={MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS}
+                          max={MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS}
+                          value={autoArchiveInactiveThreadDaysInput}
+                          onChange={(event) => {
+                            setAutoArchiveInactiveThreadDaysInput(event.target.value);
+                            setServerSettingsError(null);
+                          }}
+                          className="w-28"
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          {MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS}–
+                          {MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS} days
+                        </span>
+                      </div>
+                    </label>
+
+                    <p className="text-xs text-muted-foreground">
+                      Current setting:{" "}
+                      {configuredAutoArchiveInactiveThreadDays === 0
+                        ? "disabled"
+                        : `${configuredAutoArchiveInactiveThreadDays} days`}
+                      .
+                    </p>
+
+                    {serverSettingsError ? (
+                      <p className="text-xs text-destructive">{serverSettingsError}</p>
+                    ) : null}
+
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={
+                          isSavingServerSettings ||
+                          autoArchiveInactiveThreadDaysInput ===
+                            String(configuredAutoArchiveInactiveThreadDays)
+                        }
+                        onClick={() => {
+                          setAutoArchiveInactiveThreadDaysInput(
+                            String(configuredAutoArchiveInactiveThreadDays),
+                          );
+                          setServerSettingsError(null);
+                        }}
+                      >
+                        Reset
+                      </Button>
+                      <Button
+                        size="xs"
+                        disabled={
+                          isSavingServerSettings ||
+                          serverConfigQuery.isLoading ||
+                          !hasPendingAutoArchiveSettingsChange
+                        }
+                        onClick={saveAutoArchiveSettings}
+                      >
+                        {isSavingServerSettings ? "Saving…" : "Save auto-archive"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-xs font-medium text-foreground">Archived chats</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Archived chats remain searchable and are grouped by their project. Restore a
+                        chat to show it in the sidebar again.
+                      </p>
+                    </div>
+                    <span className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                      {archivedThreads.length} archived
+                    </span>
+                  </div>
+
+                  <Input
+                    value={archivedThreadQuery}
+                    onChange={(event) => setArchivedThreadQuery(event.target.value)}
+                    placeholder="Search archived chats..."
+                    className="mb-3"
+                  />
+
+                  {archivedThreadsError ? (
+                    <p className="mb-3 text-xs text-destructive">{archivedThreadsError}</p>
+                  ) : null}
+
+                  {archivedSearchResults.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border bg-card/40 px-3 py-6 text-center text-xs text-muted-foreground">
+                      {archivedThreads.length === 0
+                        ? "No archived chats yet."
+                        : "No archived chats match your search."}
+                    </div>
+                  ) : (
+                    <div className="max-h-80 space-y-4 overflow-y-auto pr-1">
+                      {archivedGroups.map((group) => (
+                        <div key={group.project.id} className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <h4 className="truncate text-xs font-medium text-muted-foreground">
+                              {group.project.name}
+                            </h4>
+                            <span className="text-[11px] text-muted-foreground/70">
+                              {group.results.length}
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {group.results.map((result) => {
+                              const { thread } = result;
+                              const isRestoring = restoringArchivedThreadIds.has(thread.id);
+                              return (
+                                <div
+                                  key={thread.id}
+                                  className="flex flex-col gap-3 rounded-lg border border-border bg-card/40 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-xs font-medium text-foreground">
+                                      {thread.title}
+                                    </p>
+                                    <p className="mt-1 text-[11px] text-muted-foreground">
+                                      Updated {formatRelativeTime(thread.updatedAt)}
+                                      {thread.archivedAt
+                                        ? ` · Archived ${formatRelativeTime(thread.archivedAt)}`
+                                        : ""}
+                                      {thread.branch ? ` · ${thread.branch}` : ""}
+                                    </p>
+                                  </div>
+                                  <div className="flex shrink-0 gap-2">
+                                    <Button
+                                      size="xs"
+                                      variant="outline"
+                                      onClick={() =>
+                                        void navigate({
+                                          to: "/$threadId",
+                                          params: { threadId: thread.id },
+                                        })
+                                      }
+                                    >
+                                      Open
+                                    </Button>
+                                    <Button
+                                      size="xs"
+                                      disabled={isRestoring}
+                                      onClick={() => restoreArchivedThread(thread.id)}
+                                    >
+                                      {isRestoring ? "Restoring…" : "Restore"}
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </section>

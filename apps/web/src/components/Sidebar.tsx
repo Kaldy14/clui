@@ -59,6 +59,7 @@ import { projectTerminalThreadId, type Project, type Thread } from "../types";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { getGlobalSessionEventState } from "../lib/sessionEventState";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
+import { dispatchThreadArchiveUpdate } from "../lib/threadArchive";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -1244,12 +1245,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       }
 
       try {
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId,
-          archivedAt,
-        });
+        await dispatchThreadArchiveUpdate(api, threadId, archivedAt);
         setThreadArchived(threadId, archivedAt);
       } catch (error) {
         toastManager.add({

@@ -3,6 +3,8 @@ import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 
 import {
   ClientOrchestrationCommand,
+  OrchestrationAskDiffReviewInput,
+  OrchestrationGenerateDiffReviewInput,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetWorkingTreeDiffInput,
   ORCHESTRATION_WS_METHODS,
@@ -154,6 +156,8 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(ORCHESTRATION_WS_METHODS.getTurnDiff, OrchestrationGetTurnDiffInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getFullThreadDiff, OrchestrationGetFullThreadDiffInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getWorkingTreeDiff, OrchestrationGetWorkingTreeDiffInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.generateDiffReview, OrchestrationGenerateDiffReviewInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.askDiffReview, OrchestrationAskDiffReviewInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.replayEvents, OrchestrationReplayEventsInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getSessionMetrics, OrchestrationGetSessionMetricsInput),
   tagRequestBody(ORCHESTRATION_WS_METHODS.getSlashCommands, OrchestrationGetSlashCommandsInput),

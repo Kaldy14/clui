@@ -214,6 +214,10 @@ export function createWsNativeApi(): NativeApi {
         transport.request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),
       getWorkingTreeDiff: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getWorkingTreeDiff, input),
+      generateDiffReview: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.generateDiffReview, input),
+      askDiffReview: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.askDiffReview, input),
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       getSessionMetrics: (input) =>

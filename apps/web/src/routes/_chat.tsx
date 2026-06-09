@@ -13,6 +13,7 @@ import { projectTerminalThreadId } from "../types";
 import { isMacPlatform } from "../lib/utils";
 import { setEvictionGuard } from "../lib/claudeTerminalCache";
 import {
+  isDiffAiReviewToggleShortcut,
   isDiffToggleShortcut,
   isProjectTerminalToggleShortcut,
   isSpeechToggleShortcut,
@@ -22,7 +23,7 @@ import {
   isThreadSearchShortcut,
   resolveShortcutCommand,
 } from "../keybindings";
-import { stripDiffSearchParams } from "../diffRouteSearch";
+import { stripAiReviewSearchParams, stripDiffSearchParams } from "../diffRouteSearch";
 import { useSpeechStore } from "../speechStore";
 import { projectScriptIdFromCommand } from "../projectScripts";
 import { runProjectScriptInTerminal } from "../components/TerminalToolbar";
@@ -139,7 +140,28 @@ function ChatRouteLayout() {
             params: { threadId: routeThreadId },
             search: (previous: Record<string, unknown>) => {
               const rest = stripDiffSearchParams(previous);
-              return previous.diff === "1" ? rest : { ...rest, diff: "1" };
+              return previous.diff === "1" && previous.diffAiReview !== "1" ? rest : { ...rest, diff: "1" };
+            },
+          });
+        }
+        return;
+      }
+
+      // Cmd+Shift+A: Open AI Review workbench and trigger generation
+      if (isDiffAiReviewToggleShortcut(event, keybindings)) {
+        event.preventDefault();
+        if (routeThreadId) {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: routeThreadId },
+            search: (previous: Record<string, unknown>) => {
+              const rest = stripAiReviewSearchParams(previous);
+              return {
+                ...rest,
+                diff: "1" as const,
+                diffAiReview: "1" as const,
+                diffAiReviewRun: String(Date.now()),
+              };
             },
           });
         }

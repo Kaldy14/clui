@@ -51,6 +51,7 @@ export function sanitizeGeneratedThreadTitle(raw: string | null | undefined): st
 
   title = title.replace(/^["']|["']$/g, "").trim();
   title = title.split(/\r?\n/g)[0]?.trim() ?? "";
+  title = title.replace(/^["']|["']$/g, "").trim();
   if (title.length === 0) return null;
   if (title.length > TITLE_MAX_LENGTH) {
     title = `${title.slice(0, TITLE_MAX_LENGTH - 1)}\u2026`;
@@ -162,7 +163,7 @@ export const generateThreadTitleWithCodex = (
           "--model",
           CODEX_MODEL,
           "--config",
-          `model_reasoning_effort=\"${CODEX_REASONING_EFFORT}\"`,
+          `model_reasoning_effort="${CODEX_REASONING_EFFORT}"`,
           "--output-schema",
           schemaPath,
           "--output-last-message",

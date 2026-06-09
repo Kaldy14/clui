@@ -24,6 +24,7 @@ import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { NodePtyHostAdapterLive } from "./terminal/Layers/NodePtyHost";
 import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads";
 import { MacosSleepPreventerLive } from "./macosSleepPreventer";
+import { DiffReviewLive } from "./diffReview/Layers/DiffReview";
 
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
@@ -38,6 +39,11 @@ export function makeServerRuntimeServicesLayer() {
   const checkpointDiffQueryLayer = CheckpointDiffQueryLive.pipe(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provideMerge(CheckpointStoreLive),
+  );
+
+  const diffReviewLayer = DiffReviewLive.pipe(
+    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provideMerge(checkpointDiffQueryLayer),
   );
 
   const runtimeServicesLayer = Layer.mergeAll(
@@ -79,6 +85,7 @@ export function makeServerRuntimeServicesLayer() {
     gitCoreLayer,
     gitManagerLayer,
     textGenerationLayer,
+    diffReviewLayer,
     terminalLayer,
     claudeSessionLayer,
     piSessionLayer,

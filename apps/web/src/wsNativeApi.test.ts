@@ -251,6 +251,7 @@ describe("wsNativeApi", () => {
         workspaceRoot: "/tmp/workspace",
         defaultModel: null,
         scripts: [],
+        prompts: [],
         createdAt: "2026-02-24T00:00:00.000Z",
         updatedAt: "2026-02-24T00:00:00.000Z",
       },
@@ -363,6 +364,37 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
       threadId: "thread-1",
       toTurnCount: 1,
+    });
+  });
+
+  it("forwards AI diff review requests to orchestration websocket methods", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const threadId = ThreadId.makeUnsafe("thread-ai-review");
+
+    requestMock.mockResolvedValueOnce({ ok: true });
+    await api.orchestration.generateDiffReview({ threadId, scope: { type: "branch" } });
+
+    expect(requestMock).toHaveBeenLastCalledWith(ORCHESTRATION_WS_METHODS.generateDiffReview, {
+      threadId,
+      scope: { type: "branch" },
+    });
+
+    requestMock.mockResolvedValueOnce({ answer: "Read the auth guard first." });
+    await api.orchestration.askDiffReview({
+      threadId,
+      filePath: "src/auth.ts",
+      lineNumber: 42,
+      prompt: "Explain the selected guard.",
+      contextPatch: "@@ -1 +1 @@\n-allow\n+deny",
+    });
+
+    expect(requestMock).toHaveBeenLastCalledWith(ORCHESTRATION_WS_METHODS.askDiffReview, {
+      threadId,
+      filePath: "src/auth.ts",
+      lineNumber: 42,
+      prompt: "Explain the selected guard.",
+      contextPatch: "@@ -1 +1 @@\n-allow\n+deny",
     });
   });
 

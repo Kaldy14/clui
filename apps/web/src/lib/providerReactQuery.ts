@@ -2,6 +2,7 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   ThreadId,
+  type OrchestrationDiffReviewScope,
 } from "@clui/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { Option, Schema } from "effect";
@@ -28,6 +29,8 @@ export const providerQueryKeys = {
     ] as const,
   workingTreeDiff: (threadId: ThreadId | null) =>
     ["providers", "workingTreeDiff", threadId] as const,
+  diffReview: (threadId: ThreadId | null, scope: OrchestrationDiffReviewScope | null) =>
+    ["providers", "diffReview", threadId, scope] as const,
 };
 
 function decodeCheckpointDiffRequest(input: CheckpointDiffQueryInput) {
@@ -123,6 +126,60 @@ export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
       isCheckpointTemporarilyUnavailable(error)
         ? Math.min(5_000, 250 * 2 ** (attempt - 1))
         : Math.min(1_000, 100 * 2 ** (attempt - 1)),
+  });
+}
+
+const DIFF_REVIEW_CLIENT_TIMEOUT_MS = 90_000;
+
+function withClientTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        globalThis.clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        globalThis.clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+export async function generateDiffReview(input: {
+  threadId: ThreadId | null;
+  scope: OrchestrationDiffReviewScope | null;
+}) {
+  const api = ensureNativeApi();
+  if (!input.threadId || !input.scope) {
+    throw new Error("AI review requires a thread and review scope.");
+  }
+  return await withClientTimeout(
+    api.orchestration.generateDiffReview({
+      threadId: input.threadId,
+      scope: input.scope,
+    }),
+    DIFF_REVIEW_CLIENT_TIMEOUT_MS,
+    "AI review timed out while waiting for pi. You can retry from the AI Review workbench.",
+  );
+}
+
+export function generateDiffReviewQueryOptions(input: {
+  threadId: ThreadId | null;
+  scope: OrchestrationDiffReviewScope | null;
+  enabled?: boolean;
+}) {
+  return queryOptions({
+    queryKey: providerQueryKeys.diffReview(input.threadId, input.scope),
+    queryFn: async () => generateDiffReview(input),
+    enabled: (input.enabled ?? false) && !!input.threadId && !!input.scope,
+    staleTime: Infinity,
+    gcTime: 5 * 60_000,
+    retry: false,
   });
 }
 

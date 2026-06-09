@@ -62,6 +62,7 @@ import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnap
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { CheckpointReactor } from "./orchestration/Services/CheckpointReactor";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
+import { DiffReview } from "./diffReview/Services/DiffReview.ts";
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
@@ -89,10 +90,11 @@ import {
   buildPermissionRequestEvents,
   buildPostToolUseEvents,
 } from "./hooks/hookReceiver";
-import { extractPromptText } from "./terminal/titleGenerator";
+import { extractPromptText, shouldGenerateTitleFromPrompt } from "./terminal/titleGenerator";
 import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThreads.ts";
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { MacosSleepPreventer } from "./macosSleepPreventer";
+import { AUTO_ARCHIVE_SWEEP_INTERVAL_MS, findAutoArchivableThreads } from "./autoArchiveThreads";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -278,6 +280,7 @@ export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
   | CheckpointDiffQuery
+  | DiffReview
   | OrchestrationReactor
   | CheckpointReactor;
 
@@ -509,17 +512,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const autoTitledThreads = new Set<string>();
   const pendingPiPromptBuffers = new Map<string, string>();
 
-  const dispatchPiAutoTitleIfNeeded = (threadId: string, promptText: string): void => {
+  const dispatchAutoTitleIfNeeded = (threadId: string, promptText: string): void => {
+    const normalizedPromptText = promptText.trim();
     if (autoTitledThreads.has(threadId)) return;
+    if (!shouldGenerateTitleFromPrompt(normalizedPromptText)) return;
     autoTitledThreads.add(threadId);
 
-    const fallbackTitle = promptText.length <= 120 ? promptText : `${promptText.slice(0, 119)}\u2026`;
+    const fallbackTitle =
+      normalizedPromptText.length <= 120
+        ? normalizedPromptText
+        : `${normalizedPromptText.slice(0, 119)}\u2026`;
 
     void Effect.runPromise(
-      textGeneration.generateThreadTitle({ promptText }).pipe(
+      textGeneration.generateThreadTitle({ promptText: normalizedPromptText }).pipe(
         Effect.map(({ title }) => title),
         Effect.catch((error) => {
-          logger.warn("pi auto-title AI failed, using fallback", {
+          logger.warn("auto-title AI failed, using fallback", {
             threadId,
             error: String(error),
           });
@@ -536,7 +544,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         ),
         Effect.catch((error) => {
           autoTitledThreads.delete(threadId);
-          return Effect.logError("pi auto-title dispatch failed", { cause: error });
+          return Effect.logError("auto-title dispatch failed", { cause: error });
         }),
       ),
     );
@@ -554,9 +562,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         ),
     );
-    if (!autoTitledThreads.has(threadId)) {
-      dispatchPiAutoTitleIfNeeded(threadId, adv.firstLineStripped);
-    }
+    dispatchAutoTitleIfNeeded(threadId, adv.firstLineStripped);
   };
 
   // Track pending approval requestIds per thread so we can dispatch matching
@@ -669,41 +675,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               logger.warn("ensureBaseline promise rejected", { threadId, error: String(err) }),
             );
 
-            // Auto-title: generate a thread title from the first prompt
-            if (!autoTitledThreads.has(threadId)) {
-              const promptText = extractPromptText(body);
-              if (promptText) {
-                autoTitledThreads.add(threadId);
-
-                const fallbackTitle =
-                  promptText.length <= 120 ? promptText : `${promptText.slice(0, 119)}\u2026`;
-
-                void Effect.runPromise(
-                  textGeneration.generateThreadTitle({ promptText }).pipe(
-                    Effect.map(({ title }) => title),
-                    Effect.catch((error) => {
-                      logger.warn("auto-title AI failed, using fallback", {
-                        threadId,
-                        error: String(error),
-                      });
-                      return Effect.succeed(fallbackTitle);
-                    }),
-                    Effect.flatMap((title) =>
-                      orchestrationEngine.dispatch({
-                        type: "thread.meta.update",
-                        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
-                        threadId: ThreadId.makeUnsafe(threadId),
-                        title,
-                        titleSource: "auto",
-                      }),
-                    ),
-                    Effect.catch((error) => {
-                      autoTitledThreads.delete(threadId);
-                      return Effect.logError("auto-title dispatch failed", { cause: error });
-                    }),
-                  ),
-                );
-              }
+            // Auto-title: generate a thread title from the first prompt with user intent.
+            const promptText = extractPromptText(body);
+            if (promptText) {
+              dispatchAutoTitleIfNeeded(threadId, promptText);
             }
           } else if (hookPath === "/hooks/permission-request") {
             events = buildPermissionRequestEvents(threadId, body);
@@ -984,13 +959,76 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
+  const diffReview = yield* DiffReview;
   const orchestrationReactor = yield* OrchestrationReactor;
   const checkpointReactor = yield* CheckpointReactor;
   const { openInEditor } = yield* Open;
   const projectionThreadRepository = yield* ProjectionThreadRepository;
 
+  const runInactiveThreadAutoArchiveSweep = Effect.fnUntraced(function* (reason: string) {
+    const settings = yield* Effect.promise(() => loadServerSettings(stateDir));
+    const now = new Date();
+    const snapshot = yield* projectionReadModelQuery.getSnapshot();
+    const threadIds = findAutoArchivableThreads(
+      snapshot.threads,
+      settings.autoArchiveInactiveThreadDays,
+      now,
+    );
+
+    if (threadIds.length === 0) return 0;
+
+    const archivedAt = now.toISOString();
+    const results = yield* Effect.forEach(
+      threadIds,
+      (threadId) =>
+        orchestrationEngine
+          .dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            threadId,
+            archivedAt,
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("failed to auto-archive inactive thread", {
+                cause: error,
+                threadId,
+                reason,
+              }).pipe(Effect.as(false)),
+            ),
+          ),
+      { concurrency: 5 },
+    );
+    const archivedCount = results.filter(Boolean).length;
+
+    if (archivedCount === 0) return 0;
+
+    logger.info("auto-archived inactive threads", {
+      count: archivedCount,
+      candidateCount: threadIds.length,
+      inactiveDays: settings.autoArchiveInactiveThreadDays,
+      reason,
+    });
+    return archivedCount;
+  });
+
+  const runInactiveThreadAutoArchiveSweepSafely = (reason: string) =>
+    runInactiveThreadAutoArchiveSweep(reason).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to auto-archive inactive threads", { cause: error, reason }),
+      ),
+    );
+
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
+
+  yield* Effect.forever(
+    Effect.sleep(AUTO_ARCHIVE_SWEEP_INTERVAL_MS).pipe(
+      Effect.flatMap(() => runInactiveThreadAutoArchiveSweepSafely("interval")),
+    ),
+    { disableYield: true },
+  ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
     broadcastPush({
@@ -1125,6 +1163,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       ),
     );
   }
+
+  yield* runInactiveThreadAutoArchiveSweepSafely("startup");
 
   const runtimeServices = yield* Effect.services<
     ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
@@ -1335,6 +1375,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case ORCHESTRATION_WS_METHODS.getWorkingTreeDiff: {
         const body = stripRequestTag(request.body);
         return yield* checkpointDiffQuery.getWorkingTreeDiff(body);
+      }
+
+      case ORCHESTRATION_WS_METHODS.generateDiffReview: {
+        const body = stripRequestTag(request.body);
+        return yield* diffReview.generateDiffReview(body);
+      }
+
+      case ORCHESTRATION_WS_METHODS.askDiffReview: {
+        const body = stripRequestTag(request.body);
+        return yield* diffReview.askDiffReview(body);
       }
 
       case ORCHESTRATION_WS_METHODS.replayEvents: {
@@ -1697,6 +1747,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         yield* claudeSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
         yield* piSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
         yield* macosSleepPreventer.setEnabled(settings.preventMacosSleepWhenThreadInProgress);
+        yield* runInactiveThreadAutoArchiveSweepSafely("settings-updated");
 
         return settings;
       }

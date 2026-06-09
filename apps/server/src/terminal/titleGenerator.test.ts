@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractPromptText } from "./titleGenerator";
+import { extractPromptText, shouldGenerateTitleFromPrompt } from "./titleGenerator";
 
 describe("extractPromptText", () => {
   it("extracts prompt from top-level user_prompt field (Claude Code canonical)", () => {
@@ -63,5 +63,28 @@ describe("extractPromptText", () => {
   it("skips empty string values", () => {
     const body = JSON.stringify({ prompt: "", message: "actual prompt" });
     expect(extractPromptText(body)).toBe("actual prompt");
+  });
+});
+
+describe("shouldGenerateTitleFromPrompt", () => {
+  it("ignores pure slash commands so later real prompts can title the thread", () => {
+    expect(shouldGenerateTitleFromPrompt("/fast")).toBe(false);
+    expect(shouldGenerateTitleFromPrompt("  /reload  ")).toBe(false);
+    expect(shouldGenerateTitleFromPrompt("/impeccable")).toBe(false);
+  });
+
+  it("keeps slash commands with task text title-worthy", () => {
+    expect(shouldGenerateTitleFromPrompt("/impeccable improve this ui")).toBe(true);
+    expect(shouldGenerateTitleFromPrompt("/goal harden terminal reconnects")).toBe(true);
+  });
+
+  it("ignores known side-effect-only commands even when they include arguments", () => {
+    expect(shouldGenerateTitleFromPrompt("/model gpt-5.3-codex-fast")).toBe(false);
+    expect(shouldGenerateTitleFromPrompt("/name Scratch Session")).toBe(false);
+  });
+
+  it("keeps normal prompts and absolute paths title-worthy", () => {
+    expect(shouldGenerateTitleFromPrompt("improve this ui")).toBe(true);
+    expect(shouldGenerateTitleFromPrompt("/Users/example/project")).toBe(true);
   });
 });

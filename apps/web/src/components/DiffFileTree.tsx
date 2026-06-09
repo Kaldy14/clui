@@ -1,20 +1,15 @@
 import type { FileDiffMetadata } from "@pierre/diffs/react";
 import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  FileCode,
-  Folder,
-  FolderOpen,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import type {
-  TurnDiffTreeDirectoryNode,
-  TurnDiffTreeFileNode,
-  TurnDiffTreeNode,
-} from "~/lib/turnDiffTree";
-import { buildTurnDiffTree } from "~/lib/turnDiffTree";
-import { cn } from "~/lib/utils";
+  prepareFileTreeInput,
+  type ContextMenuItem,
+  type ContextMenuOpenContext,
+  type FileTreeIcons,
+  type FileTreePreparedInput,
+  type FileTreeRowDecorationRenderer,
+  type GitStatusEntry,
+} from "@pierre/trees";
+import { FileTree as PierreFileTree, useFileTree } from "@pierre/trees/react";
+import { useCallback, useEffect, useMemo, useRef, type CSSProperties } from "react";
 
 interface DiffFileTreeProps {
   files: FileDiffMetadata[];
@@ -23,9 +18,36 @@ interface DiffFileTreeProps {
   onToggleViewed: (filePath: string) => void;
   resolveFilePath: (fileDiff: FileDiffMetadata) => string;
   getFileStats: (fileDiff: FileDiffMetadata) => { additions: number; deletions: number };
+  reviewDecorations?: ReadonlyMap<string, { rank: number; significance: "high" | "medium" | "low" }> | undefined;
 }
 
-type ChangeKind = "added" | "deleted" | "modified" | "renamed";
+type ChangeKind = GitStatusEntry["status"];
+
+type TreeHostStyle = CSSProperties & Record<`--${string}`, string | number>;
+
+interface DiffTreeStat {
+  additions: number;
+  deletions: number;
+}
+
+interface DiffTreeData {
+  directoryStatsByPath: ReadonlyMap<string, DiffTreeStat>;
+  filePathSet: ReadonlySet<string>;
+  fileStatsByPath: ReadonlyMap<string, DiffTreeStat>;
+  gitStatus: readonly GitStatusEntry[];
+  paths: readonly string[];
+  preparedInput: FileTreePreparedInput;
+}
+
+interface DiffFileTreeRuntimeState {
+  directoryStatsByPath: ReadonlyMap<string, DiffTreeStat>;
+  filePathSet: ReadonlySet<string>;
+  fileStatsByPath: ReadonlyMap<string, DiffTreeStat>;
+  onFileClick: (filePath: string) => void;
+  onToggleViewed: (filePath: string) => void;
+  reviewDecorations: ReadonlyMap<string, { rank: number; significance: "high" | "medium" | "low" }>;
+  viewedFiles: ReadonlySet<string>;
+}
 
 function mapChangeType(type: string): ChangeKind {
   if (type === "new") return "added";
@@ -34,219 +56,160 @@ function mapChangeType(type: string): ChangeKind {
   return "modified";
 }
 
-const CHANGE_BADGE: Record<ChangeKind, { label: string; className: string }> = {
-  added: {
-    label: "A",
-    className: "bg-green-600/20 text-green-600 dark:bg-green-500/20 dark:text-green-400",
-  },
-  modified: {
-    label: "M",
-    className: "bg-yellow-600/20 text-yellow-600 dark:bg-yellow-500/20 dark:text-yellow-400",
-  },
-  deleted: {
-    label: "D",
-    className: "bg-red-600/20 text-red-600 dark:bg-red-500/20 dark:text-red-400",
-  },
-  renamed: {
-    label: "R",
-    className: "bg-blue-600/20 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400",
-  },
+const CHANGE_LABEL: Record<ChangeKind, string> = {
+  added: "Added",
+  deleted: "Deleted",
+  ignored: "Ignored",
+  modified: "Modified",
+  renamed: "Renamed",
+  untracked: "Untracked",
 };
 
-function collectDirectoryPaths(nodes: TurnDiffTreeNode[]): Set<string> {
-  const paths = new Set<string>();
-  for (const node of nodes) {
-    if (node.kind === "directory") {
-      paths.add(node.path);
-      for (const path of collectDirectoryPaths(node.children)) {
-        paths.add(path);
-      }
-    }
+const DIFF_TREE_ICONS = {
+  colored: false,
+  set: "standard",
+} satisfies FileTreeIcons;
+
+const DIFF_TREE_STYLE = {
+  height: "100%",
+  minHeight: 0,
+  width: "100%",
+  display: "block",
+  background: "transparent",
+  "--trees-bg-override": "transparent",
+  "--trees-fg-override": "var(--foreground)",
+  "--trees-fg-muted-override": "var(--muted-foreground)",
+  "--trees-bg-muted-override": "var(--accent)",
+  "--trees-border-color-override": "var(--border)",
+  "--trees-accent-override": "var(--primary)",
+  "--trees-focus-ring-color-override": "var(--ring)",
+  "--trees-selected-bg-override": "var(--accent)",
+  "--trees-selected-fg-override": "var(--accent-foreground)",
+  "--trees-selected-focused-border-color-override": "var(--ring)",
+  "--trees-font-family-override": "inherit",
+  "--trees-font-size-override": "12px",
+  "--trees-font-weight-semibold-override": 500,
+  "--trees-item-padding-x-override": "4px",
+  "--trees-item-margin-x-override": "4px",
+  "--trees-level-gap-override": "14px",
+  "--trees-status-added-override": "var(--success-foreground)",
+  "--trees-status-deleted-override": "var(--destructive-foreground)",
+  "--trees-status-modified-override": "var(--warning-foreground)",
+  "--trees-status-renamed-override": "var(--info-foreground)",
+  "--trees-git-added-color-override": "var(--success-foreground)",
+  "--trees-git-deleted-color-override": "var(--destructive-foreground)",
+  "--trees-git-modified-color-override": "var(--warning-foreground)",
+  "--trees-git-renamed-color-override": "var(--info-foreground)",
+} satisfies TreeHostStyle;
+
+const DIFF_TREE_UNSAFE_CSS = `
+  [data-type='item'] {
+    --trees-bg-alpha-light: 6%;
+    --trees-bg-alpha-dark: 8%;
   }
-  return paths;
+
+  [data-item-section='decoration'] {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+`;
+
+function normalizeTreePath(pathValue: string): string {
+  return pathValue
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .join("/");
 }
 
-function FileNodeRow({
-  node,
-  depth,
-  changeKind,
-  isViewed,
-  onFileClick,
-  onToggleViewed,
-}: {
-  node: TurnDiffTreeFileNode;
-  depth: number;
-  changeKind: ChangeKind;
-  isViewed: boolean;
-  onFileClick: (filePath: string) => void;
-  onToggleViewed: (filePath: string) => void;
-}) {
-  const badge = CHANGE_BADGE[changeKind];
-  return (
-    <div
-      className={cn(
-        "group flex items-center gap-1.5 py-0.5 pr-2 text-[12px] leading-tight",
-        isViewed && "opacity-50",
-      )}
-      style={{ paddingLeft: `${depth * 16 + 4}px` }}
-    >
-      <button
-        type="button"
-        className="flex shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={() => onToggleViewed(node.path)}
-        title={isViewed ? "Mark as unviewed" : "Mark as viewed"}
-      >
-        {isViewed ? (
-          <Check className="size-3 text-blue-500" />
-        ) : (
-          <div className="size-3 rounded-sm border border-muted-foreground/40 group-hover:border-muted-foreground/70" />
-        )}
-      </button>
-      <span
-        className={cn("inline-flex size-4 shrink-0 items-center justify-center rounded text-[9px] font-bold leading-none", badge.className)}
-      >
-        {badge.label}
-      </span>
-      <FileCode className="size-3.5 shrink-0 text-muted-foreground/70" />
-      <button
-        type="button"
-        className="min-w-0 flex-1 truncate text-left text-foreground/90 hover:text-foreground hover:underline"
-        onClick={() => onFileClick(node.path)}
-        title={node.path}
-      >
-        {node.name}
-      </button>
-      {node.stat && (
-        <div className="flex shrink-0 items-center gap-1.5 tabular-nums text-[11px]">
-          {node.stat.additions > 0 && (
-            <span className="text-green-600 dark:text-green-400">+{node.stat.additions}</span>
-          )}
-          {node.stat.deletions > 0 && (
-            <span className="text-red-500 dark:text-red-400">-{node.stat.deletions}</span>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function addStatToMap(map: Map<string, DiffTreeStat>, path: string, stat: DiffTreeStat) {
+  const existing = map.get(path);
+  if (!existing) {
+    map.set(path, { additions: stat.additions, deletions: stat.deletions });
+    return;
+  }
+
+  map.set(path, {
+    additions: existing.additions + stat.additions,
+    deletions: existing.deletions + stat.deletions,
+  });
 }
 
-function DirectoryNodeRow({
-  node,
-  depth,
-  isExpanded,
-  onToggle,
-  fileChangeKinds,
-  viewedFiles,
-  onFileClick,
-  onToggleViewed,
-  expandedPaths,
-}: {
-  node: TurnDiffTreeDirectoryNode;
-  depth: number;
-  isExpanded: boolean;
-  onToggle: (path: string) => void;
-  fileChangeKinds: Map<string, ChangeKind>;
-  viewedFiles: Set<string>;
-  onFileClick: (filePath: string) => void;
-  onToggleViewed: (filePath: string) => void;
-  expandedPaths: Set<string>;
-}) {
-  return (
-    <div>
-      <button
-        type="button"
-        className="group flex w-full items-center gap-1.5 py-0.5 pr-2 text-[12px] leading-tight text-foreground/90 hover:bg-accent/50"
-        style={{ paddingLeft: `${depth * 16 + 4}px` }}
-        onClick={() => onToggle(node.path)}
-      >
-        {isExpanded ? (
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-        )}
-        {isExpanded ? (
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground/70" />
-        ) : (
-          <Folder className="size-3.5 shrink-0 text-muted-foreground/70" />
-        )}
-        <span className="min-w-0 flex-1 truncate text-left font-medium">{node.name}</span>
-        <div className="flex shrink-0 items-center gap-1.5 tabular-nums text-[11px]">
-          {node.stat.additions > 0 && (
-            <span className="text-green-600 dark:text-green-400">+{node.stat.additions}</span>
-          )}
-          {node.stat.deletions > 0 && (
-            <span className="text-red-500 dark:text-red-400">-{node.stat.deletions}</span>
-          )}
-        </div>
-      </button>
-      {isExpanded && (
-        <TreeNodeList
-          nodes={node.children}
-          depth={depth + 1}
-          fileChangeKinds={fileChangeKinds}
-          viewedFiles={viewedFiles}
-          onFileClick={onFileClick}
-          onToggleViewed={onToggleViewed}
-          expandedPaths={expandedPaths}
-          onToggleExpanded={onToggle}
-        />
-      )}
-    </div>
-  );
+export function buildDiffTreeData(
+  files: readonly FileDiffMetadata[],
+  resolveFilePath: (fileDiff: FileDiffMetadata) => string,
+  getFileStats: (fileDiff: FileDiffMetadata) => DiffTreeStat,
+): DiffTreeData {
+  const paths: string[] = [];
+  const filePathSet = new Set<string>();
+  const fileStatsByPath = new Map<string, DiffTreeStat>();
+  const directoryStatsByPath = new Map<string, DiffTreeStat>();
+  const gitStatus: GitStatusEntry[] = [];
+
+  for (const fileDiff of files) {
+    const path = normalizeTreePath(resolveFilePath(fileDiff));
+    if (!path) continue;
+
+    const stat = getFileStats(fileDiff);
+    addStatToMap(fileStatsByPath, path, stat);
+
+    const segments = path.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      addStatToMap(directoryStatsByPath, segments.slice(0, index).join("/"), stat);
+    }
+
+    if (filePathSet.has(path)) continue;
+
+    filePathSet.add(path);
+    paths.push(path);
+    gitStatus.push({ path, status: mapChangeType(fileDiff.type) });
+  }
+
+  const preparedInput = prepareFileTreeInput(paths);
+
+  return {
+    directoryStatsByPath,
+    filePathSet,
+    fileStatsByPath,
+    gitStatus,
+    paths: preparedInput.paths,
+    preparedInput,
+  };
 }
 
-function TreeNodeList({
-  nodes,
-  depth,
-  fileChangeKinds,
-  viewedFiles,
-  onFileClick,
-  onToggleViewed,
-  expandedPaths,
-  onToggleExpanded,
-}: {
-  nodes: TurnDiffTreeNode[];
-  depth: number;
-  fileChangeKinds: Map<string, ChangeKind>;
-  viewedFiles: Set<string>;
-  onFileClick: (filePath: string) => void;
-  onToggleViewed: (filePath: string) => void;
-  expandedPaths: Set<string>;
-  onToggleExpanded: (path: string) => void;
-}) {
-  return (
-    <>
-      {nodes.map((node) => {
-        if (node.kind === "directory") {
-          return (
-            <DirectoryNodeRow
-              key={node.path}
-              node={node}
-              depth={depth}
-              isExpanded={expandedPaths.has(node.path)}
-              onToggle={onToggleExpanded}
-              fileChangeKinds={fileChangeKinds}
-              viewedFiles={viewedFiles}
-              onFileClick={onFileClick}
-              onToggleViewed={onToggleViewed}
-              expandedPaths={expandedPaths}
-            />
-          );
-        }
-        return (
-          <FileNodeRow
-            key={node.path}
-            node={node}
-            depth={depth}
-            changeKind={fileChangeKinds.get(node.path) ?? "modified"}
-            isViewed={viewedFiles.has(node.path)}
-            onFileClick={onFileClick}
-            onToggleViewed={onToggleViewed}
-          />
-        );
-      })}
-    </>
-  );
+function formatStatText(
+  stat: DiffTreeStat | undefined,
+  viewed: boolean,
+  review: { rank: number; significance: "high" | "medium" | "low" } | undefined,
+): string | null {
+  const parts: string[] = [];
+  if (review) parts.push(`#${review.rank} ${review.significance}`);
+  if (viewed) parts.push("✓");
+  if (stat && stat.additions > 0) parts.push(`+${stat.additions}`);
+  if (stat && stat.deletions > 0) parts.push(`-${stat.deletions}`);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+function reviewDecorationForDirectory(
+  directoryPath: string,
+  reviewDecorations: ReadonlyMap<string, { rank: number; significance: "high" | "medium" | "low" }>,
+): { rank: number; significance: "high" | "medium" | "low" } | undefined {
+  const prefix = directoryPath.endsWith("/") ? directoryPath : `${directoryPath}/`;
+  let best: { rank: number; significance: "high" | "medium" | "low" } | undefined;
+  for (const [filePath, review] of reviewDecorations) {
+    if (!filePath.startsWith(prefix)) continue;
+    if (!best || review.rank < best.rank) best = review;
+  }
+  return best;
+}
+
+function formatStatTitle(path: string, stat: DiffTreeStat | undefined, viewed: boolean): string {
+  const pieces = [path];
+  if (viewed) pieces.push("viewed");
+  if (stat && (stat.additions > 0 || stat.deletions > 0)) {
+    pieces.push(`${stat.additions} additions, ${stat.deletions} deletions`);
+  }
+  return pieces.join(" · ");
 }
 
 export default function DiffFileTree({
@@ -256,63 +219,160 @@ export default function DiffFileTree({
   onToggleViewed,
   resolveFilePath,
   getFileStats,
+  reviewDecorations = new Map(),
 }: DiffFileTreeProps) {
-  const { tree, fileChangeKinds } = useMemo(() => {
-    const changes = files.map((fileDiff) => {
-      const path = resolveFilePath(fileDiff);
-      const stats = getFileStats(fileDiff);
-      const kind = mapChangeType(fileDiff.type);
-      return { path, kind, stats };
-    });
-
-    const treeInput = changes.map((change) => ({
-      path: change.path,
-      kind: change.kind,
-      additions: change.stats.additions,
-      deletions: change.stats.deletions,
-    }));
-
-    const builtTree = buildTurnDiffTree(treeInput);
-    const kindMap = new Map<string, ChangeKind>();
-    for (const change of changes) {
-      kindMap.set(change.path, change.kind);
-    }
-
-    return { tree: builtTree, fileChangeKinds: kindMap };
-  }, [files, resolveFilePath, getFileStats]);
-
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() =>
-    collectDirectoryPaths(tree),
+  const treeData = useMemo(
+    () => buildDiffTreeData(files, resolveFilePath, getFileStats),
+    [files, resolveFilePath, getFileStats],
   );
 
-  const toggleExpanded = (path: string) => {
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
+  const runtimeStateRef = useRef<DiffFileTreeRuntimeState>({
+    directoryStatsByPath: new Map<string, DiffTreeStat>(),
+    filePathSet: new Set<string>(),
+    fileStatsByPath: new Map<string, DiffTreeStat>(),
+    onFileClick,
+    onToggleViewed,
+    reviewDecorations,
+    viewedFiles,
+  });
+
+  runtimeStateRef.current = {
+    directoryStatsByPath: treeData.directoryStatsByPath,
+    filePathSet: treeData.filePathSet,
+    fileStatsByPath: treeData.fileStatsByPath,
+    onFileClick,
+    onToggleViewed,
+    reviewDecorations,
+    viewedFiles,
   };
 
-  if (tree.length === 0) {
+  const handleSelectionChange = useCallback((selectedPaths: readonly string[]) => {
+    const { filePathSet, onFileClick: openFile } = runtimeStateRef.current;
+    for (let index = selectedPaths.length - 1; index >= 0; index -= 1) {
+      const selectedPath = selectedPaths[index];
+      if (selectedPath && filePathSet.has(selectedPath)) {
+        openFile(selectedPath);
+        return;
+      }
+    }
+  }, []);
+
+  const renderRowDecoration = useCallback<FileTreeRowDecorationRenderer>((context) => {
+    const {
+      directoryStatsByPath,
+      fileStatsByPath,
+      reviewDecorations: currentReviewDecorations,
+      viewedFiles: currentViewedFiles,
+    } = runtimeStateRef.current;
+    const isFile = context.item.kind === "file";
+    const stat = isFile
+      ? fileStatsByPath.get(context.item.path)
+      : directoryStatsByPath.get(context.item.path);
+    const viewed = isFile && currentViewedFiles.has(context.item.path);
+    const review = isFile
+      ? currentReviewDecorations.get(context.item.path)
+      : reviewDecorationForDirectory(context.item.path, currentReviewDecorations);
+    const text = formatStatText(stat, viewed, review);
+
+    if (!text) return null;
+
+    return {
+      text,
+      title: formatStatTitle(context.item.path, stat, viewed),
+    };
+  }, []);
+
+  const renderContextMenu = useCallback(
+    (item: ContextMenuItem, context: ContextMenuOpenContext) => {
+      if (item.kind !== "file") return null;
+
+      const state = runtimeStateRef.current;
+      const viewed = state.viewedFiles.has(item.path);
+      const status =
+        treeData.gitStatus.find((entry) => entry.path === item.path)?.status ?? "modified";
+      const statusLabel = CHANGE_LABEL[status];
+
+      return (
+        <div
+          className="min-w-40 rounded-md border border-border bg-popover p-1 text-xs text-popover-foreground shadow-lg"
+          data-file-tree-context-menu-root="true"
+          role="menu"
+        >
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+            {statusLabel}
+          </div>
+          <button
+            type="button"
+            className="flex w-full items-center rounded px-2 py-1 text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={(event) => {
+              event.preventDefault();
+              state.onFileClick(item.path);
+              context.close();
+            }}
+            role="menuitem"
+          >
+            Open diff
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center rounded px-2 py-1 text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={(event) => {
+              event.preventDefault();
+              state.onToggleViewed(item.path);
+              context.close();
+            }}
+            role="menuitem"
+          >
+            {viewed ? "Mark as unviewed" : "Mark as viewed"}
+          </button>
+        </div>
+      );
+    },
+    [treeData.gitStatus],
+  );
+
+  const { model } = useFileTree({
+    composition: {
+      contextMenu: {
+        buttonVisibility: "when-needed",
+        triggerMode: "both",
+      },
+    },
+    density: "compact",
+    flattenEmptyDirectories: true,
+    gitStatus: treeData.gitStatus,
+    icons: DIFF_TREE_ICONS,
+    initialExpansion: "open",
+    initialVisibleRowCount: 18,
+    onSelectionChange: handleSelectionChange,
+    overscan: 10,
+    paths: treeData.paths,
+    preparedInput: treeData.preparedInput,
+    renderRowDecoration,
+    unsafeCSS: DIFF_TREE_UNSAFE_CSS,
+  });
+
+  useEffect(() => {
+    model.resetPaths(treeData.paths, { preparedInput: treeData.preparedInput });
+    model.setGitStatus(treeData.gitStatus);
+  }, [model, treeData]);
+
+  useEffect(() => {
+    // @pierre/trees exposes row decorations as an initial renderer in beta. Re-applying
+    // git status is the public row-render refresh path for decoration-only viewed changes.
+    model.setGitStatus(treeData.gitStatus);
+  }, [model, treeData.gitStatus, viewedFiles]);
+
+  if (treeData.paths.length === 0) {
     return null;
   }
 
   return (
-    <div className="select-none py-1">
-      <TreeNodeList
-        nodes={tree}
-        depth={0}
-        fileChangeKinds={fileChangeKinds}
-        viewedFiles={viewedFiles}
-        onFileClick={onFileClick}
-        onToggleViewed={onToggleViewed}
-        expandedPaths={expandedPaths}
-        onToggleExpanded={toggleExpanded}
-      />
-    </div>
+    <PierreFileTree
+      className="select-none"
+      model={model}
+      renderContextMenu={renderContextMenu}
+      style={DIFF_TREE_STYLE}
+    />
   );
 }

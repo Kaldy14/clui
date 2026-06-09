@@ -11,6 +11,7 @@ import {
   isChatNewShortcut,
   isChatNewLocalShortcut,
   isClaudeHibernateShortcut,
+  isDiffAiReviewToggleShortcut,
   isDiffToggleShortcut,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
@@ -98,6 +99,11 @@ const DEFAULT_BINDINGS = compile([
   {
     shortcut: modShortcut("d"),
     command: "diff.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("a", { shiftKey: true }),
+    command: "diff.aiReview.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
@@ -248,6 +254,14 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.aiReview.toggle", "MacIntel"),
+      "⇧⌘A",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.aiReview.toggle", "Linux"),
+      "Ctrl+Shift+A",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
       "Ctrl+O",
     );
@@ -306,6 +320,39 @@ describe("chat/editor shortcuts", () => {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
+    );
+  });
+
+  it("matches diff.aiReview.toggle shortcut outside terminal focus", () => {
+    assert.isTrue(
+      isDiffAiReviewToggleShortcut(
+        event({ key: "a", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: false },
+        },
+      ),
+    );
+    assert.isTrue(
+      isDiffAiReviewToggleShortcut(
+        event({ key: "a", ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Linux",
+          context: { terminalFocus: false },
+        },
+      ),
+    );
+    assert.isFalse(
+      isDiffAiReviewToggleShortcut(
+        event({ key: "a", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: true },
+        },
+      ),
     );
   });
 });

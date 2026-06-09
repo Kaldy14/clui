@@ -141,6 +141,7 @@ describe("orchestration projector", () => {
         branch: null,
         worktreePath: null,
         claudeSessionId: null,
+        piSessionFile: null,
         harness: "claudeCode",
         bookmarked: false,
         terminalStatus: "new",

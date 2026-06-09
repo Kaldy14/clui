@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-09 — Ignore pure slash commands for auto titles
+
+**Problem:** Starting a pi chat with `/fast` or `/reload` generated useless thread titles like “Fast Mode”.
+
+**Root cause:** Auto-title generation used the first submitted prompt unconditionally, so side-effect-only slash commands consumed the one-shot title opportunity.
+
+**Fix:** Added title-worthiness filtering for bare slash commands and known side-effect-only commands, reused it for both pi write-buffer and hook-based auto-title paths, and kept slash commands with task text title-worthy (for example `/impeccable improve this ui`).
+
+**Affected files:**
+
+- `apps/server/src/terminal/titleGenerator.ts`
+- `apps/server/src/terminal/titleGenerator.test.ts`
+- `apps/server/src/wsServer.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-08 — Version bumped to `0.0.25` and Apple Silicon mac build produced
 
 **Problem:** The app needed a fresh macOS Apple Silicon desktop build containing the latest Pi plan-review status fix and current workspace changes.
@@ -122,6 +139,40 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-05-19 — Diff file tree accepts unsorted paths
+
+**Problem:** Opening the diff panel could crash with `FileTree constructor received paths and preparedInput for different path lists`.
+
+**Root cause:** `DiffFileTree` passed diff paths in server/UI order to `preparePresortedFileTreeInput`, but the `@pierre/trees` constructor validates prepared input against its canonical sorted path list.
+
+**Fix:** Build canonical prepared input with `prepareFileTreeInput`, pass the canonical prepared paths back into the tree model, and add regression coverage for unsorted diff paths.
+
+**Affected files:**
+
+- `apps/web/src/components/DiffFileTree.tsx`
+- `apps/web/src/components/DiffFileTree.logic.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-05-18 — Diff file tree uses @pierre/trees
+
+**Problem:** The diff panel's file tree used a hand-rolled recursive renderer, so it duplicated tree expansion, icon, path-shaping, and row-status behavior that is now available in the shared `@pierre/trees` library.
+
+**Root cause:** The existing component predated the path-first Trees runtime and maintained its own directory compaction, expansion state, badges, and row layout.
+
+**Fix:** Added `@pierre/trees`, replaced the custom diff file-tree rows with the React `FileTree` model, feed it presorted prepared input, Git-style change status, compact density, themed host variables, stats row decorations, and a small context menu for opening diffs or toggling viewed state. Updated the diff panel containers so the Trees virtualized scroller owns tree scrolling.
+
+**Affected files:**
+
+- `apps/web/package.json`
+- `apps/web/src/components/DiffFileTree.tsx`
+- `apps/web/src/components/DiffPanel.tsx`
+- `bun.lock`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-05-17 — Release version bumped to `0.0.23` and Apple Silicon mac build produced
 
 **Problem:** The app needed a fresh patch release and macOS Apple Silicon desktop binary from the current workspace state.
@@ -180,6 +231,56 @@ Session-by-session log of changes, fixes, and decisions made during development.
 - `apps/server/src/git/threadTitleGeneration.ts`
 - `apps/server/src/git/Layers/ClaudeCliTextGeneration.ts`
 - `apps/server/src/wsServer.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-05-13 — Pi AI review sidecar for diffs
+
+**Problem:** The diff panel showed raw file diffs only, so reviewing an entire branch plus staged/unstaged/untracked work still required manually scanning files in path order. Large branches also risked blind prompt truncation, and selected-code follow-up was limited to right-clicking a line.
+
+**Root cause:** Diff RPCs exposed turn and working-tree patches, but there was no Pi-backed review-map endpoint, no default-branch safety behavior for whole-branch review, no tested diff collector for branch/local cases, no hunk/file pre-ranking, and no UI affordance for asking about highlighted code.
+
+**Fix:** Added Pi-only diff review RPCs that collect branch-vs-base plus local changes by default, include untracked files, fall back to local-only review on default branches, and return ranked structured review reports with future-ready anchors and coverage counts. Extracted branch/local diff collection and prompt chunking into a tested module, with file/hunk pre-ranking plus summaries for low-signal files. Added an AI Review sidecar button to the diff panel, scope re-generation when turn/working-tree chips are clicked, right-click Ask Pi for diff lines, and highlight-selection Ask Pi for selected code.
+
+**Affected files:**
+
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/ipc.ts`
+- `apps/server/src/diffReview/Services/DiffReview.ts`
+- `apps/server/src/diffReview/DiffCollector.ts`
+- `apps/server/src/diffReview/DiffCollector.test.ts`
+- `apps/server/src/diffReview/Layers/DiffReview.ts`
+- `apps/server/src/serverLayers.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/web/src/components/DiffPanel.tsx`
+- `apps/web/src/components/DiffAiReviewPanel.tsx`
+- `apps/web/src/components/DiffQuickAskPopover.tsx`
+- `apps/web/src/lib/providerReactQuery.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-05-13 — Auto-archive inactive chats
+
+**Problem:** Old inactive chats stayed in the main sidebar unless users manually archived them, and archived chats had no dedicated Settings recovery view.
+
+**Root cause:** Archiving was only a manual per-thread action. Server settings had no retention window, no background sweep existed, and Settings did not expose archived threads by project.
+
+**Fix:** Added a persisted server setting that auto-archives inactive threads after 14 days by default, with an hourly/startup/settings-update sweep. Added a Settings chat-history section with the auto-archive control plus searchable archived chats grouped by project and restore/open actions.
+
+**Affected files:**
+
+- `packages/contracts/src/server.ts`
+- `apps/server/src/autoArchiveThreads.ts`
+- `apps/server/src/autoArchiveThreads.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/lib/threadArchive.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/routes/_chat.settings.tsx`
 - `docs/CHANGELOG-DEV.md`
 
 ---
