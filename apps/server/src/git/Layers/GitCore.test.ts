@@ -898,9 +898,7 @@ it.layer(TestLayer)("git integration", (it) => {
 
         expect(renamed.branch).toBe("clui/feat/session-1");
         const branches = yield* listGitBranches({ cwd: tmp });
-        expect(branches.branches.some((branch) => branch.name === "clui/feat/session")).toBe(
-          true,
-        );
+        expect(branches.branches.some((branch) => branch.name === "clui/feat/session")).toBe(true);
         expect(branches.branches.some((branch) => branch.name === "clui/feat/session-1")).toBe(
           true,
         );
@@ -1030,6 +1028,34 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(result.worktree.branch).toBe("feature/existing-worktree");
         const branchOutput = yield* git(wtPath, ["branch", "--show-current"]);
         expect(branchOutput).toBe("feature/existing-worktree");
+
+        yield* removeGitWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
+    it.effect("creates a detached worktree from a base ref without checking out a branch", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const currentBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
+          (b) => b.current,
+        )!.name;
+
+        const wtPath = path.join(tmp, "wt-detached");
+        const result = yield* createGitWorktree({
+          cwd: tmp,
+          branch: currentBranch,
+          detach: true,
+          path: wtPath,
+        });
+
+        expect(result.worktree.path).toBe(wtPath);
+        expect(result.worktree.branch).toBe(currentBranch);
+        expect(existsSync(path.join(wtPath, "README.md"))).toBe(true);
+        const branchOutput = yield* git(wtPath, ["branch", "--show-current"]);
+        expect(branchOutput).toBe("");
+        const abbrevHead = yield* git(wtPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        expect(abbrevHead).toBe("HEAD");
 
         yield* removeGitWorktree({ cwd: tmp, path: wtPath });
       }),

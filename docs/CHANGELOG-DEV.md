@@ -4,6 +4,29 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-09 — Branchless new-thread worktrees and first prompt launch
+
+**Problem:** New worktree threads forced users to name and create a feature branch before the agent started, and the first user prompt had to be typed manually after pi/Claude Code initialized.
+
+**Root cause:** The new-thread worktree flow always called `git worktree add -b <newBranch>` from the selected base and the launch screen only started the terminal harness.
+
+**Fix:** Added detached worktree creation from a selected base ref with random folder names, kept PR worktree flows unchanged, preserved the existing fire-and-forget setup action, allowed branch creation from detached HEAD, and added a first-prompt textarea that auto-submits after pi/Claude Code starts.
+
+**Affected files:**
+
+- `packages/contracts/src/git.ts`
+- `packages/contracts/src/git.test.ts`
+- `apps/server/src/git/Layers/GitCore.ts`
+- `apps/server/src/git/Layers/GitCore.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/GitActionsControl.tsx`
+- `apps/web/src/components/GitActionsControl.logic.ts`
+- `apps/web/src/components/GitActionsControl.logic.test.ts`
+- `apps/web/src/lib/gitReactQuery.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-09 — Ignore pure slash commands for auto titles
 
 **Problem:** Starting a pi chat with `/fast` or `/reload` generated useless thread titles like “Fast Mode”.

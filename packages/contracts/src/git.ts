@@ -76,6 +76,7 @@ export const GitCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
   newBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+  detach: Schema.optional(Schema.Boolean),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
 export type GitCreateWorktreeInput = typeof GitCreateWorktreeInput.Type;

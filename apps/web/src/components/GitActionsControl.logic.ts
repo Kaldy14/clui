@@ -122,8 +122,9 @@ export function buildMenuItems(
   const canCreatePr =
     !isBusy && hasBranch && !hasChanges && !hasOpenPr && gitStatus.aheadCount > 0 && !isBehind;
   const canOpenPr = !isBusy && hasOpenPr;
-  const canCreateBranch = !isBusy && hasBranch && isDefaultBranch;
-  const createBranchItem: GitActionMenuItem[] = isDefaultBranch
+  const shouldShowCreateBranch = !hasBranch || isDefaultBranch;
+  const canCreateBranch = !isBusy && shouldShowCreateBranch;
+  const createBranchItem: GitActionMenuItem[] = shouldShowCreateBranch
     ? [
         {
           id: "create_branch",

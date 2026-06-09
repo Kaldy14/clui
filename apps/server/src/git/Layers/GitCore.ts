@@ -284,9 +284,7 @@ const makeGitCore = Effect.gen(function* () {
       cwd,
       args,
       typeof options === "boolean" ? { allowNonZeroExit: options } : (options ?? {}),
-    ).pipe(
-      Effect.map((result) => result.stdout),
-    );
+    ).pipe(Effect.map((result) => result.stdout));
 
   const branchExists = (cwd: string, branch: string): Effect.Effect<boolean, GitCommandError> =>
     executeGit(
@@ -1137,18 +1135,23 @@ const makeGitCore = Effect.gen(function* () {
 
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>
     Effect.gen(function* () {
+      const isDetached = input.detach === true;
       const targetBranch = input.newBranch ?? input.branch;
       const sanitizedBranch = targetBranch.replace(/\//g, "-");
+      const randomWorktreeName = `worktree-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
       const repoName = path.basename(input.cwd);
       const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
+      const defaultWorktreeName = isDetached ? randomWorktreeName : sanitizedBranch;
       const worktreePath =
-        input.path ?? path.join(homeDir, ".clui", "worktrees", repoName, sanitizedBranch);
+        input.path ?? path.join(homeDir, ".clui", "worktrees", repoName, defaultWorktreeName);
 
-      // When creating a new branch from a base, prefer the remote tracking ref
-      // so the worktree starts from the latest remote state (e.g. origin/main
-      // instead of local main which may be many commits behind).
+      // When creating a new branch or detached worktree from a base, prefer the
+      // remote tracking ref so the worktree starts from the latest remote state
+      // (e.g. origin/main instead of local main which may be many commits behind).
       let startPoint = input.branch;
-      if (input.newBranch) {
+      if (input.newBranch || isDetached) {
         const remoteName = yield* resolvePrimaryRemoteName(input.cwd).pipe(
           Effect.orElseSucceed(() => null as string | null),
         );
@@ -1170,9 +1173,19 @@ const makeGitCore = Effect.gen(function* () {
       // Without this, `git push` would target origin/main instead of
       // origin/<newBranch>, which is almost never what the user wants.
       const needsNoTrack = input.newBranch && startPoint !== input.branch;
-      const args = input.newBranch
-        ? ["worktree", "add", "-b", input.newBranch, ...(needsNoTrack ? ["--no-track"] : []), worktreePath, startPoint]
-        : ["worktree", "add", worktreePath, input.branch];
+      const args = isDetached
+        ? ["worktree", "add", "--detach", worktreePath, startPoint]
+        : input.newBranch
+          ? [
+              "worktree",
+              "add",
+              "-b",
+              input.newBranch,
+              ...(needsNoTrack ? ["--no-track"] : []),
+              worktreePath,
+              startPoint,
+            ]
+          : ["worktree", "add", worktreePath, input.branch];
 
       yield* executeGit("GitCore.createWorktree", input.cwd, args, {
         fallbackErrorMessage: "git worktree add failed",

@@ -24,6 +24,18 @@ describe("GitCreateWorktreeInput", () => {
     expect(parsed.newBranch).toBeUndefined();
     expect(parsed.branch).toBe("feature/existing");
   });
+
+  it("accepts detached worktree creation from a base ref", () => {
+    const parsed = decodeCreateWorktreeInput({
+      cwd: "/repo",
+      branch: "origin/main",
+      detach: true,
+      path: null,
+    });
+
+    expect(parsed.detach).toBe(true);
+    expect(parsed.branch).toBe("origin/main");
+  });
 });
 
 describe("GitPreparePullRequestThreadInput", () => {

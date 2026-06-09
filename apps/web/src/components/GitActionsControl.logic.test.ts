@@ -527,7 +527,7 @@ describe("when: HEAD is detached and there are no local changes", () => {
     assert.deepInclude(quick, { kind: "show_hint", label: "Commit", disabled: true });
   });
 
-  it("buildMenuItems keeps commit, push, and PR disabled", () => {
+  it("buildMenuItems allows creating a branch and keeps push and PR disabled", () => {
     const items = buildMenuItems(status({ branch: null, hasWorkingTreeChanges: false }), false);
     assert.deepEqual(items, [
       {
@@ -537,6 +537,14 @@ describe("when: HEAD is detached and there are no local changes", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "create_branch",
+        label: "Create Branch",
+        disabled: false,
+        icon: "branch",
+        kind: "open_dialog",
+        dialogAction: "create_branch",
       },
       {
         id: "push",

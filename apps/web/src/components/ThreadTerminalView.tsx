@@ -19,6 +19,7 @@ import {
   writeTerminalFullResetForReplay,
 } from "../lib/terminalReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
+import { submitThreadPrompt } from "../lib/threadInput";
 import { setupProjectScript } from "../projectScripts";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
@@ -30,35 +31,6 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { runProjectScriptInTerminal } from "./TerminalToolbar";
 import { useBranchToolbar } from "./useBranchToolbar";
-
-// ── Worktree branch prefix (per-project, localStorage) ───────────────
-
-const BRANCH_PREFIX_STORAGE_KEY = "clui:worktree-branch-prefix";
-const DEFAULT_BRANCH_PREFIX = "feature/ITE-";
-
-function getWorktreeBranchPrefix(projectCwd: string): string {
-  try {
-    const raw = localStorage.getItem(BRANCH_PREFIX_STORAGE_KEY);
-    if (raw) {
-      const prefixes = JSON.parse(raw) as Record<string, string>;
-      if (typeof prefixes[projectCwd] === "string") return prefixes[projectCwd];
-    }
-  } catch {
-    /* best-effort */
-  }
-  return DEFAULT_BRANCH_PREFIX;
-}
-
-function setWorktreeBranchPrefix(projectCwd: string, prefix: string): void {
-  try {
-    const raw = localStorage.getItem(BRANCH_PREFIX_STORAGE_KEY);
-    const prefixes: Record<string, string> = raw ? JSON.parse(raw) : {};
-    prefixes[projectCwd] = prefix;
-    localStorage.setItem(BRANCH_PREFIX_STORAGE_KEY, JSON.stringify(prefixes));
-  } catch {
-    /* best-effort */
-  }
-}
 
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
 type HarnessKind = Thread["harness"];
@@ -152,20 +124,11 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   const branchToolbar = useBranchToolbar(threadId);
   const setThreadHarness = useStore((s) => s.setThreadHarness);
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
-  const projectCwd = project?.cwd ?? "";
-  const [branchPrefix, setBranchPrefix] = useState(() => getWorktreeBranchPrefix(projectCwd));
-  const [editingPrefix, setEditingPrefix] = useState(false);
-  const [worktreeBranchName, setWorktreeBranchName] = useState(() =>
-    getWorktreeBranchPrefix(projectCwd),
-  );
+  const [initialPrompt, setInitialPrompt] = useState("");
   const effectiveEnvMode: EnvMode = thread.worktreePath ? "worktree" : envMode;
   const isWorktreePending = effectiveEnvMode === "worktree" && !thread.worktreePath;
-  const trimmedWorktreeBranch = worktreeBranchName.trim();
-  const isWorktreeBranchValid =
-    !isWorktreePending ||
-    (trimmedWorktreeBranch.length > 0 &&
-      !trimmedWorktreeBranch.endsWith("/") &&
-      !trimmedWorktreeBranch.endsWith("-"));
+  const isWorktreeBaseSelected = !isWorktreePending || !!thread.branch;
+  const hasInitialPrompt = initialPrompt.trim().length > 0;
 
   const handleStart = useCallback(async () => {
     const api = readNativeApi();
@@ -174,19 +137,24 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     setError(null);
     try {
       let startCwd = cwd;
-      // Create worktree if in worktree mode without one yet
-      if (isWorktreePending && thread.branch && project?.cwd) {
-        const branchArg = trimmedWorktreeBranch || thread.branch;
+      // Create a detached worktree if in worktree mode without one yet.  The
+      // user/AI can create the feature branch later from inside that worktree.
+      if (isWorktreePending) {
+        if (!thread.branch || !project?.cwd) {
+          throw new Error("Select a base branch before creating a worktree.");
+        }
+
         const result = await api.git.createWorktree({
           cwd: project.cwd,
           branch: thread.branch,
-          newBranch: trimmedWorktreeBranch || undefined,
+          detach: true,
           path: null,
         });
-        branchToolbar.setThreadBranch(branchArg, result.worktree.path);
+        branchToolbar.setThreadBranch(null, result.worktree.path);
         startCwd = result.worktree.path;
 
-        // Run the setup script (runOnWorktreeCreate) if one is configured
+        // Run the setup script (runOnWorktreeCreate) if one is configured.
+        // This intentionally keeps today's fire-and-forget behavior.
         const setupScript = setupProjectScript(project.scripts ?? []);
         if (setupScript) {
           runProjectScriptInTerminal(setupScript, threadId, project, result.worktree.path);
@@ -201,6 +169,9 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         rows: 40,
         yoloMode: dangerouslySkipPermissions,
       });
+      if (hasInitialPrompt) {
+        await submitThreadPrompt(api, thread.harness, threadId, initialPrompt);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start session");
       setStarting(false);
@@ -212,11 +183,11 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     isWorktreePending,
     project,
     branchToolbar,
-    trimmedWorktreeBranch,
     dangerouslySkipPermissions,
+    hasInitialPrompt,
+    initialPrompt,
   ]);
 
-  const showBranchInput = isWorktreePending && !!thread.branch;
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleHarnessChange = useCallback(
@@ -240,26 +211,28 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     containerRef.current?.focus();
   }, []);
 
-  // Enter key triggers start (unless an input is focused)
+  // Plain Enter triggers start from the empty state; Cmd/Ctrl+Enter also
+  // submits from the first-prompt textarea.
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      const isTextEntry =
+        e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      const isPlainEnter =
+        e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !isTextEntry;
+      const isSubmitShortcut =
+        e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+
       if (
-        e.key === "Enter" &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        !(e.target instanceof HTMLInputElement) &&
-        !(e.target instanceof HTMLTextAreaElement) &&
+        (isPlainEnter || isSubmitShortcut) &&
         !starting &&
         (cwd || isWorktreePending) &&
-        isWorktreeBranchValid
+        isWorktreeBaseSelected
       ) {
         e.preventDefault();
         handleStart();
       }
     },
-    [handleStart, starting, cwd, isWorktreePending, isWorktreeBranchValid],
+    [handleStart, starting, cwd, isWorktreePending, isWorktreeBaseSelected],
   );
 
   return (
@@ -312,7 +285,6 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                 activeThreadBranch={branchToolbar.activeThreadBranch}
                 activeWorktreePath={branchToolbar.activeWorktreePath}
                 branchCwd={branchToolbar.branchCwd}
-                branchPrefix={branchPrefix}
                 effectiveEnvMode={effectiveEnvMode}
                 envLocked={!!thread.worktreePath}
                 onSetThreadBranch={branchToolbar.setThreadBranch}
@@ -322,64 +294,33 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                 }}
               />
             </div>
-            {/* Animated expand/collapse via CSS grid trick */}
-            <div
-              className="grid w-full transition-[grid-template-rows,opacity] duration-200 ease-out"
-              style={{
-                gridTemplateRows: showBranchInput ? "1fr" : "0fr",
-                opacity: showBranchInput ? 1 : 0,
-              }}
-            >
-              <div className="overflow-hidden">
-                <label className="flex flex-col gap-1 pb-0.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-muted-foreground/60">Branch name</span>
-                    <button
-                      type="button"
-                      onClick={() => setEditingPrefix(!editingPrefix)}
-                      className="text-[10px] text-muted-foreground/50 transition-colors hover:text-primary/70"
-                    >
-                      {editingPrefix ? "done" : "prefix"}
-                    </button>
-                  </div>
-                  <div
-                    className="grid transition-[grid-template-rows] duration-200 ease-out"
-                    style={{ gridTemplateRows: editingPrefix ? "1fr" : "0fr" }}
-                  >
-                    <div className="overflow-hidden">
-                      <input
-                        type="text"
-                        value={branchPrefix}
-                        onChange={(e) => {
-                          const next = e.target.value;
-                          setBranchPrefix(next);
-                          setWorktreeBranchPrefix(projectCwd, next);
-                          if (
-                            worktreeBranchName === branchPrefix ||
-                            worktreeBranchName.length === 0
-                          ) {
-                            setWorktreeBranchName(next);
-                          }
-                        }}
-                        placeholder="feature/ITE-"
-                        spellCheck={false}
-                        className="mb-1 w-full rounded-md border border-primary/30 bg-primary/5 px-2 py-1 font-mono text-[11px] text-foreground outline-none ring-1 ring-primary/10 transition-colors focus:border-primary/40 focus:ring-primary/20 dark:border-primary/20"
-                      />
-                    </div>
-                  </div>
-                  <input
-                    type="text"
-                    value={worktreeBranchName}
-                    onChange={(e) => setWorktreeBranchName(e.target.value)}
-                    placeholder={branchPrefix || "branch-name"}
-                    spellCheck={false}
-                    className="w-full rounded-md border border-border/40 bg-background/80 px-2 py-1 font-mono text-xs text-foreground outline-none ring-1 ring-transparent transition-colors focus:border-primary/40 focus:ring-primary/20 dark:border-border/20"
-                  />
-                </label>
-              </div>
-            </div>
+            {isWorktreePending && (
+              <p className="max-w-64 text-center text-[10px] text-muted-foreground/50">
+                Creates a detached worktree from the selected base. Create the feature branch later
+                from inside the worktree.
+              </p>
+            )}
           </div>
         )}
+
+        <label className="flex w-full flex-col gap-1.5 animate-fade-in-up-delay">
+          <span className="text-center text-[11px] uppercase tracking-wide text-muted-foreground/60">
+            First prompt
+          </span>
+          <textarea
+            value={initialPrompt}
+            onChange={(event) => setInitialPrompt(event.target.value)}
+            placeholder={`Ask ${thread.harness === "pi" ? "pi" : "Claude Code"} what to do first...`}
+            rows={4}
+            spellCheck
+            className="max-h-32 min-h-20 w-full resize-none rounded-lg border border-border/40 bg-background/80 px-3 py-2 text-xs text-foreground outline-none ring-1 ring-transparent transition-colors placeholder:text-muted-foreground/40 focus:border-primary/40 focus:ring-primary/20 dark:border-border/20"
+          />
+          <span className="text-center text-[10px] text-muted-foreground/45">
+            {hasInitialPrompt
+              ? "Start will auto-submit this prompt."
+              : "Optional — ⌘/Ctrl+Enter starts."}
+          </span>
+        </label>
 
         <div className="flex w-full flex-col gap-2 animate-fade-in-up-delay">
           <span className="text-center text-[11px] uppercase tracking-wide text-muted-foreground/60">
@@ -427,7 +368,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         {/* Launch button */}
         <button
           type="button"
-          disabled={starting || (!cwd && !isWorktreePending) || !isWorktreeBranchValid}
+          disabled={starting || (!cwd && !isWorktreePending) || !isWorktreeBaseSelected}
           aria-busy={starting}
           onClick={handleStart}
           className="group relative inline-flex items-center gap-2 overflow-hidden rounded-lg border border-primary/80 bg-primary px-5 py-2 text-xs font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow-md disabled:opacity-50 dark:border-primary/60 animate-fade-in-up-delay-2"
@@ -440,7 +381,13 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
           ) : (
             <>
               <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
-              {thread.harness === "pi" ? "Start pi" : "Start Claude Code"}
+              {hasInitialPrompt
+                ? thread.harness === "pi"
+                  ? "Start pi & send"
+                  : "Start Claude Code & send"
+                : thread.harness === "pi"
+                  ? "Start pi"
+                  : "Start Claude Code"}
             </>
           )}
         </button>

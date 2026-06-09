@@ -39,6 +39,7 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
 import { copyTextToClipboard } from "~/lib/clipboard";
+import { newCommandId } from "~/lib/utils";
 import {
   gitBranchesQueryOptions,
   gitCreateAndCheckoutBranchMutationOptions,
@@ -51,6 +52,7 @@ import {
 } from "~/lib/gitReactQuery";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
+import { useStore } from "~/store";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -103,7 +105,7 @@ function getMenuActionDisabledReason(
 
   if (item.id === "create_branch") {
     if (!hasBranch) {
-      return "Detached HEAD: checkout a branch before creating another branch.";
+      return "Detached HEAD: create and checkout a branch before pushing or opening a PR.";
     }
     return "Create branch is currently unavailable.";
   }
@@ -176,6 +178,12 @@ export default function GitActionsControl({
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
   );
+  const activeThreadWorktreePath = useStore((store) =>
+    activeThreadId
+      ? (store.threads.find((thread) => thread.id === activeThreadId)?.worktreePath ?? null)
+      : null,
+  );
+  const setThreadBranch = useStore((store) => store.setThreadBranch);
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [isCreateBranchDialogOpen, setIsCreateBranchDialogOpen] = useState(false);
@@ -540,6 +548,24 @@ export default function GitActionsControl({
     });
   }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction, featureBranchNameInput]);
 
+  const updateActiveThreadBranch = useCallback(
+    (branchName: string) => {
+      if (!activeThreadId) return;
+      setThreadBranch(activeThreadId, branchName, activeThreadWorktreePath);
+      const api = readNativeApi();
+      if (!api) return;
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          branch: branchName,
+        })
+        .catch(() => undefined);
+    },
+    [activeThreadId, activeThreadWorktreePath, setThreadBranch],
+  );
+
   const runCreateBranch = useCallback(() => {
     const branchName = createBranchNameInput.trim();
     if (!branchName || createBranchMutation.isPending) return;
@@ -547,7 +573,9 @@ export default function GitActionsControl({
     setIsCreateBranchDialogOpen(false);
     setCreateBranchNameInput("");
 
-    const promise = createBranchMutation.mutateAsync(branchName);
+    const promise = createBranchMutation
+      .mutateAsync(branchName)
+      .then(() => updateActiveThreadBranch(branchName));
     toastManager.promise(promise, {
       loading: { title: `Creating ${branchName}...`, data: threadToastData },
       success: () => ({
@@ -562,7 +590,7 @@ export default function GitActionsControl({
       }),
     });
     void promise.catch(() => undefined);
-  }, [createBranchMutation, createBranchNameInput, threadToastData]);
+  }, [createBranchMutation, createBranchNameInput, threadToastData, updateActiveThreadBranch]);
 
   const runDialogActionOnNewBranch = useCallback(() => {
     if (!isCommitDialogOpen) return;
@@ -829,7 +857,7 @@ export default function GitActionsControl({
             <DialogTitle>Create branch</DialogTitle>
             <DialogDescription>
               Create and checkout a feature branch from{" "}
-              {gitStatusForActions?.branch ?? "the current branch"}.
+              {gitStatusForActions?.branch ?? "the detached HEAD"}.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-3">
