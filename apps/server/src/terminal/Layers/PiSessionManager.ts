@@ -48,6 +48,10 @@ const PI_HOOK_STATUSES = new Set<ClaudeHookStatus>([
   "error",
   "completed",
 ]);
+const PI_WORKING_STATUS_RE = /[⠁-⣿]\s+Working(?:\.{3}|…)?/;
+const PI_STATUS_DETECTION_TAIL_LENGTH = 160;
+const TERMINAL_CONTROL_SEQUENCE_RE =
+  /\x1b(?:\][\s\S]*?(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[PX^_][\s\S]*?\x1b\\|[@-Z\\-_])/g;
 
 class ScrollbackRingBuffer {
   private lines: string[] = [];
@@ -122,6 +126,7 @@ interface PiSessionEntry extends PiSessionState {
   syncFilePath: string | null;
   syncWatcher: FSWatcher | null;
   syncDebounceTimer: ReturnType<typeof setTimeout> | null;
+  statusDetectionTail: string;
 }
 
 interface PiSessionManagerEvents {
@@ -333,6 +338,10 @@ function parsePiHookStatus(value: unknown): ClaudeHookStatus | null | undefined 
   return PI_HOOK_STATUSES.has(value as ClaudeHookStatus) ? (value as ClaudeHookStatus) : undefined;
 }
 
+function stripTerminalControlSequences(data: string): string {
+  return data.replace(TERMINAL_CONTROL_SEQUENCE_RE, "");
+}
+
 export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents> {
   private readonly sessions = new Map<string, PiSessionEntry>();
   private readonly threadLocks = new Map<string, Promise<void>>();
@@ -401,6 +410,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         syncFilePath: null,
         syncWatcher: null,
         syncDebounceTimer: null,
+        statusDetectionTail: "",
       };
 
       entry.cols = input.cols;
@@ -409,6 +419,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       entry.lastInteractedAt = Date.now();
       if (existing) {
         entry.scrollbackBuffer.clear();
+        entry.statusDetectionTail = "";
         this.resetHookStatus(entry);
       }
       this.sessions.set(input.threadId, entry);
@@ -511,14 +522,13 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     });
   }
 
-  async hibernateSession(threadId: string): Promise<string> {
+  async hibernateSession(threadId: string): Promise<void> {
     return this.runWithThreadLock(threadId, async () => {
       const entry = this.sessions.get(threadId);
       if (!entry) {
         throw new Error(`No session found for thread: ${threadId}`);
       }
 
-      const scrollback = entry.scrollbackBuffer.materialize();
       this.stopProcess(entry);
       entry.status = "dormant";
 
@@ -527,7 +537,6 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         activeSessionFile: entry.activeSessionFile,
       });
       this.emitEvent({ type: "hibernated", threadId, createdAt: new Date().toISOString() });
-      return scrollback;
     });
   }
 
@@ -830,6 +839,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   private onProcessData(entry: PiSessionEntry, data: string): void {
     entry.scrollbackBuffer.append(data);
+    this.applyOutputInferredHookStatus(entry, data);
     this.emitEvent({
       type: "output",
       threadId: entry.threadId,
@@ -837,6 +847,18 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       data,
       offset: entry.scrollbackBuffer.offset,
     });
+  }
+
+  private applyOutputInferredHookStatus(entry: PiSessionEntry, data: string): void {
+    const visibleText = stripTerminalControlSequences(data);
+    if (!visibleText) return;
+
+    const statusSample = `${entry.statusDetectionTail}${visibleText}`;
+    entry.statusDetectionTail = statusSample.slice(-PI_STATUS_DETECTION_TAIL_LENGTH);
+
+    if (entry.status === "active" && PI_WORKING_STATUS_RE.test(statusSample)) {
+      this.applyHookStatusIfChanged(entry, "working");
+    }
   }
 
   private applyHookStatusIfChanged(entry: PiSessionEntry, status: ClaudeHookStatus | null): void {
@@ -976,6 +998,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private resetHookStatus(entry: PiSessionEntry): void {
     this.stopJsonlHookWatcher(entry);
     entry.hookStatus = null;
+    entry.statusDetectionTail = "";
   }
 
   private onProcessExit(entry: PiSessionEntry, event: PtyExitEvent): void {

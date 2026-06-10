@@ -121,7 +121,6 @@ layer("OrchestrationEventStore", (it) => {
       assert.equal(replayed[0]?.type, "thread.terminal-status-changed");
       if (replayed[0]?.type === "thread.terminal-status-changed") {
         assert.equal(replayed[0].payload.piSessionFile, null);
-        assert.equal(replayed[0].payload.scrollbackSnapshot, null);
       }
     }),
   );

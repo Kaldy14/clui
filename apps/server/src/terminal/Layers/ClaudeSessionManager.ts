@@ -301,14 +301,13 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     });
   }
 
-  async hibernateSession(threadId: string): Promise<string> {
+  async hibernateSession(threadId: string): Promise<void> {
     return this.runWithThreadLock(threadId, async () => {
       const entry = this.sessions.get(threadId);
       if (!entry) {
         throw new Error(`No session found for thread: ${threadId}`);
       }
 
-      const scrollback = entry.scrollbackBuffer.materialize();
       this.stopProcess(entry);
       entry.status = "dormant";
 
@@ -319,8 +318,6 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         threadId,
         createdAt: new Date().toISOString(),
       });
-
-      return scrollback;
     });
   }
 

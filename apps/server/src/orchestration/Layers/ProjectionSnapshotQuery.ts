@@ -57,7 +57,11 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
-const ProjectionThreadDbRowSchema = ProjectionThread;
+const ProjectionThreadSnapshotDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  }),
+);
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
@@ -161,7 +165,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const listThreadRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProjectionThreadDbRowSchema,
+    Result: ProjectionThreadSnapshotDbRowSchema,
     execute: () =>
       sql`
         SELECT
@@ -177,7 +181,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           claude_session_id AS "claudeSessionId",
           pi_session_file AS "piSessionFile",
           terminal_status AS "terminalStatus",
-          scrollback_snapshot AS "scrollbackSnapshot",
+          NULL AS "scrollbackSnapshot",
           title_source AS "titleSource",
           bookmarked,
           latest_turn_id AS "latestTurnId",

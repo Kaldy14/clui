@@ -103,6 +103,13 @@ export const ServerUpdateSettingsInput = Schema.Struct({
 });
 export type ServerUpdateSettingsInput = typeof ServerUpdateSettingsInput.Type;
 
+export const ServerSetHarnessOutputSubscriptionsInput = Schema.Struct({
+  claudeThreadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(100)),
+  piThreadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(100)),
+});
+export type ServerSetHarnessOutputSubscriptionsInput =
+  typeof ServerSetHarnessOutputSubscriptionsInput.Type;
+
 export const ServerUpsertKeybindingInput = KeybindingRule;
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;
 

@@ -43,6 +43,7 @@ import type {
   ServerUpsertKeybindingResult,
   PurgeInactiveSessionsInput,
   PurgeInactiveSessionsResult,
+  ServerSetHarnessOutputSubscriptionsInput,
 } from "./server";
 import type {
   ClientOrchestrationCommand,
@@ -207,6 +208,9 @@ export interface NativeApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     updateSettings: (input: ServerUpdateSettingsInput) => Promise<ServerSettings>;
     purgeInactiveSessions: (input: PurgeInactiveSessionsInput) => Promise<PurgeInactiveSessionsResult>;
+    setHarnessOutputSubscriptions: (
+      input: ServerSetHarnessOutputSubscriptionsInput,
+    ) => Promise<void>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

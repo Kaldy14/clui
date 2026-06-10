@@ -353,6 +353,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const clients = yield* Ref.make(new Set<WebSocket>());
+  const clientOutputSubscriptions = new WeakMap<
+    WebSocket,
+    { claudeThreadIds: Set<string>; piThreadIds: Set<string> }
+  >();
   const logger = createLogger("ws");
 
   function logOutgoingPush(push: WsPush, recipients: number) {
@@ -374,17 +378,62 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     WS_METHODS.piWrite,
     WS_METHODS.piResize,
   ]);
-  const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
+  const getClientOutputSubscriptions = (client: WebSocket) => {
+    let subscriptions = clientOutputSubscriptions.get(client);
+    if (!subscriptions) {
+      subscriptions = { claudeThreadIds: new Set(), piThreadIds: new Set() };
+      clientOutputSubscriptions.set(client, subscriptions);
+    }
+    return subscriptions;
+  };
+
+  const setClientOutputSubscriptions = (
+    client: WebSocket,
+    input: { claudeThreadIds: ReadonlyArray<string>; piThreadIds: ReadonlyArray<string> },
+  ) => {
+    const subscriptions = getClientOutputSubscriptions(client);
+    subscriptions.claudeThreadIds = new Set(input.claudeThreadIds);
+    subscriptions.piThreadIds = new Set(input.piThreadIds);
+  };
+
+  const broadcastPush = Effect.fnUntraced(function* (
+    push: WsPush,
+    shouldSend?: (client: WebSocket) => boolean,
+  ) {
     const message = yield* encodePush(push);
     let recipients = 0;
     for (const client of yield* Ref.get(clients)) {
-      if (client.readyState === client.OPEN) {
+      if (client.readyState === client.OPEN && (shouldSend?.(client) ?? true)) {
         client.send(message);
         recipients += 1;
       }
     }
     logOutgoingPush(push, recipients);
   });
+
+  const broadcastClaudeSessionEvent = (event: ClaudeSessionEvent) =>
+    broadcastPush(
+      {
+        type: "push",
+        channel: WS_CHANNELS.claudeSessionEvent,
+        data: event,
+      },
+      event.type === "output"
+        ? (client) => getClientOutputSubscriptions(client).claudeThreadIds.has(event.threadId)
+        : undefined,
+    );
+
+  const broadcastPiSessionEvent = (event: PiSessionEvent) =>
+    broadcastPush(
+      {
+        type: "push",
+        channel: WS_CHANNELS.piSessionEvent,
+        data: event,
+      },
+      event.type === "output"
+        ? (client) => getClientOutputSubscriptions(client).piThreadIds.has(event.threadId)
+        : undefined,
+    );
 
   const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
     yield* broadcastPush({
@@ -749,11 +798,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             void Effect.runPromise(
               Effect.all([
                 updateMacosSleepPrevention(event),
-                broadcastPush({
-                  type: "push",
-                  channel: WS_CHANNELS.claudeSessionEvent,
-                  data: event,
-                }),
+                broadcastClaudeSessionEvent(event),
               ]).pipe(
                 Effect.catch((error) =>
                   Effect.logError("hook event handling failed", { cause: error }),
@@ -1020,6 +1065,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       ),
     );
 
+  const resolveHarnessSessionCwd = (requestedCwd: string, threadId: string) =>
+    Effect.gen(function* () {
+      const resolvedCwd = path.resolve(requestedCwd);
+      const resolvedRoot = path.resolve(cwd);
+      const isUnderRoot =
+        resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
+      if (isUnderRoot) return resolvedCwd;
+
+      const threadWorktreePath = yield* projectionThreadRepository.getWorktreePathById({
+        threadId: ThreadId.makeUnsafe(threadId),
+      });
+      const resolvedWorktree = threadWorktreePath ? path.resolve(threadWorktreePath) : null;
+      const isThreadWorktree =
+        resolvedWorktree != null &&
+        (resolvedCwd === resolvedWorktree || resolvedCwd.startsWith(`${resolvedWorktree}/`));
+      if (isThreadWorktree) return resolvedCwd;
+
+      return yield* new RouteRequestError({
+        message: `cwd must be within workspace root: ${cwd}`,
+      });
+    });
+
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
@@ -1071,7 +1138,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           terminalStatus: "dormant",
           claudeSessionId: thread.claudeSessionId,
           piSessionFile: thread.piSessionFile,
-          scrollbackSnapshot: thread.scrollbackSnapshot,
           updatedAt: new Date().toISOString(),
         }),
       { concurrency: 10 },
@@ -1178,11 +1244,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const onClaudeSessionEvent = Effect.fnUntraced(function* (event: ClaudeSessionEvent) {
     yield* updateMacosSleepPrevention(event);
-    yield* broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.claudeSessionEvent,
-      data: event,
-    });
+    yield* broadcastClaudeSessionEvent(event);
 
     if (event.type === "started") {
       yield* orchestrationEngine.dispatch({
@@ -1192,7 +1254,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         terminalStatus: "active",
         claudeSessionId: null,
         piSessionFile: null,
-        scrollbackSnapshot: null,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -1205,13 +1266,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         terminalStatus: "active",
         claudeSessionId: event.claudeSessionId,
         piSessionFile: null,
-        scrollbackSnapshot: null,
         updatedAt: new Date().toISOString(),
       });
     }
 
     if (event.type === "hibernated" || event.type === "exited") {
-      const scrollbackResult = yield* claudeSessionManager.getScrollback(event.threadId);
       const claudeSessionId = yield* claudeSessionManager.getClaudeSessionId(event.threadId);
       yield* orchestrationEngine.dispatch({
         type: "thread.terminal.statusChanged",
@@ -1220,7 +1279,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         terminalStatus: "dormant",
         claudeSessionId: claudeSessionId,
         piSessionFile: null,
-        scrollbackSnapshot: scrollbackResult.scrollback,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -1240,11 +1298,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const onPiSessionEvent = Effect.fnUntraced(function* (event: PiSessionEvent) {
     yield* updateMacosSleepPrevention(event);
-    yield* broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.piSessionEvent,
-      data: event,
-    });
+    yield* broadcastPiSessionEvent(event);
 
     if (event.type === "started") {
       const piSessionFile = yield* piSessionManager.getSessionFile(event.threadId);
@@ -1255,7 +1309,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         terminalStatus: "active",
         claudeSessionId: null,
         piSessionFile,
-        scrollbackSnapshot: null,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -1269,16 +1322,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         terminalStatus,
         claudeSessionId: null,
         piSessionFile: event.sessionFile,
-        scrollbackSnapshot:
-          terminalStatus === "dormant"
-            ? (yield* piSessionManager.getScrollback(event.threadId)).scrollback
-            : null,
         updatedAt: new Date().toISOString(),
       });
     }
 
     if (event.type === "hibernated" || event.type === "exited") {
-      const scrollbackResult = yield* piSessionManager.getScrollback(event.threadId);
       const piSessionFile = yield* piSessionManager.getSessionFile(event.threadId);
       yield* orchestrationEngine.dispatch({
         type: "thread.terminal.statusChanged",
@@ -1287,7 +1335,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         terminalStatus: "dormant",
         claudeSessionId: null,
         piSessionFile,
-        scrollbackSnapshot: scrollbackResult.scrollback,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -1340,7 +1387,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   );
 
-  const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
+  const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
         return yield* projectionReadModelQuery.getSnapshot();
@@ -1599,25 +1646,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           dangerouslySkipPermissions,
         } = stripRequestTag(request.body);
 
-        // Validate cwd is under the workspace root or the thread's registered worktree
-        const resolvedCwd = path.resolve(requestedCwd);
-        const resolvedRoot = path.resolve(cwd);
-        const isUnderRoot =
-          resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
-        if (!isUnderRoot) {
-          // Allow if the cwd matches the thread's registered worktree path
-          const snapshot = yield* projectionReadModelQuery.getSnapshot();
-          const thread = snapshot.threads.find((t) => t.id === threadId);
-          const threadWorktree = thread?.worktreePath ? path.resolve(thread.worktreePath) : null;
-          const isThreadWorktree =
-            threadWorktree != null &&
-            (resolvedCwd === threadWorktree || resolvedCwd.startsWith(`${threadWorktree}/`));
-          if (!isThreadWorktree) {
-            return yield* new RouteRequestError({
-              message: `cwd must be within workspace root: ${cwd}`,
-            });
-          }
-        }
+        const resolvedCwd = yield* resolveHarnessSessionCwd(requestedCwd, threadId);
 
         return yield* claudeSessionManager.startSession({
           threadId,
@@ -1665,23 +1694,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           resumeSessionFile,
         } = stripRequestTag(request.body);
 
-        const resolvedCwd = path.resolve(requestedCwd);
-        const resolvedRoot = path.resolve(cwd);
-        const isUnderRoot =
-          resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
-        if (!isUnderRoot) {
-          const snapshot = yield* projectionReadModelQuery.getSnapshot();
-          const thread = snapshot.threads.find((t) => t.id === threadId);
-          const threadWorktree = thread?.worktreePath ? path.resolve(thread.worktreePath) : null;
-          const isThreadWorktree =
-            threadWorktree != null &&
-            (resolvedCwd === threadWorktree || resolvedCwd.startsWith(`${threadWorktree}/`));
-          if (!isThreadWorktree) {
-            return yield* new RouteRequestError({
-              message: `cwd must be within workspace root: ${cwd}`,
-            });
-          }
-        }
+        const resolvedCwd = yield* resolveHarnessSessionCwd(requestedCwd, threadId);
 
         return yield* piSessionManager.startSession({
           threadId,
@@ -1750,6 +1763,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         yield* runInactiveThreadAutoArchiveSweepSafely("settings-updated");
 
         return settings;
+      }
+
+      case WS_METHODS.serverSetHarnessOutputSubscriptions: {
+        const body = stripRequestTag(request.body);
+        setClientOutputSubscriptions(ws, body);
+        return {};
       }
 
       case WS_METHODS.serverPurgeInactiveSessions: {
@@ -1838,7 +1857,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
     const isFireAndForget = FIRE_AND_FORGET_METHODS.has(request.value.body._tag);
 
-    const result = yield* Effect.exit(routeRequest(request.value));
+    const result = yield* Effect.exit(routeRequest(ws, request.value));
     if (isFireAndForget) {
       if (result._tag === "Failure") {
         yield* Effect.logWarning("fire-and-forget request failed", {
@@ -1891,6 +1910,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
+    clientOutputSubscriptions.set(ws, { claudeThreadIds: new Set(), piThreadIds: new Set() });
     void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
 
     const segments = cwd.split(/[/\\]/).filter(Boolean);
@@ -1918,6 +1938,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     ws.on("close", () => {
+      clientOutputSubscriptions.delete(ws);
       void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
@@ -1927,6 +1948,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     ws.on("error", () => {
+      clientOutputSubscriptions.delete(ws);
       void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);

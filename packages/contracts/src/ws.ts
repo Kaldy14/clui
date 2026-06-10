@@ -51,7 +51,11 @@ import {
   PiResizeInput,
 } from "./pi-terminal";
 import { KeybindingRule } from "./keybindings";
-import { PurgeInactiveSessionsInput, ServerUpdateSettingsInput } from "./server";
+import {
+  PurgeInactiveSessionsInput,
+  ServerSetHarnessOutputSubscriptionsInput,
+  ServerUpdateSettingsInput,
+} from "./server";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput, ProjectReadFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import {
@@ -115,6 +119,7 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverUpdateSettings: "server.updateSettings",
   serverPurgeInactiveSessions: "server.purgeInactiveSessions",
+  serverSetHarnessOutputSubscriptions: "server.setHarnessOutputSubscriptions",
 } as const;
 
 export const MCP_WS_METHODS = {
@@ -214,6 +219,10 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
   tagRequestBody(WS_METHODS.serverUpdateSettings, ServerUpdateSettingsInput),
   tagRequestBody(WS_METHODS.serverPurgeInactiveSessions, PurgeInactiveSessionsInput),
+  tagRequestBody(
+    WS_METHODS.serverSetHarnessOutputSubscriptions,
+    ServerSetHarnessOutputSubscriptionsInput,
+  ),
 
   // MCP methods
   tagRequestBody(MCP_WS_METHODS.mcpGetStatus, McpGetStatusInput),

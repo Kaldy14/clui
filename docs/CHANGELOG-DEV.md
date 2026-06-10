@@ -4,6 +4,189 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-10 — Current Apple Silicon mac build produced
+
+**Problem:** A fresh macOS Apple Silicon desktop build was needed from the current working tree.
+
+**Root cause:** The latest local source changes had not been packaged into downloadable macOS arm64 artifacts.
+
+**Fix:** Ran `bun lint`, `bun typecheck`, and `bun run dist:desktop:dmg:arm64`, producing refreshed `0.0.27` macOS arm64 DMG/ZIP artifacts.
+
+**Affected files/artifacts:**
+- `release/Clui-0.0.27-arm64.dmg` (`69090e6f85a76747c070fa4ee89860b2d6f7d28db17ee3273ae10d80f0f54105`)
+- `release/Clui-0.0.27-arm64.dmg.blockmap` (`647e114bd06b7776f68ea720ff5007bc4f8ccd91ae1ce43543c5a1e5d601a07b`)
+- `release/Clui-0.0.27-arm64.zip` (`4f9fa55b570143dbb045c0cb970fc21a8bfc5bb05363478dff5ec421dd327c11`)
+- `release/Clui-0.0.27-arm64.zip.blockmap` (`28ef6fece0a2645cf206461486777395b057827f1fea92b3a9bfe18f5978c88b`)
+- `release/builder-debug.yml` (`d2a6047ca081d6057a0e74c174f73a077c2284cdda2ddb409352eb557e8632b0`)
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Pi working status detected from terminal output
+
+**Problem:** Pi threads could show `⠧ Working...` in the terminal while the sidebar did not show `Working`.
+
+**Root cause:** Clui only updated pi sidebar status from pi sidecar/session events or submitted prompts; a live pi TUI working line was not used as a status signal when those events were missing or delayed.
+
+**Fix:** Added server-side pi output detection for animated braille working spinner lines and emit a `hookStatus: "working"` event before the output chunk reaches clients, with tests to avoid ordinary text false positives.
+
+**Affected files:**
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Startup hydration shows loading state
+
+**Problem:** Starting Clui briefly showed the empty-project state before projects and threads finished hydrating.
+
+**Root cause:** The sidebar and empty chat index rendered their empty states from initially empty Zustand arrays without checking `threadsHydrated`.
+
+**Fix:** Added compact loading UI for the sidebar and chat index until the first server snapshot hydrates, and kept `No projects yet` gated to the real post-hydration empty state.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/routes/_chat.index.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — `0.0.27` Apple Silicon mac build refreshed
+
+**Problem:** The existing `0.0.27` macOS arm64 artifacts did not include the terminal first-switch render fix.
+
+**Root cause:** The terminal render fix landed after the first `0.0.27` DMG/ZIP build.
+
+**Fix:** Rebuilt the current `0.0.27` macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64` and verified hashes.
+
+**Affected files/artifacts:**
+- `release/Clui-0.0.27-arm64.dmg` (`718577dee398424c527956861639b8da4997694df27291378e3647c8c0a290bc`)
+- `release/Clui-0.0.27-arm64.dmg.blockmap`
+- `release/Clui-0.0.27-arm64.zip` (`0946b6d1d782362ddd1b35d2ab1787688c0d010df47fd87a046fe5f209baab50`)
+- `release/Clui-0.0.27-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Terminal replay settles renderer after first switch
+
+**Problem:** Switching to a thread that had run tools and was waiting for input could show a broken terminal bottom and hide recent tool output until switching away and back.
+
+**Root cause:** Detached terminals replayed catch-up scrollback after fit, but xterm/WebGL could still miss the first visual refresh while the DOM was being reparented and the renderer was loading.
+
+**Fix:** Added a debounced post-attach visual settle that refits and refreshes xterm after initial replay/output writes, and refreshes the terminal after deferred WebGL renderer load.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/claudeTerminalCache.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Version bumped to `0.0.27` and Apple Silicon mac build produced
+
+**Problem:** A fresh macOS Apple Silicon desktop build was needed for the archived-thread database performance fix.
+
+**Root cause:** Release package metadata still pointed at `0.0.26`; the staged production install also resolved a broken newer `@pierre/diffs` prerelease through the caret range.
+
+**Fix:** Bumped package versions to `0.0.27`, pinned `@pierre/diffs` to `1.1.0-beta.19`, refreshed `bun.lock`, and rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
+
+**Affected files/artifacts:**
+- `apps/server/package.json`
+- `apps/desktop/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.27-arm64.dmg`
+- `release/Clui-0.0.27-arm64.dmg.blockmap`
+- `release/Clui-0.0.27-arm64.zip`
+- `release/Clui-0.0.27-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Archived thread archiving no longer persists scrollback blobs
+
+**Problem:** Archiving a thread became slow on large local databases with many archived/dormant sessions.
+
+**Root cause:** Hibernate stored full terminal scrollback in `thread.terminal-status-changed` event payloads, returned it over the hibernate RPC, and persisted it in `projection_threads.scrollback_snapshot`.
+
+**Fix:** Removed scrollback from terminal status commands/events, made hibernate RPCs return no payload, kept projection scrollback snapshots null, added a migration to redact existing scrollback blobs and clear stored snapshots, and added thread visibility/order indexes.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/terminal/Services/ClaudeSession.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations/027_RedactTerminalScrollback.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Full snapshots omit scrollback and xterm writes are backpressured
+
+**Problem:** Full app snapshots could still carry large saved terminal scrollback, and active terminals could enqueue multiple large xterm writes before prior writes finished.
+
+**Root cause:** `ProjectionSnapshotQuery.getSnapshot()` selected `scrollback_snapshot` with every thread row. The active terminal renderer batched by animation frame but did not enforce one in-flight xterm parser write.
+
+**Fix:** Changed full projection snapshots to hydrate `scrollbackSnapshot: null` without reading the database blob, kept dedicated `getScrollback` calls as the scrollback transfer path, added a sequential terminal write queue, and routed active terminal replay/output writes through it.
+
+**Affected files:**
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/terminalWriteQueue.ts`
+- `apps/web/src/lib/terminalWriteQueue.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Harness output is subscribed per visible thread
+
+**Problem:** Background tabs and inactive clients still received every Claude/pi output chunk, wasting WebSocket bandwidth and feeding stale terminal renderer backlogs.
+
+**Root cause:** The server broadcast all harness session events, including high-volume `output` events, to every connected client. The client filtered by thread only after decoding and receiving the payload.
+
+**Fix:** Added a per-WebSocket harness output subscription method, filtered Claude/pi `output` pushes server-side by subscribed thread, kept lifecycle/status events broadcast globally, and registered visible active terminal views as the only output subscribers.
+
+**Affected files:**
+- `packages/contracts/src/server.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/ipc.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Hidden pi terminal backlog replay bounded
+
+**Problem:** Returning to a backgrounded pi thread could replay stale terminal frames, look broken for a while, and lag before the current screen appeared.
+
+**Root cause:** Active terminal views kept accumulating output while the document was hidden, and reattached terminals replayed large scrollback deltas directly into xterm.
+
+**Fix:** Added bounded terminal catch-up compaction, paused live xterm flush scheduling while hidden, kept only the latest compacted hidden output, compacted large scrollback/delta replay, and forced a resize after lossy catch-up so TUIs redraw the current screen.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/terminalOutputCompaction.ts`
+- `apps/web/src/lib/terminalOutputCompaction.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-09 — Branchless new-thread worktrees and first prompt launch
 
 **Problem:** New worktree threads forced users to name and create a feature branch before the agent started, and the first user prompt had to be typed manually after pi/Claude Code initialized.
@@ -40,6 +223,49 @@ Session-by-session log of changes, fixes, and decisions made during development.
 - `apps/server/src/terminal/titleGenerator.ts`
 - `apps/server/src/terminal/titleGenerator.test.ts`
 - `apps/server/src/wsServer.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-09 — Version bumped to `0.0.26` and Apple Silicon mac build produced
+
+**Problem:** The app needed a fresh macOS Apple Silicon desktop build containing the pi new-thread startup lag fixes.
+
+**Root cause:** Release package metadata still pointed at `0.0.25`, so a new desktop build would otherwise reuse the previous app version.
+
+**Fix:** Bumped release package versions to `0.0.26`, refreshed `bun.lock`, and rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
+
+**Affected files/artifacts:**
+- `apps/server/package.json`
+- `apps/desktop/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.26-arm64.dmg`
+- `release/Clui-0.0.26-arm64.dmg.blockmap`
+- `release/Clui-0.0.26-arm64.zip`
+- `release/Clui-0.0.26-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-09 — Pi new-thread startup lag reduced
+
+**Problem:** Starting a new pi thread could pause before the active terminal appeared, then feel laggy for the first few seconds of output.
+
+**Root cause:** `pi.start` and `claude.start` validated outside-root worktree cwd values by loading the full projection snapshot, which includes stored scrollback for every thread. The active terminal also loaded WebGL during attach and wrote each initial output event separately.
+
+**Fix:** Added a narrow projection lookup for a thread's worktree path, switched session cwd validation to that lookup, deferred WebGL loading until after the first terminal paint, and batched active terminal output writes per animation frame.
+
+**Affected files:**
+- `apps/server/src/persistence/Services/ProjectionThreads.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/lib/claudeTerminalCache.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `.pi/research/deep-dive-trace-pi-new-thread-lag.md`
 - `docs/CHANGELOG-DEV.md`
 
 ---
@@ -1968,3 +2194,4 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Root cause:** `setupProjectScript()` was defined and tested in `projectScripts.ts` but never imported or called in the worktree creation flow. `ThreadTerminalView.tsx`'s `handleStart` created the worktree and started the Claude session without checking for setup scripts.
 
 [Showing lines 1-648 of 661 (50.0KB limit). Use offset=649 to continue.]
+

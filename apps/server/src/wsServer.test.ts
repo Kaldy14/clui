@@ -22,7 +22,10 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
+  type ClaudeSessionEvent,
   type KeybindingsConfig,
+  type OrchestrationReadModel,
+  type PiSessionEvent,
   type ResolvedKeybindingsConfig,
   type WsPush,
 } from "@clui/contracts";
@@ -52,6 +55,10 @@ import {
 } from "./terminal/Services/ClaudeSession.ts";
 import { PiSessionManager, type PiSessionManagerShape } from "./terminal/Services/PiSession.ts";
 import { MacosSleepPreventer, type MacosSleepPreventerShape } from "./macosSleepPreventer";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "./orchestration/Services/ProjectionSnapshotQuery";
 
 interface PendingMessages {
   queue: unknown[];
@@ -198,7 +205,7 @@ class MockTerminalManager implements TerminalManagerShape {
 
 const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   startSession: () => Effect.void,
-  hibernateSession: () => Effect.succeed(""),
+  hibernateSession: () => Effect.void,
   getScrollback: () => Effect.succeed({ scrollback: null, offset: 0, reset: false }),
   writeToSession: () => Effect.void,
   resizeSession: () => Effect.void,
@@ -223,7 +230,7 @@ const defaultMacosSleepPreventer: MacosSleepPreventerShape = {
 
 const defaultPiSessionManager: PiSessionManagerShape = {
   startSession: () => Effect.void,
-  hibernateSession: () => Effect.succeed(""),
+  hibernateSession: () => Effect.void,
   getScrollback: () => Effect.succeed({ scrollback: null, offset: 0, reset: false }),
   writeToSession: () => Effect.void,
   notifyPromptSubmitted: () => Effect.void,
@@ -348,6 +355,23 @@ async function waitForPush(
   return take(maxMessages);
 }
 
+async function expectNoMatchingPush(
+  ws: WebSocket,
+  channel: string,
+  predicate: (push: WsPush) => boolean,
+  timeoutMs = 50,
+): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  const pending = pendingBySocket.get(ws);
+  if (!pending) return;
+  for (const message of pending.queue) {
+    const push = message as WsPush;
+    if (push.type === "push" && push.channel === channel && predicate(push)) {
+      throw new Error(`Unexpected push on ${channel}`);
+    }
+  }
+}
+
 async function requestPath(
   port: number,
   requestPath: string,
@@ -433,6 +457,7 @@ describe("WebSocket Server", () => {
       claudeSessionManager?: ClaudeSessionManagerShape;
       piSessionManager?: PiSessionManagerShape;
       macosSleepPreventer?: MacosSleepPreventerShape;
+      projectionSnapshotQuery?: ProjectionSnapshotQueryShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -465,6 +490,9 @@ describe("WebSocket Server", () => {
         : Layer.empty,
       options.terminalManager
         ? Layer.succeed(TerminalManager, options.terminalManager)
+        : Layer.empty,
+      options.projectionSnapshotQuery
+        ? Layer.succeed(ProjectionSnapshotQuery, options.projectionSnapshotQuery)
         : Layer.empty,
       Layer.succeed(
         ClaudeSessionManager,
@@ -1928,6 +1956,222 @@ describe("WebSocket Server", () => {
     expect(welcome.channel).toBe(WS_CHANNELS.serverWelcome);
   });
 
+  function makeStartupOnlyProjectionSnapshotQuery(): ProjectionSnapshotQueryShape {
+    let snapshotReads = 0;
+    const startupSnapshot = (): OrchestrationReadModel => ({
+      snapshotSequence: 0,
+      projects: [],
+      threads: [],
+      updatedAt: new Date().toISOString(),
+    });
+    return {
+      getSnapshot: () =>
+        Effect.sync(() => {
+          snapshotReads++;
+          if (snapshotReads > 1) {
+            throw new Error("session start should not read full snapshot");
+          }
+          return startupSnapshot();
+        }),
+      getSessionMetrics: () => Effect.die(new Error("unused in this test")),
+    };
+  }
+
+  function makeObservableClaudeSession() {
+    const listeners = new Set<(event: ClaudeSessionEvent) => void>();
+    const shape: ClaudeSessionManagerShape = {
+      ...defaultClaudeSessionManager,
+      subscribe: (listener) =>
+        Effect.sync(() => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        }),
+    };
+    return {
+      shape,
+      emit: (event: ClaudeSessionEvent) => {
+        for (const listener of listeners) listener(event);
+      },
+    };
+  }
+
+  function makeObservablePiSession() {
+    const listeners = new Set<(event: PiSessionEvent) => void>();
+    const shape: PiSessionManagerShape = {
+      ...defaultPiSessionManager,
+      subscribe: (listener) =>
+        Effect.sync(() => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        }),
+    };
+    return {
+      shape,
+      emit: (event: PiSessionEvent) => {
+        for (const listener of listeners) listener(event);
+      },
+    };
+  }
+
+  async function createProjectedThread(
+    ws: WebSocket,
+    input: {
+      projectId: string;
+      threadId: string;
+      workspaceRoot: string;
+      worktreePath: string | null;
+      harness?: "claudeCode" | "pi";
+    },
+  ): Promise<void> {
+    const createdAt = new Date().toISOString();
+    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: `cmd-project-${input.projectId}`,
+      projectId: input.projectId,
+      title: "Project",
+      workspaceRoot: input.workspaceRoot,
+      defaultModel: "claude-opus-4-6",
+      createdAt,
+    });
+    expect(createProjectResponse.error).toBeUndefined();
+
+    const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.create",
+      commandId: `cmd-thread-${input.threadId}`,
+      threadId: input.threadId,
+      projectId: input.projectId,
+      title: "Thread",
+      model: "claude-opus-4-6",
+      harness: input.harness ?? "claudeCode",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: input.worktreePath,
+      createdAt,
+    });
+    expect(createThreadResponse.error).toBeUndefined();
+  }
+
+  describe("harness output subscriptions", () => {
+    it("sends Claude output only to clients subscribed to that thread", async () => {
+      const claudeSession = makeObservableClaudeSession();
+      server = await createTestServer({
+        cwd: "/test/project",
+        claudeSessionManager: claudeSession.shape,
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const subscribedWs = await connectWs(port);
+      const unsubscribedWs = await connectWs(port);
+      connections.push(subscribedWs, unsubscribedWs);
+      await waitForMessage(subscribedWs); // welcome
+      await waitForMessage(unsubscribedWs); // welcome
+
+      const subscribeResponse = await sendRequest(
+        subscribedWs,
+        WS_METHODS.serverSetHarnessOutputSubscriptions,
+        {
+          claudeThreadIds: ["thread-1"],
+          piThreadIds: [],
+        },
+      );
+      expect(subscribeResponse.error).toBeUndefined();
+
+      claudeSession.emit({
+        type: "output",
+        threadId: "thread-1",
+        createdAt: new Date().toISOString(),
+        data: "visible output",
+        offset: 14,
+      });
+
+      await waitForPush(subscribedWs, WS_CHANNELS.claudeSessionEvent, (push) => {
+        const event = push.data as ClaudeSessionEvent;
+        return event.type === "output" && event.data === "visible output";
+      });
+      await expectNoMatchingPush(unsubscribedWs, WS_CHANNELS.claudeSessionEvent, (push) => {
+        const event = push.data as ClaudeSessionEvent;
+        return event.type === "output" && event.data === "visible output";
+      });
+
+      claudeSession.emit({
+        type: "hookStatus",
+        threadId: "thread-1",
+        createdAt: new Date().toISOString(),
+        hookStatus: "working",
+      });
+
+      await waitForPush(subscribedWs, WS_CHANNELS.claudeSessionEvent, (push) => {
+        const event = push.data as ClaudeSessionEvent;
+        return event.type === "hookStatus" && event.hookStatus === "working";
+      });
+      await waitForPush(unsubscribedWs, WS_CHANNELS.claudeSessionEvent, (push) => {
+        const event = push.data as ClaudeSessionEvent;
+        return event.type === "hookStatus" && event.hookStatus === "working";
+      });
+    });
+
+    it("sends pi output only to clients subscribed to that thread", async () => {
+      const piSession = makeObservablePiSession();
+      server = await createTestServer({
+        cwd: "/test/project",
+        piSessionManager: piSession.shape,
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const subscribedWs = await connectWs(port);
+      const unsubscribedWs = await connectWs(port);
+      connections.push(subscribedWs, unsubscribedWs);
+      await waitForMessage(subscribedWs); // welcome
+      await waitForMessage(unsubscribedWs); // welcome
+
+      const subscribeResponse = await sendRequest(
+        subscribedWs,
+        WS_METHODS.serverSetHarnessOutputSubscriptions,
+        {
+          claudeThreadIds: [],
+          piThreadIds: ["thread-1"],
+        },
+      );
+      expect(subscribeResponse.error).toBeUndefined();
+
+      piSession.emit({
+        type: "output",
+        threadId: "thread-1",
+        createdAt: new Date().toISOString(),
+        data: "pi visible output",
+        offset: 17,
+      });
+
+      await waitForPush(subscribedWs, WS_CHANNELS.piSessionEvent, (push) => {
+        const event = push.data as PiSessionEvent;
+        return event.type === "output" && event.data === "pi visible output";
+      });
+      await expectNoMatchingPush(unsubscribedWs, WS_CHANNELS.piSessionEvent, (push) => {
+        const event = push.data as PiSessionEvent;
+        return event.type === "output" && event.data === "pi visible output";
+      });
+
+      piSession.emit({
+        type: "hookStatus",
+        threadId: "thread-1",
+        createdAt: new Date().toISOString(),
+        hookStatus: "working",
+      });
+
+      await waitForPush(subscribedWs, WS_CHANNELS.piSessionEvent, (push) => {
+        const event = push.data as PiSessionEvent;
+        return event.type === "hookStatus" && event.hookStatus === "working";
+      });
+      await waitForPush(unsubscribedWs, WS_CHANNELS.piSessionEvent, (push) => {
+        const event = push.data as PiSessionEvent;
+        return event.type === "hookStatus" && event.hookStatus === "working";
+      });
+    });
+  });
+
   describe("claude session routes", () => {
     function makeMockClaudeSession() {
       const calls: Array<{ method: string; args: unknown[] }> = [];
@@ -1938,7 +2182,7 @@ describe("WebSocket Server", () => {
         },
         hibernateSession: (threadId) => {
           calls.push({ method: "hibernateSession", args: [threadId] });
-          return Effect.succeed("saved-scrollback");
+          return Effect.void;
         },
         getScrollback: (threadId, _sinceOffset) => {
           calls.push({ method: "getScrollback", args: [threadId] });
@@ -1994,7 +2238,7 @@ describe("WebSocket Server", () => {
       });
     });
 
-    it("claude.hibernate calls hibernateSession and returns scrollback", async () => {
+    it("claude.hibernate calls hibernateSession and returns no payload", async () => {
       const { calls, shape } = makeMockClaudeSession();
       server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
       const addr = server.address();
@@ -2012,7 +2256,7 @@ describe("WebSocket Server", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]!.method).toBe("hibernateSession");
       expect(calls[0]!.args[0]).toBe("thread-1");
-      expect(response.result).toBe("saved-scrollback");
+      expect(response.result).toBeUndefined();
     });
 
     it("claude.getScrollback calls getScrollback and returns scrollback data", async () => {
@@ -2093,6 +2337,45 @@ describe("WebSocket Server", () => {
       expect(calls[0]!.args[2]).toBe(40);
     });
 
+    it("claude.start allows a registered worktree outside the server root", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      const workspaceRoot = makeTempDir("clui-ws-claude-root-");
+      const worktreeRoot = makeTempDir("clui-ws-claude-worktree-");
+      server = await createTestServer({
+        cwd: workspaceRoot,
+        claudeSessionManager: shape,
+        projectionSnapshotQuery: makeStartupOnlyProjectionSnapshotQuery(),
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+      await createProjectedThread(ws, {
+        projectId: "project-claude-worktree",
+        threadId: "thread-claude-worktree",
+        workspaceRoot,
+        worktreePath: worktreeRoot,
+      });
+
+      const startCwd = path.join(worktreeRoot, "subdir");
+      const response = await sendRequest(ws, WS_METHODS.claudeStart, {
+        threadId: "thread-claude-worktree",
+        cwd: startCwd,
+        cols: 80,
+        rows: 24,
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("startSession");
+      expect(calls[0]!.args[0]).toMatchObject({
+        threadId: "thread-claude-worktree",
+        cwd: startCwd,
+      });
+    });
+
     it("claude.start passes resumeSessionId when provided", async () => {
       const { calls, shape } = makeMockClaudeSession();
       server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
@@ -2120,6 +2403,62 @@ describe("WebSocket Server", () => {
         cols: 80,
         rows: 24,
         resumeSessionId: "existing-session-id",
+      });
+    });
+  });
+
+  describe("pi session routes", () => {
+    function makeMockPiSession() {
+      const calls: Array<{ method: string; args: unknown[] }> = [];
+      const shape: PiSessionManagerShape = {
+        ...defaultPiSessionManager,
+        startSession: (input) => {
+          calls.push({ method: "startSession", args: [input] });
+          return Effect.void;
+        },
+      };
+      return { calls, shape };
+    }
+
+    it("pi.start allows a registered worktree outside the server root", async () => {
+      const { calls, shape } = makeMockPiSession();
+      const workspaceRoot = makeTempDir("clui-ws-pi-root-");
+      const worktreeRoot = makeTempDir("clui-ws-pi-worktree-");
+      server = await createTestServer({
+        cwd: workspaceRoot,
+        piSessionManager: shape,
+        projectionSnapshotQuery: makeStartupOnlyProjectionSnapshotQuery(),
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+      await createProjectedThread(ws, {
+        projectId: "project-pi-worktree",
+        threadId: "thread-pi-worktree",
+        workspaceRoot,
+        worktreePath: worktreeRoot,
+        harness: "pi",
+      });
+
+      const startCwd = path.join(worktreeRoot, "subdir");
+      const response = await sendRequest(ws, WS_METHODS.piStart, {
+        threadId: "thread-pi-worktree",
+        cwd: startCwd,
+        cols: 80,
+        rows: 24,
+        fresh: true,
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("startSession");
+      expect(calls[0]!.args[0]).toMatchObject({
+        threadId: "thread-pi-worktree",
+        cwd: startCwd,
+        fresh: true,
       });
     });
   });

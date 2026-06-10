@@ -516,7 +516,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             terminalStatus: event.payload.terminalStatus,
             claudeSessionId: event.payload.claudeSessionId,
             piSessionFile: event.payload.piSessionFile,
-            scrollbackSnapshot: event.payload.scrollbackSnapshot,
+            scrollbackSnapshot: null,
             updatedAt: event.payload.updatedAt,
           });
           return;

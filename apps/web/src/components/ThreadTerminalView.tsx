@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppSettings } from "../appSettings";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import { clipboardItemsContainImageFile } from "../lib/clipboard";
+import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscriptions";
 import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import {
@@ -13,7 +14,12 @@ import {
   readPiStickyInputMirror,
   type PiStickyInputMirror,
 } from "../lib/piStickyInputMirror";
+import {
+  appendCompactedTerminalOutput,
+  compactTerminalCatchUpReplay,
+} from "../lib/terminalOutputCompaction";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
+import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
 import {
   restoreTerminalInputModesForHarness,
   writeTerminalFullResetForReplay,
@@ -611,6 +617,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const api = readNativeApi();
     if (!api) return;
     const activeApi = api;
+    const unregisterOutputSubscription = registerHarnessOutputSubscription(api, harness, threadId);
 
     let disposed = false;
 
@@ -620,6 +627,9 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     // sequences with hardcoded cursor positions can't be reflowed by xterm.js,
     // causing permanent overlapping/garbled lines when switching threads.
     const eventBuffer: HarnessSessionEvent[] = [];
+    let preReadyOutputData = "";
+    let preReadyOutputMaxOffset: number | null = null;
+    let preReadyOutputCompacted = false;
     let terminalReady = false;
     let fitComplete = false;
     let pendingScrollback: {
@@ -630,12 +640,16 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
     const entry = claudeCache.attach(threadId, el);
     const { terminal, fitAddon } = entry;
+    const terminalWriteQueue = createTerminalWriteQueue(terminal);
+    const queuedTerminalWriter = {
+      write: (data: string) => terminalWriteQueue.enqueue(data),
+    };
     searchAddonRef.current = entry.searchAddon;
     terminal.options.disableStdin = false;
     // Reattached pi terminals can have lost local bracketed-paste mode before
     // scrollback replay completes; restore it immediately, then again after
     // any replay reset below.
-    restoreTerminalInputModesForHarness(terminal, harness);
+    restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
 
     // ── Scroll preservation ──────────────────────────────────────────────
     // xterm.js v6 natively preserves scroll position via the internal
@@ -689,15 +703,73 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       });
     };
 
-    const scrollGuardedWrite = (data: string) => {
+    let catchUpRedrawRafId: number | null = null;
+    const scheduleCatchUpRedraw = () => {
+      if (catchUpRedrawRafId !== null) return;
+      catchUpRedrawRafId = requestAnimationFrame(() => {
+        catchUpRedrawRafId = null;
+        if (disposed) return;
+        void resizeHarnessSession(activeApi, harness, threadId, terminal.cols, terminal.rows).catch(
+          () => undefined,
+        );
+      });
+    };
+
+    let visualSettleRafIds: number[] = [];
+    let visualSettleTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const runTerminalVisualSettle = (stickToBottom: boolean) => {
+      if (disposed || !entry.container?.isConnected) return;
+      fitAddon.fit();
+      if (stickToBottom && !isAltBuffer() && isViewportAtBottom()) {
+        terminal.scrollToBottom();
+      }
+      terminal.refresh(0, Math.max(0, terminal.rows - 1));
+      scheduleStickyPiInputMirrorRefresh();
+    };
+    const finishTerminalVisualSettle = (stickToBottom: boolean) => {
+      for (const rafId of visualSettleRafIds) cancelAnimationFrame(rafId);
+      visualSettleRafIds = [];
+      if (visualSettleTimeoutId !== null) {
+        clearTimeout(visualSettleTimeoutId);
+        visualSettleTimeoutId = null;
+      }
+      runTerminalVisualSettle(stickToBottom);
+    };
+    const scheduleTerminalVisualSettle = () => {
+      if (visualSettleRafIds.length > 0 || visualSettleTimeoutId !== null) return;
+      const stickToBottom = isViewportAtBottom();
+      const firstRafId = requestAnimationFrame(() => {
+        visualSettleRafIds = visualSettleRafIds.filter((id) => id !== firstRafId);
+        const secondRafId = requestAnimationFrame(() => {
+          finishTerminalVisualSettle(stickToBottom);
+        });
+        visualSettleRafIds.push(secondRafId);
+      });
+      visualSettleRafIds.push(firstRafId);
+      visualSettleTimeoutId = setTimeout(() => {
+        finishTerminalVisualSettle(stickToBottom);
+      }, 120);
+    };
+    let initialVisualSettlePending = true;
+    const scheduleInitialTerminalVisualSettle = (force = false) => {
+      if (!force && !initialVisualSettlePending) return;
+      initialVisualSettlePending = false;
+      scheduleTerminalVisualSettle();
+    };
+
+    const scrollGuardedWrite = (data: string, onWriteComplete?: () => void) => {
       if (isAltBuffer()) {
-        terminal.write(data);
-        scheduleStickyPiInputMirrorRefresh();
+        terminalWriteQueue.enqueue(data, () => {
+          scheduleStickyPiInputMirrorRefresh();
+          onWriteComplete?.();
+        });
         return;
       }
       if (isViewportAtBottom()) {
-        terminal.write(data);
-        scheduleStickyPiInputMirrorRefresh();
+        terminalWriteQueue.enqueue(data, () => {
+          scheduleStickyPiInputMirrorRefresh();
+          onWriteComplete?.();
+        });
         if (hasNewOutputFlag) {
           hasNewOutputFlag = false;
           setShowNewOutput(false);
@@ -708,13 +780,15 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // xterm.js's isUserScrolling handles most cases; the callback is a
       // safety net for Viewport._sync edge cases (dimension clamping).
       const savedLine = terminal.buffer.active.viewportY;
-      terminal.write(data, () => {
-        if (disposed || isAltBuffer()) return;
-        const drift = Math.abs(terminal.buffer.active.viewportY - savedLine);
-        if (drift > terminal.rows) {
-          terminal.scrollToLine(savedLine);
+      terminalWriteQueue.enqueue(data, () => {
+        if (!disposed && !isAltBuffer()) {
+          const drift = Math.abs(terminal.buffer.active.viewportY - savedLine);
+          if (drift > terminal.rows) {
+            terminal.scrollToLine(savedLine);
+          }
+          scheduleStickyPiInputMirrorRefresh();
         }
-        scheduleStickyPiInputMirrorRefresh();
+        onWriteComplete?.();
       });
       if (!hasNewOutputFlag) {
         hasNewOutputFlag = true;
@@ -722,20 +796,60 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       }
     };
 
+    let queuedOutputData = "";
+    let queuedOutputMaxOffset: number | null = null;
+    let queuedOutputCompacted = false;
+    let outputWriteRafId: number | null = null;
+
+    const flushQueuedOutputWrite = () => {
+      if (outputWriteRafId !== null) {
+        cancelAnimationFrame(outputWriteRafId);
+        outputWriteRafId = null;
+      }
+      if (!queuedOutputData || disposed) return;
+
+      const data = queuedOutputData;
+      const offset = queuedOutputMaxOffset;
+      const wasCompacted = queuedOutputCompacted;
+      queuedOutputData = "";
+      queuedOutputMaxOffset = null;
+      queuedOutputCompacted = false;
+
+      scrollGuardedWrite(data, () => {
+        scheduleInitialTerminalVisualSettle(wasCompacted);
+        if (wasCompacted) scheduleCatchUpRedraw();
+      });
+      if (offset != null && offset > entry.lastServerOffset) {
+        entry.lastServerOffset = offset;
+      }
+    };
+
+    const scheduleOutputWriteFlush = () => {
+      if (document.visibilityState !== "visible") return;
+      if (outputWriteRafId !== null) return;
+      outputWriteRafId = requestAnimationFrame(() => {
+        outputWriteRafId = null;
+        flushQueuedOutputWrite();
+      });
+    };
+
+    const enqueueOutputWrite = (data: string, offset: number) => {
+      if (!data) return;
+      const next = appendCompactedTerminalOutput(queuedOutputData, data);
+      queuedOutputData = next.data;
+      queuedOutputCompacted = queuedOutputCompacted || next.compacted;
+      queuedOutputMaxOffset = Math.max(queuedOutputMaxOffset ?? offset, offset);
+      scheduleOutputWriteFlush();
+    };
+
     const writeEvent = (event: HarnessSessionEvent) => {
       if (event.threadId !== threadId) return;
       switch (event.type) {
         case "output":
-          scrollGuardedWrite(event.data);
-          // Track the server offset so that on detach→reattach the scrollback
-          // delta fetch only returns truly new content. Without this,
-          // lastServerOffset stays at the initial-fetch value and every
-          // reattach re-writes all output that arrived via live events.
-          if (event.offset > entry.lastServerOffset) {
-            entry.lastServerOffset = event.offset;
-          }
+          enqueueOutputWrite(event.data, event.offset);
           break;
         case "error":
+          flushQueuedOutputWrite();
           scrollGuardedWrite(`\r\n[error] ${event.message}\r\n`);
           break;
         case "exited":
@@ -747,6 +861,17 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
           // Handled by orchestration layer / EventRouter, not terminal view
           break;
       }
+    };
+
+    const bufferPreReadyEvent = (event: HarnessSessionEvent) => {
+      if (event.type !== "output") {
+        eventBuffer.push(event);
+        return;
+      }
+      const next = appendCompactedTerminalOutput(preReadyOutputData, event.data);
+      preReadyOutputData = next.data;
+      preReadyOutputCompacted = preReadyOutputCompacted || next.compacted;
+      preReadyOutputMaxOffset = Math.max(preReadyOutputMaxOffset ?? event.offset, event.offset);
     };
 
     /** Flush scrollback + buffered events once both fit and scrollback are ready. */
@@ -763,14 +888,27 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       const needsReset = sinceOffset == null || reset;
 
       if (needsReset) {
-        writeTerminalFullResetForReplay(terminal, harness);
+        writeTerminalFullResetForReplay(queuedTerminalWriter, harness);
       } else {
-        restoreTerminalInputModesForHarness(terminal, harness);
+        restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
       }
 
       if (scrollback) {
-        terminal.write(scrollback);
-        restoreTerminalInputModesForHarness(terminal, harness);
+        const replay = compactTerminalCatchUpReplay(scrollback);
+        if (document.visibilityState === "visible") {
+          terminalWriteQueue.enqueue(replay.data, () => {
+            restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
+            scheduleInitialTerminalVisualSettle(replay.compacted);
+            if (replay.compacted) scheduleCatchUpRedraw();
+          });
+        } else {
+          const next = appendCompactedTerminalOutput(queuedOutputData, replay.data);
+          queuedOutputData = next.data;
+          queuedOutputCompacted = queuedOutputCompacted || replay.compacted || next.compacted;
+          if (offset != null) {
+            queuedOutputMaxOffset = Math.max(queuedOutputMaxOffset ?? offset, offset);
+          }
+        }
       }
       if (offset != null) {
         entry.lastServerOffset = offset;
@@ -781,21 +919,48 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // scrollback delta (their offset <= the offset we just synced to).
       terminalReady = true;
       const syncedOffset = entry.lastServerOffset;
+      const queuedPreReadyOutput =
+        preReadyOutputMaxOffset != null && preReadyOutputMaxOffset > syncedOffset;
+      if (queuedPreReadyOutput) {
+        const data = preReadyOutputData;
+        const offset = preReadyOutputMaxOffset ?? syncedOffset;
+        const wasCompacted = preReadyOutputCompacted;
+        preReadyOutputData = "";
+        preReadyOutputMaxOffset = null;
+        preReadyOutputCompacted = false;
+        const next = appendCompactedTerminalOutput(queuedOutputData, data);
+        queuedOutputData = next.data;
+        queuedOutputCompacted = queuedOutputCompacted || wasCompacted || next.compacted;
+        queuedOutputMaxOffset = Math.max(queuedOutputMaxOffset ?? offset, offset);
+        scheduleOutputWriteFlush();
+      } else {
+        preReadyOutputData = "";
+        preReadyOutputMaxOffset = null;
+        preReadyOutputCompacted = false;
+      }
       for (const event of eventBuffer) {
-        if (event.type === "output" && event.offset <= syncedOffset) continue;
         writeEvent(event);
       }
       eventBuffer.length = 0;
+      if (!scrollback && !queuedPreReadyOutput) {
+        scheduleInitialTerminalVisualSettle();
+      }
     };
 
     const unsubscribe = subscribeHarnessSessionEvents(api, harness, (event) => {
       if (event.threadId !== threadId) return;
       if (!terminalReady) {
-        eventBuffer.push(event);
+        bufferPreReadyEvent(event);
         return;
       }
       writeEvent(event);
     });
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      flushQueuedOutputWrite();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     // Fetch scrollback from the server to catch output that arrived while the
     // terminal was detached (user switched to another thread). If the cached
@@ -1148,6 +1313,18 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       disposed = true;
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);
+      if (outputWriteRafId !== null) cancelAnimationFrame(outputWriteRafId);
+      if (catchUpRedrawRafId !== null) cancelAnimationFrame(catchUpRedrawRafId);
+      for (const rafId of visualSettleRafIds) cancelAnimationFrame(rafId);
+      visualSettleRafIds = [];
+      if (visualSettleTimeoutId !== null) clearTimeout(visualSettleTimeoutId);
+      terminalWriteQueue.dispose();
+      queuedOutputData = "";
+      queuedOutputMaxOffset = null;
+      queuedOutputCompacted = false;
+      preReadyOutputData = "";
+      preReadyOutputMaxOffset = null;
+      preReadyOutputCompacted = false;
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       if (stickyMirrorRafId !== null) cancelAnimationFrame(stickyMirrorRafId);
       if (scrollbackTimeoutId != null) clearTimeout(scrollbackTimeoutId);
@@ -1157,12 +1334,14 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onWheelClearIndicator);
       window.removeEventListener("resize", onWindowResize);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       resizeObserver.disconnect();
       themeObserver.disconnect();
       unsubscribe();
       inputDisposable.dispose();
       resizeDisposable.dispose();
       scrollDisposable.dispose();
+      unregisterOutputSubscription();
       // Detach but keep in cache for instant reattachment
       claudeCache.detach(threadId);
     };

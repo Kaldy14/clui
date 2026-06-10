@@ -334,7 +334,6 @@ it.effect("decodes legacy thread.terminal-status-changed events with missing piS
     if (parsed.type === "thread.terminal-status-changed") {
       assert.strictEqual(parsed.payload.claudeSessionId, "sess-1");
       assert.strictEqual(parsed.payload.piSessionFile, null);
-      assert.strictEqual(parsed.payload.scrollbackSnapshot, null);
     }
   }),
 );

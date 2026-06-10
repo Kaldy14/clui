@@ -328,6 +328,41 @@ describe("PiSessionManagerRuntime", () => {
     expect(runtime.getSessionStatus("thread-3")).toBe("active");
   });
 
+  it("infers working hook status from the pi terminal status line", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+    const events = collectEvents(runtime);
+
+    await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
+    ptyAdapter.processes[0]!.emitData("\x1b[2K\r⣾ Working...");
+
+    const hookIndex = events.findIndex(
+      (event) => event.type === "hookStatus" && event.hookStatus === "working",
+    );
+    const outputIndex = events.findIndex(
+      (event) => event.type === "output" && event.data.includes("Working"),
+    );
+
+    expect(hookIndex).toBeGreaterThanOrEqual(0);
+    expect(outputIndex).toBeGreaterThanOrEqual(0);
+    expect(hookIndex).toBeLessThan(outputIndex);
+  });
+
+  it("does not infer working hook status from ordinary text", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+    const events = collectEvents(runtime);
+
+    await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
+    ptyAdapter.processes[0]!.emitData("Working through the plan\n");
+
+    expect(events.some((event) => event.type === "hookStatus")).toBe(false);
+  });
+
   it("keeps scrollback readable after hibernation", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);
@@ -337,10 +372,9 @@ describe("PiSessionManagerRuntime", () => {
     await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
     ptyAdapter.processes[0]!.emitData("hello pi\n");
 
-    const scrollback = await runtime.hibernateSession("thread-1");
+    await runtime.hibernateSession("thread-1");
 
     expect(runtime.getSessionStatus("thread-1")).toBe("dormant");
-    expect(scrollback).toContain("hello pi");
     expect(runtime.getScrollback("thread-1").scrollback).toContain("hello pi");
   });
 

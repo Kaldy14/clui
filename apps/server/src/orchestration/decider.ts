@@ -694,7 +694,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           terminalStatus: command.terminalStatus,
           claudeSessionId: command.claudeSessionId,
           piSessionFile: command.piSessionFile,
-          scrollbackSnapshot: command.scrollbackSnapshot,
           updatedAt: command.updatedAt,
         },
       };

@@ -48,6 +48,14 @@ const cache = new Map<string, CachedTerminal>();
 /** Active WebGL addon per terminal — stored so we can dispose it on detach. */
 const webglAddons = new WeakMap<Terminal, WebglAddon>();
 
+interface ScheduledWebglLoad {
+  rafId: number | null;
+  timeoutId: number | null;
+}
+
+/** Deferred WebGL loads waiting for the first canvas paint to complete. */
+const scheduledWebglLoads = new WeakMap<Terminal, ScheduledWebglLoad>();
+
 /**
  * Optional predicate that returns `true` when a thread is "busy" (working,
  * pending approval, needs input, etc.) and should NOT be evicted even if
@@ -132,6 +140,35 @@ function tryLoadWebgl(terminal: Terminal): void {
   }
 }
 
+function cancelScheduledWebglLoad(terminal: Terminal): void {
+  const scheduled = scheduledWebglLoads.get(terminal);
+  if (!scheduled) return;
+  if (scheduled.rafId != null) window.cancelAnimationFrame(scheduled.rafId);
+  if (scheduled.timeoutId != null) window.clearTimeout(scheduled.timeoutId);
+  scheduledWebglLoads.delete(terminal);
+}
+
+function scheduleWebglLoad(entry: CachedTerminal): void {
+  const { terminal } = entry;
+  if (webglAddons.has(terminal) || scheduledWebglLoads.has(terminal)) return;
+
+  const scheduled: ScheduledWebglLoad = { rafId: null, timeoutId: null };
+  const run = () => {
+    scheduled.timeoutId = null;
+    scheduledWebglLoads.delete(terminal);
+    if (!entry.container?.isConnected) return;
+    tryLoadWebgl(terminal);
+    terminal.refresh(0, Math.max(0, terminal.rows - 1));
+  };
+
+  scheduled.rafId = window.requestAnimationFrame(() => {
+    scheduled.rafId = null;
+    // Run after the frame that opened/reparented xterm has had a chance to paint.
+    scheduled.timeoutId = window.setTimeout(run, 0);
+  });
+  scheduledWebglLoads.set(terminal, scheduled);
+}
+
 /** Dispose the WebGL addon to free GPU context while keeping the Terminal alive. */
 function disposeWebgl(terminal: Terminal): void {
   const addon = webglAddons.get(terminal);
@@ -205,8 +242,8 @@ export function attach(threadId: string, container: HTMLElement): CachedTerminal
 
     // Reparent the xterm DOM into the new container
     container.appendChild(entry.terminal.element);
-    tryLoadWebgl(entry.terminal);
     entry.container = container;
+    scheduleWebglLoad(entry);
     syncTerminalSurfaceTheme(container, entry.terminal);
     entry.lastAccessedAt = Date.now();
     // Don't fit() here — container isn't laid out yet. Caller handles fit
@@ -230,8 +267,8 @@ export function attach(threadId: string, container: HTMLElement): CachedTerminal
   cache.set(threadId, entry);
 
   entry.terminal.open(container);
-  tryLoadWebgl(entry.terminal);
   entry.container = container;
+  scheduleWebglLoad(entry);
   syncTerminalSurfaceTheme(container, entry.terminal);
   entry.lastAccessedAt = Date.now();
   // Don't fit() here — container isn't laid out yet. Caller handles fit
@@ -249,6 +286,7 @@ export function detach(threadId: string): void {
 }
 
 function detachEntry(_threadId: string, entry: CachedTerminal): void {
+  cancelScheduledWebglLoad(entry.terminal);
   // Free GPU context — will be re-created on next attach
   disposeWebgl(entry.terminal);
 
@@ -266,6 +304,7 @@ function detachEntry(_threadId: string, entry: CachedTerminal): void {
 export function dispose(threadId: string): void {
   const entry = cache.get(threadId);
   if (!entry) return;
+  cancelScheduledWebglLoad(entry.terminal);
   disposeWebgl(entry.terminal);
   entry.terminal.dispose();
   cache.delete(threadId);

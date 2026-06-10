@@ -642,9 +642,6 @@ const ThreadTerminalStatusChangedCommand = Schema.Struct({
   piSessionFile: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(() => null),
   ),
-  scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
   updatedAt: IsoDateTime,
 });
 
@@ -882,9 +879,6 @@ export const ThreadTerminalStatusChangedPayload = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   piSessionFile: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
-  scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(() => null),
   ),
   updatedAt: IsoDateTime,

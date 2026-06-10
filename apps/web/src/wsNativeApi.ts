@@ -204,6 +204,8 @@ export function createWsNativeApi(): NativeApi {
       updateSettings: (input) => transport.request(WS_METHODS.serverUpdateSettings, input),
       purgeInactiveSessions: (input) =>
         transport.request(WS_METHODS.serverPurgeInactiveSessions, input),
+      setHarnessOutputSubscriptions: (input) =>
+        transport.request(WS_METHODS.serverSetHarnessOutputSubscriptions, input),
     },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),

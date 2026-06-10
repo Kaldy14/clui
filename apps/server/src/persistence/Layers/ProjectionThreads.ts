@@ -1,6 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -9,6 +9,7 @@ import {
   ListProjectionThreadsByProjectInput,
   ProjectionThread,
   ProjectionThreadRepository,
+  ProjectionThreadWorktreePath,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
 
@@ -122,6 +123,18 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
+  const getProjectionThreadWorktreePathRow = SqlSchema.findOneOption({
+    Request: GetProjectionThreadInput,
+    Result: ProjectionThreadWorktreePath,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          worktree_path AS "worktreePath"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `,
+  });
+
   const listProjectionThreadRows = SqlSchema.findAll({
     Request: ListProjectionThreadsByProjectInput,
     Result: ProjectionThread,
@@ -172,6 +185,16 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
   const getById: ProjectionThreadRepositoryShape["getById"] = (input) =>
     getProjectionThreadRow(input).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
+    );
+
+  const getWorktreePathById: ProjectionThreadRepositoryShape["getWorktreePathById"] = (input) =>
+    getProjectionThreadWorktreePathRow(input).pipe(
+      Effect.map((row) =>
+        Option.match(row, { onNone: () => null, onSome: (value) => value.worktreePath }),
+      ),
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadRepository.getWorktreePathById:query"),
+      ),
     );
 
   const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
@@ -228,6 +251,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
   return {
     upsert,
     getById,
+    getWorktreePathById,
     listByProjectId,
     deleteById,
     clearScrollbackSnapshotBulk,

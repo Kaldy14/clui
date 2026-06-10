@@ -1,9 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
+import { Spinner } from "../components/ui/spinner";
 import { SidebarTrigger } from "../components/ui/sidebar";
+import { useStore } from "../store";
 
 function ChatIndexRouteView() {
+  const threadsHydrated = useStore((store) => store.threadsHydrated);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
       {!isElectron && (
@@ -22,9 +26,20 @@ function ChatIndexRouteView() {
       )}
 
       <div className="flex flex-1 items-center justify-center">
-        <div className="text-center">
-          <p className="text-sm">Select a thread or create a new one to get started.</p>
-        </div>
+        {threadsHydrated ? (
+          <div className="text-center">
+            <p className="text-sm">Select a thread or create a new one to get started.</p>
+          </div>
+        ) : (
+          <div
+            className="flex items-center gap-2 text-sm text-muted-foreground/70"
+            aria-live="polite"
+            role="status"
+          >
+            <Spinner className="size-4" />
+            <span>Loading projects…</span>
+          </div>
+        )}
       </div>
     </div>
   );

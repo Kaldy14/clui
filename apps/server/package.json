@@ -1,6 +1,6 @@
 {
   "name": "@clui/server",
-  "version": "0.0.25",
+  "version": "0.0.27",
   "repository": {
     "type": "git",
     "url": "https://github.com/pingdotgg/clui",
@@ -24,7 +24,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
-    "@pierre/diffs": "^1.1.0-beta.16",
+    "@pierre/diffs": "1.1.0-beta.19",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
     "open": "^10.1.0",

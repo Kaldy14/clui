@@ -32,7 +32,7 @@ export interface PiSessionManagerShape {
     fresh?: boolean;
     resumeSessionFile?: string;
   }) => Effect.Effect<void, PiSessionError>;
-  readonly hibernateSession: (threadId: string) => Effect.Effect<string, PiSessionError>;
+  readonly hibernateSession: (threadId: string) => Effect.Effect<void, PiSessionError>;
   readonly getScrollback: (
     threadId: string,
     sinceOffset?: number,

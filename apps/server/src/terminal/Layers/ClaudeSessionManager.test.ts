@@ -229,7 +229,7 @@ describe("ClaudeSessionManagerRuntime", () => {
   // ── hibernateSession ───────────────────────────────────────────
 
   describe("hibernateSession", () => {
-    it("kills process, emits hibernated event, and returns scrollback", async () => {
+    it("kills process, emits hibernated event, and keeps scrollback readable", async () => {
       const result = makeRuntime();
       runtime = result.runtime;
       const events = collectEvents(runtime);
@@ -238,12 +238,11 @@ describe("ClaudeSessionManagerRuntime", () => {
       const ptyProcess = result.ptyAdapter.processes[0]!;
       ptyProcess.emitData("hello world\n");
 
-      const scrollback = await runtime.hibernateSession("thread-1");
+      await runtime.hibernateSession("thread-1");
 
       expect(ptyProcess.killed).toBe(true);
       expect(events.some((e) => e.type === "hibernated" && e.threadId === "thread-1")).toBe(true);
       expect(runtime.getSessionStatus("thread-1")).toBe("dormant");
-      expect(scrollback).toContain("hello world");
       expect(runtime.getScrollback("thread-1").scrollback).toContain("hello world");
     });
 

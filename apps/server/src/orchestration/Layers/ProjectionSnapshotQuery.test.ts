@@ -79,6 +79,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       yield* sql`
+        UPDATE projection_threads
+        SET scrollback_snapshot = 'large terminal snapshot that must not be included in full snapshots'
+        WHERE thread_id = 'thread-1'
+      `;
+
+      yield* sql`
         INSERT INTO projection_thread_messages (
           message_id,
           thread_id,

@@ -38,7 +38,7 @@ export interface ClaudeSessionManagerShape {
   }) => Effect.Effect<void, ClaudeSessionError>;
   readonly hibernateSession: (
     threadId: string,
-  ) => Effect.Effect<string, ClaudeSessionError>;
+  ) => Effect.Effect<void, ClaudeSessionError>;
   readonly getScrollback: (
     threadId: string,
     sinceOffset?: number,

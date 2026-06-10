@@ -77,6 +77,7 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
+import { Skeleton } from "./ui/skeleton";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -132,6 +133,28 @@ const HARNESS_SESSION_STAT_ROWS = [
   { key: "claudeCode", label: "Claude Code" },
   { key: "pi", label: "pi" },
 ] as const;
+
+function SidebarProjectsLoading() {
+  return (
+    <div className="px-1 pt-1" aria-busy="true" aria-live="polite" role="status">
+      <div className="mb-2 px-2 text-[11px] text-muted-foreground/60">Loading projects…</div>
+      <div className="space-y-2">
+        {[0, 1, 2, 3].map((row) => (
+          <div key={row} className="space-y-1.5 rounded-md px-1 py-1">
+            <div className="flex items-center gap-2 px-1">
+              <Skeleton className="size-3.5 rounded-sm" />
+              <Skeleton className="h-3 flex-1" />
+            </div>
+            <div className="space-y-1 pl-6">
+              <Skeleton className="h-6 w-[86%] rounded-md" />
+              <Skeleton className="h-6 w-[72%] rounded-md" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function HarnessSessionUsageBadge({
   onPurgeInactiveSessionsClick,
@@ -604,6 +627,7 @@ function SidebarDragOverlayPreview({
 export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void }) {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
+  const threadsHydrated = useStore((store) => store.threadsHydrated);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
   const reorderProjects = useStore((store) => store.reorderProjects);
@@ -2102,6 +2126,8 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
             </div>
           )}
 
+          {!threadsHydrated && <SidebarProjectsLoading />}
+
           <DndContext
             sensors={sidebarDnDSensors}
             collisionDetection={sidebarCollisionDetection}
@@ -2538,7 +2564,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
               : null}
           </DndContext>
 
-          {projects.length === 0 && !shouldShowProjectPathEntry && (
+          {threadsHydrated && projects.length === 0 && !shouldShowProjectPathEntry && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
               No projects yet
             </div>

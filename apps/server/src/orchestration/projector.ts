@@ -656,7 +656,7 @@ export function projectEvent(
             terminalStatus: payload.terminalStatus,
             claudeSessionId: payload.claudeSessionId,
             piSessionFile: payload.piSessionFile,
-            scrollbackSnapshot: payload.scrollbackSnapshot,
+            scrollbackSnapshot: null,
           }),
         })),
       );
