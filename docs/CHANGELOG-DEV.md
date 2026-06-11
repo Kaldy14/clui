@@ -4,6 +4,127 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-11 — Version 0.0.28 Apple Silicon mac build produced
+
+**Problem:** A fresh macOS Apple Silicon desktop build was needed after the pi terminal/status fixes.
+
+**Root cause:** The distributable artifacts still used version `0.0.27` and did not include the latest working/needs-input and terminal reattach fixes.
+
+**Fix:** Bumped Clui workspace package versions to `0.0.28`, ran focused status tests plus `bun lint` and `bun typecheck`, then generated the macOS arm64 DMG/ZIP artifacts.
+
+**Affected files/artifacts:**
+- `apps/desktop/package.json`
+- `apps/server/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `release/Clui-0.0.28-arm64.dmg` (`10a1baa718334c43eeac124398a130f2225a3e86eac2f871d22981b5e76477b6`)
+- `release/Clui-0.0.28-arm64.dmg.blockmap` (`12d30f9903a0a97a93b74015f3b7f3557360501042d1c820ae40698a06b0e339`)
+- `release/Clui-0.0.28-arm64.zip` (`bfb0662fde4e7217935a96ce985243e1b7802b608e0105e380f7a6080f777ee6`)
+- `release/Clui-0.0.28-arm64.zip.blockmap` (`020dfe1dd840b254d5d15ca00622a5dad2c2be4e72f9377cc078a5f9d166bb34`)
+- `release/builder-debug.yml` (`d2a6047ca081d6057a0e74c174f73a077c2284cdda2ddb409352eb557e8632b0`)
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-11 — Pi terminal status and reattach freshness
+
+**Problem:** Pi terminals could show `Working...` or block on `plan_review` / `questionnaire` while the sidebar did not show `Working` / `Needs Input`, and a reattached terminal could look stale until a resize or close forced an xterm repaint.
+
+**Root cause:** The sidebar depended on runtime sync events that can be delayed or missed for resumed/background pi sessions; the JSONL fallback did not recognize user-input tool calls or tool results. Late scrollback responses could also replay data already written live, and xterm sometimes needed an explicit repaint after queued writes.
+
+**Fix:** Added JSONL fallback mapping for user-input tool calls to `needsInput` and tool results to `working`, kept `Working...` PTY matching as a carriage-return status-line fallback only, trimmed stale/overlapping scrollback before replay, and scheduled a throttled terminal refresh after queued output writes.
+
+**Affected files:**
+- `apps/server/src/PiSessionJsonlHook.ts`
+- `apps/server/src/PiSessionJsonlHook.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/terminalScrollbackReplay.ts`
+- `apps/web/src/lib/terminalScrollbackReplay.test.ts`
+- `apps/web/src/routes/__root.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-11 — Terminal selection contrast
+
+**Problem:** Text selected inside pi/xterm sessions could blend into tool-output colors, making the selected range hard to see.
+
+**Root cause:** Terminal themes used low-opacity selection backgrounds that were too close to muted tool-output palettes and did not force a selected-text foreground.
+
+**Fix:** Added shared high-contrast selection colors for dark and light terminal themes, including selected-text foreground and inactive selection backgrounds.
+
+**Affected files:**
+- `apps/web/src/lib/terminalTheme.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-11 — New-thread first-prompt drafts persist and paste images
+
+**Problem:** Text typed into the new-thread first-prompt textarea was lost after switching away and back, and image paste did nothing while the textarea was focused.
+
+**Root cause:** The draft lived only in `NewThreadView` component state, so unmounting the route discarded it; image paste support only existed in the active pi terminal path that forwards Ctrl+V to the running TUI.
+
+**Fix:** Stored first-prompt drafts per thread in `terminalStateStore`, cleared them only after successful launch, added a server RPC that persists pasted image data to Clui attachment storage and returns an absolute file path, and inserted that path into the first-prompt textarea on paste.
+
+**Affected files:**
+- `AGENTS.md`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/clipboard.ts`
+- `apps/web/src/lib/clipboard.test.ts`
+- `apps/web/src/terminalStateStore.ts`
+- `apps/web/src/terminalStateStore.test.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/wsNativeApi.test.ts`
+- `docs/CHANGELOG-DEV.md`
+- `packages/contracts/src/ipc.ts`
+- `packages/contracts/src/server.ts`
+- `packages/contracts/src/ws.ts`
+
+---
+
+## 2026-06-11 — New-thread first prompt is larger and pi submits correctly
+
+**Problem:** The new-thread first-prompt textarea was too narrow/short, was not focused on thread creation, and `Start pi & send` inserted text without submitting it.
+
+**Root cause:** The launch screen focused the container instead of the textarea, constrained the form to `w-72`, and reused CR submission for pi even though pi needs CSI-u key sequences for reliable programmatic submit/newline input.
+
+**Fix:** Widened the prompt area with a viewport-safe max width, increased its rows, focused it per new thread, changed pi submissions to CSI-u Enter/Shift+Enter, taught the pi prompt buffer to detect CSI-u submit keys, and documented the rule in `AGENTS.md`.
+
+**Affected files:**
+- `AGENTS.md`
+- `apps/server/src/piWritePromptBuffer.ts`
+- `apps/server/src/piWritePromptBuffer.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/threadInput.ts`
+- `apps/web/src/lib/threadInput.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-10 — Rebased Apple Silicon mac build produced
+
+**Problem:** A fresh macOS Apple Silicon desktop build was needed after rebasing `main` onto `origin/main`.
+
+**Root cause:** The local `0.0.27` release artifacts needed to be regenerated from the rebased source tree.
+
+**Fix:** Ran `bun lint`, `bun typecheck`, and `bun run dist:desktop:dmg:arm64`, producing refreshed `0.0.27` macOS arm64 DMG/ZIP artifacts.
+
+**Affected files/artifacts:**
+- `release/Clui-0.0.27-arm64.dmg` (`ae6ee232482b5b2a76ba36c808fb0a9174f4b8b5098946a97ddd115d31f91906`)
+- `release/Clui-0.0.27-arm64.dmg.blockmap` (`6f706dcc27b0e6330dc1ece23fff7087198ad9c598161830d9053f1c0bb9638d`)
+- `release/Clui-0.0.27-arm64.zip` (`9dbfdd9b7e69ed0e8b4d91b1c9f3d91e1a5e6d2c663598b77a8096ca8f12035c`)
+- `release/Clui-0.0.27-arm64.zip.blockmap` (`d76fdae9c7081b0927ef6c264d1ac018a0b5d717a7e854e3170550279e12798b`)
+- `release/builder-debug.yml` (`d2a6047ca081d6057a0e74c174f73a077c2284cdda2ddb409352eb557e8632b0`)
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-10 — Current Apple Silicon mac build produced
 
 **Problem:** A fresh macOS Apple Silicon desktop build was needed from the current working tree.

@@ -398,6 +398,23 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards temporary image writes to server websocket method", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const input = {
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,cG5n",
+    };
+
+    requestMock.mockResolvedValueOnce({ filePath: "/tmp/image.png", sizeBytes: 3 });
+    await api.server.writeTempImage(input);
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverWriteTempImage, input);
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {

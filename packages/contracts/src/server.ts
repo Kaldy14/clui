@@ -8,7 +8,7 @@ import {
 } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
-import { ProviderKind } from "./orchestration";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, ProviderKind } from "./orchestration";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -109,6 +109,25 @@ export const ServerSetHarnessOutputSubscriptionsInput = Schema.Struct({
 });
 export type ServerSetHarnessOutputSubscriptionsInput =
   typeof ServerSetHarnessOutputSubscriptionsInput.Type;
+
+const SERVER_WRITE_TEMP_IMAGE_MAX_DATA_URL_CHARS = 14_000_000;
+
+export const ServerWriteTempImageInput = Schema.Struct({
+  threadId: ThreadId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+  dataUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(SERVER_WRITE_TEMP_IMAGE_MAX_DATA_URL_CHARS),
+  ),
+});
+export type ServerWriteTempImageInput = typeof ServerWriteTempImageInput.Type;
+
+export const ServerWriteTempImageResult = Schema.Struct({
+  filePath: TrimmedNonEmptyString,
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+});
+export type ServerWriteTempImageResult = typeof ServerWriteTempImageResult.Type;
 
 export const ServerUpsertKeybindingInput = KeybindingRule;
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;

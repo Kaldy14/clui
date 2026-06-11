@@ -45,6 +45,35 @@ describe("PiSessionJsonlHookWatcher", () => {
     ).toBe("working");
     expect(
       hookStatusFromSessionJsonlLine(
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "toolUse",
+            content: [{ type: "toolCall", name: "plan_review" }],
+          },
+        }),
+      ),
+    ).toBe("needsInput");
+    expect(
+      hookStatusFromSessionJsonlLine(
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "toolUse",
+            content: [{ type: "toolCall", name: "questionnaire" }],
+          },
+        }),
+      ),
+    ).toBe("needsInput");
+    expect(
+      hookStatusFromSessionJsonlLine(
+        '{"type":"message","message":{"role":"toolResult","toolName":"plan_review"}}',
+      ),
+    ).toBe("working");
+    expect(
+      hookStatusFromSessionJsonlLine(
         '{"type":"message","message":{"role":"assistant","stopReason":"stop"}}',
       ),
     ).toBe("completed");

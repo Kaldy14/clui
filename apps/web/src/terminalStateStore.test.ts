@@ -30,6 +30,7 @@ describe("terminalStateStore actions", () => {
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
       activeTerminalGroupId: "group-default",
       yoloMode: false,
+      newThreadPromptDraft: "",
     });
   });
 
@@ -64,6 +65,24 @@ describe("terminalStateStore actions", () => {
       { id: "group-default", terminalIds: ["default"] },
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
+  });
+
+  it("tracks and clears new-thread prompt drafts", () => {
+    const store = useTerminalStateStore.getState();
+    store.setNewThreadPromptDraft(THREAD_ID, "long prompt");
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .newThreadPromptDraft,
+    ).toBe("long prompt");
+
+    store.clearNewThreadPromptDraft(THREAD_ID);
+
+    expect(useTerminalStateStore.getState().terminalStateByThreadId[THREAD_ID]).toBeUndefined();
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .newThreadPromptDraft,
+    ).toBe("");
   });
 
   it("tracks and clears terminal subprocess activity", () => {

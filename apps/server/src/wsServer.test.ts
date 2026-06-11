@@ -617,6 +617,31 @@ describe("WebSocket Server", () => {
     expect(bytes).toEqual(Buffer.from("hello-encoded-attachment"));
   });
 
+  it("persists pasted temporary images and returns an absolute file path", async () => {
+    const stateDir = makeTempDir("clui-state-temp-image-");
+    server = await createTestServer({ cwd: "/test/project", stateDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws); // welcome
+
+    const response = await sendRequest(ws, WS_METHODS.serverWriteTempImage, {
+      threadId: "thread-temp-image",
+      name: "clipboard.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,cG5n",
+    });
+
+    expect(response.error).toBeUndefined();
+    const result = response.result as { filePath: string; sizeBytes: number };
+    expect(result.sizeBytes).toBe(3);
+    expect(result.filePath).toContain(path.join(stateDir, "attachments"));
+    expect(fs.readFileSync(result.filePath)).toEqual(Buffer.from("png"));
+  });
+
   it("serves static index for root path", async () => {
     const stateDir = makeTempDir("clui-state-static-root-");
     const staticDir = makeTempDir("clui-static-root-");

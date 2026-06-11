@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clipboardItemsContainImageFile } from "./clipboard";
+import { clipboardImageFiles, clipboardItemsContainImageFile } from "./clipboard";
 
 const item = (
   kind: DataTransferItem["kind"],
@@ -7,6 +7,12 @@ const item = (
 ): Pick<DataTransferItem, "kind" | "type"> => ({
   kind,
   type,
+});
+
+const fileItem = (file: File | null): Pick<DataTransferItem, "getAsFile" | "kind" | "type"> => ({
+  kind: "file",
+  type: file?.type ?? "image/png",
+  getAsFile: () => file,
 });
 
 describe("clipboardItemsContainImageFile", () => {
@@ -27,5 +33,14 @@ describe("clipboardItemsContainImageFile", () => {
     expect(clipboardItemsContainImageFile(null)).toBe(false);
     expect(clipboardItemsContainImageFile(undefined)).toBe(false);
     expect(clipboardItemsContainImageFile([])).toBe(false);
+  });
+});
+
+describe("clipboardImageFiles", () => {
+  it("returns pasted image files", () => {
+    const image = new File(["png"], "image.png", { type: "image/png" });
+    const text = new File(["text"], "text.txt", { type: "text/plain" });
+
+    expect(clipboardImageFiles([fileItem(image), fileItem(text)])).toEqual([image]);
   });
 });

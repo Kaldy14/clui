@@ -44,6 +44,8 @@ import type {
   PurgeInactiveSessionsInput,
   PurgeInactiveSessionsResult,
   ServerSetHarnessOutputSubscriptionsInput,
+  ServerWriteTempImageInput,
+  ServerWriteTempImageResult,
 } from "./server";
 import type {
   ClientOrchestrationCommand,
@@ -211,6 +213,7 @@ export interface NativeApi {
     setHarnessOutputSubscriptions: (
       input: ServerSetHarnessOutputSubscriptionsInput,
     ) => Promise<void>;
+    writeTempImage: (input: ServerWriteTempImageInput) => Promise<ServerWriteTempImageResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

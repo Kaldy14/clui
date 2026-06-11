@@ -524,9 +524,9 @@ function EventRouter() {
         sessionState.handleDormant(event.threadId, event.type);
       }
       if (event.type === "hookStatus") {
-        // Pi has no real hook receiver — the server infers working/idle from
-        // PTY output rate and emits explicit hookStatus events.  "working" is
-        // applied directly; "completed" goes through the shared hook handler so
+        // Pi status comes from the server-side runtime extension / JSONL watcher,
+        // with PTY output matching only as a fallback. "working" is applied
+        // directly; "completed" goes through the shared hook handler so
         // timers / notifications match Claude terminal sessions.
         if (event.hookStatus === "completed") {
           const result = sessionState.handleHookStatus(event.threadId, "completed");

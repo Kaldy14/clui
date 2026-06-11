@@ -55,6 +55,7 @@ import {
   PurgeInactiveSessionsInput,
   ServerSetHarnessOutputSubscriptionsInput,
   ServerUpdateSettingsInput,
+  ServerWriteTempImageInput,
 } from "./server";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput, ProjectReadFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
@@ -120,6 +121,7 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   serverPurgeInactiveSessions: "server.purgeInactiveSessions",
   serverSetHarnessOutputSubscriptions: "server.setHarnessOutputSubscriptions",
+  serverWriteTempImage: "server.writeTempImage",
 } as const;
 
 export const MCP_WS_METHODS = {
@@ -223,6 +225,7 @@ const WebSocketRequestBody = Schema.Union([
     WS_METHODS.serverSetHarnessOutputSubscriptions,
     ServerSetHarnessOutputSubscriptionsInput,
   ),
+  tagRequestBody(WS_METHODS.serverWriteTempImage, ServerWriteTempImageInput),
 
   // MCP methods
   tagRequestBody(MCP_WS_METHODS.mcpGetStatus, McpGetStatusInput),

@@ -1,6 +1,23 @@
 import type { ITheme } from "@xterm/xterm";
 import { type TerminalColorTheme, getAppSettingsSnapshot } from "../appSettings";
 
+type SelectionTheme = Pick<
+  ITheme,
+  "selectionBackground" | "selectionForeground" | "selectionInactiveBackground"
+>;
+
+const DARK_SELECTION_THEME: SelectionTheme = {
+  selectionBackground: "#2f6fed",
+  selectionForeground: "#ffffff",
+  selectionInactiveBackground: "rgba(47, 111, 237, 0.55)",
+};
+
+const LIGHT_SELECTION_THEME: SelectionTheme = {
+  selectionBackground: "#1f5fbf",
+  selectionForeground: "#ffffff",
+  selectionInactiveBackground: "rgba(31, 95, 191, 0.45)",
+};
+
 /** Named dark-mode ANSI palettes. Each returns a full ITheme for dark mode. */
 const DARK_THEMES: Record<TerminalColorTheme, () => ITheme> = {
   "muted-earth": () => ({
@@ -8,7 +25,7 @@ const DARK_THEMES: Record<TerminalColorTheme, () => ITheme> = {
     foreground: "#ebebeb",
     cursor: "#8a9a7b",
     cursorAccent: "#0c0c0c",
-    selectionBackground: "rgba(138, 154, 123, 0.25)",
+    ...DARK_SELECTION_THEME,
     scrollbarSliderBackground: "rgba(255, 255, 255, 0.08)",
     scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.14)",
     scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.18)",
@@ -38,7 +55,7 @@ const DARK_THEMES: Record<TerminalColorTheme, () => ITheme> = {
       background,
       foreground,
       cursor: "rgb(180, 203, 255)",
-      selectionBackground: "rgba(180, 203, 255, 0.25)",
+      ...DARK_SELECTION_THEME,
       scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
       scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
       scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
@@ -72,7 +89,7 @@ const LIGHT_THEMES: Record<TerminalColorTheme, () => ITheme> = {
       background,
       foreground,
       cursor: "#5a6b4e",
-      selectionBackground: "rgba(70, 110, 180, 0.22)",
+      ...LIGHT_SELECTION_THEME,
       scrollbarSliderBackground: "rgba(0, 0, 0, 0.12)",
       scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.22)",
       scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.28)",
@@ -102,7 +119,7 @@ const LIGHT_THEMES: Record<TerminalColorTheme, () => ITheme> = {
       background,
       foreground,
       cursor: "rgb(38, 56, 78)",
-      selectionBackground: "rgba(50, 80, 160, 0.22)",
+      ...LIGHT_SELECTION_THEME,
       scrollbarSliderBackground: "rgba(0, 0, 0, 0.15)",
       scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.25)",
       scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.3)",

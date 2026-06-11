@@ -336,7 +336,7 @@ describe("PiSessionManagerRuntime", () => {
     const events = collectEvents(runtime);
 
     await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
-    ptyAdapter.processes[0]!.emitData("\x1b[2K\r⣾ Working...");
+    ptyAdapter.processes[0]!.emitData("\x1b[2K\rWorking....");
 
     const hookIndex = events.findIndex(
       (event) => event.type === "hookStatus" && event.hookStatus === "working",
@@ -358,7 +358,7 @@ describe("PiSessionManagerRuntime", () => {
     const events = collectEvents(runtime);
 
     await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
-    ptyAdapter.processes[0]!.emitData("Working through the plan\n");
+    ptyAdapter.processes[0]!.emitData("Working...\nWorking through the plan\n");
 
     expect(events.some((event) => event.type === "hookStatus")).toBe(false);
   });

@@ -1,5 +1,37 @@
 type ClipboardDataTransferItem = Pick<DataTransferItem, "kind" | "type">;
 
+type ClipboardImageDataTransferItem = Pick<DataTransferItem, "getAsFile" | "kind" | "type">;
+
+export function clipboardImageFiles(
+  items: ArrayLike<ClipboardImageDataTransferItem | null | undefined> | null | undefined,
+): File[] {
+  if (!items) return [];
+
+  const files: File[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item?.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  return files;
+}
+
+export function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Failed to read image file."));
+      }
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read image file.")));
+    reader.readAsDataURL(file);
+  });
+}
+
 export function clipboardItemsContainImageFile(
   items: ArrayLike<ClipboardDataTransferItem | null | undefined> | null | undefined,
 ): boolean {

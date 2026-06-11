@@ -11,6 +11,7 @@
 const ESC = "\x1b";
 const BACKSPACE = "\x08";
 const DELETE = "\x7f";
+const PI_TUI_SUBMIT_SEQUENCES = ["\x1b[13u", "\x1b[13;1u"] as const;
 
 export const MAX_PI_PROMPT_BUFFER_BYTES = 4_096;
 
@@ -86,6 +87,21 @@ function deleteWordRight(state: EditableLineState): void {
   state.cursor = start;
 }
 
+function findPiSubmitMatch(buffer: string): { index: number; length: number } | null {
+  const newlineIndex = buffer.search(/[\r\n]/u);
+  let match = newlineIndex >= 0 ? { index: newlineIndex, length: 1 } : null;
+
+  for (const sequence of PI_TUI_SUBMIT_SEQUENCES) {
+    const sequenceIndex = buffer.indexOf(sequence);
+    if (sequenceIndex < 0) continue;
+    if (match === null || sequenceIndex < match.index) {
+      match = { index: sequenceIndex, length: sequence.length };
+    }
+  }
+
+  return match;
+}
+
 function applySs3Sequence(state: EditableLineState, code: string): void {
   switch (code) {
     case "D":
@@ -121,6 +137,11 @@ function applyCsiSequence(state: EditableLineState, sequence: string): void {
   const wantsWordMotion = modifier === 3 || modifier === 5;
 
   switch (final) {
+    case "u":
+      if (first === 13 && modifier === 2) {
+        insertText(state, "\n");
+      }
+      break;
     case "D":
       if (wantsWordMotion) {
         moveWordLeft(state);
@@ -298,9 +319,9 @@ export function reconstructPiPromptLine(rawLine: string): string {
 }
 
 /**
- * Append `data` to the per-thread buffer. On the first `\r` or `\n`, consume
- * the leading line and return `submitted` or `empty_submit`. Otherwise
- * `buffering`.
+ * Append `data` to the per-thread buffer. On the first submit key (plain
+ * CR/LF or pi CSI-u Enter), consume the leading line and return `submitted` or
+ * `empty_submit`. Otherwise `buffering`.
  */
 export function advancePiWritePromptBuffer(
   pendingBuffers: Map<string, string>,
@@ -312,13 +333,13 @@ export function advancePiWritePromptBuffer(
   if (buffer.length > MAX_PI_PROMPT_BUFFER_BYTES) {
     buffer = buffer.slice(buffer.length - MAX_PI_PROMPT_BUFFER_BYTES);
   }
-  const newlineIdx = buffer.search(/[\r\n]/);
-  if (newlineIdx < 0) {
+  const submitMatch = findPiSubmitMatch(buffer);
+  if (submitMatch === null) {
     pendingBuffers.set(threadId, buffer);
     return { kind: "buffering" };
   }
-  const rest = buffer.slice(newlineIdx + 1);
-  const firstLine = buffer.slice(0, newlineIdx);
+  const rest = buffer.slice(submitMatch.index + submitMatch.length);
+  const firstLine = buffer.slice(0, submitMatch.index);
   const stripped = reconstructPiPromptLine(firstLine).trim();
   if (stripped.length === 0) {
     if (rest.length > 0) {

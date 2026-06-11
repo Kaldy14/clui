@@ -1733,6 +1733,54 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* piSessionManager.resizeSession(threadId, cols, rows);
       }
 
+      case WS_METHODS.serverWriteTempImage: {
+        const body = stripRequestTag(request.body);
+        const parsed = parseBase64DataUrl(body.dataUrl);
+        if (!parsed || !parsed.mimeType.startsWith("image/")) {
+          return yield* new RouteRequestError({ message: "Invalid image attachment payload." });
+        }
+
+        const bytes = Buffer.from(parsed.base64, "base64");
+        if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+          return yield* new RouteRequestError({
+            message: "Image attachment is empty or too large.",
+          });
+        }
+
+        const attachmentId = createAttachmentId(body.threadId);
+        if (!attachmentId) {
+          return yield* new RouteRequestError({
+            message: "Failed to create a safe attachment id.",
+          });
+        }
+
+        const persistedAttachment = {
+          type: "image" as const,
+          id: attachmentId,
+          name: body.name,
+          mimeType: parsed.mimeType.toLowerCase(),
+          sizeBytes: bytes.byteLength,
+        };
+        const attachmentPath = resolveAttachmentPath({
+          stateDir: serverConfig.stateDir,
+          attachment: persistedAttachment,
+        });
+        if (!attachmentPath) {
+          return yield* new RouteRequestError({ message: "Failed to resolve image path." });
+        }
+
+        yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
+          Effect.mapError(
+            () => new RouteRequestError({ message: "Failed to create image directory." }),
+          ),
+        );
+        yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
+          Effect.mapError(() => new RouteRequestError({ message: "Failed to write image file." })),
+        );
+
+        return { filePath: attachmentPath, sizeBytes: bytes.byteLength };
+      }
+
       case WS_METHODS.serverGetConfig: {
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         const settings = yield* Effect.promise(() => loadServerSettings(stateDir));

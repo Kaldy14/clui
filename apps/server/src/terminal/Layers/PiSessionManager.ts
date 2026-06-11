@@ -48,7 +48,9 @@ const PI_HOOK_STATUSES = new Set<ClaudeHookStatus>([
   "error",
   "completed",
 ]);
-const PI_WORKING_STATUS_RE = /[⠁-⣿]\s+Working(?:\.{3}|…)?/;
+// Fallback only: pi's TUI rewrites its status line with carriage returns while
+// the runtime extension / JSONL watcher provide the authoritative status.
+const PI_WORKING_STATUS_RE = /\r\s*Working(?:\.{3,4}|…)/;
 const PI_STATUS_DETECTION_TAIL_LENGTH = 160;
 const TERMINAL_CONTROL_SEQUENCE_RE =
   /\x1b(?:\][\s\S]*?(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[PX^_][\s\S]*?\x1b\\|[@-Z\\-_])/g;

@@ -79,6 +79,13 @@ Two-tier terminal management: server-side PTY processes and client-side xterm.js
 - **Busy thread protection:** Threads with `terminalStatus === "active"` or `hookStatus` of `"working"` / `"needsInput"` / `"pendingApproval"` are never evicted.
 - **Eviction guard:** Registered in `_chat.tsx` via `setEvictionGuard()`, reads store state without subscribing to re-renders.
 
+## Pi TUI Input Sequences
+
+- Programmatic pi prompt submit must send CSI-u Enter (`\x1b[13u`), not `\r` or `\n`.
+- Programmatic newlines inside pi prompts must send CSI-u Shift+Enter (`\x1b[13;2u`).
+- Plain CR/LF can be converted by terminal modes and become an inserted newline instead of a submit.
+- For new-thread image paste, persist the image to Clui attachment storage and insert the returned file path into the prompt; do not defer to the OS clipboard.
+
 ## Development
 
 ```bash

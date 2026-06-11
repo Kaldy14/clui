@@ -5,7 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAppSettings } from "../appSettings";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
-import { clipboardItemsContainImageFile } from "../lib/clipboard";
+import {
+  clipboardImageFiles,
+  clipboardItemsContainImageFile,
+  readFileAsDataUrl,
+} from "../lib/clipboard";
 import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscriptions";
 import { stripTerminalResponses } from "../lib/terminalInputFilter";
 import * as claudeCache from "../lib/claudeTerminalCache";
@@ -24,6 +28,7 @@ import {
   restoreTerminalInputModesForHarness,
   writeTerminalFullResetForReplay,
 } from "../lib/terminalReplay";
+import { resolveScrollbackReplay } from "../lib/terminalScrollbackReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import { submitThreadPrompt } from "../lib/threadInput";
 import { setupProjectScript } from "../projectScripts";
@@ -130,7 +135,12 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   const branchToolbar = useBranchToolbar(threadId);
   const setThreadHarness = useStore((s) => s.setThreadHarness);
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
-  const [initialPrompt, setInitialPrompt] = useState("");
+  const initialPrompt = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).newThreadPromptDraft,
+  );
+  const setNewThreadPromptDraft = useTerminalStateStore((s) => s.setNewThreadPromptDraft);
+  const clearNewThreadPromptDraft = useTerminalStateStore((s) => s.clearNewThreadPromptDraft);
+  const initialPromptRef = useRef<HTMLTextAreaElement>(null);
   const effectiveEnvMode: EnvMode = thread.worktreePath ? "worktree" : envMode;
   const isWorktreePending = effectiveEnvMode === "worktree" && !thread.worktreePath;
   const isWorktreeBaseSelected = !isWorktreePending || !!thread.branch;
@@ -178,6 +188,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       if (hasInitialPrompt) {
         await submitThreadPrompt(api, thread.harness, threadId, initialPrompt);
       }
+      clearNewThreadPromptDraft(threadId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start session");
       setStarting(false);
@@ -192,9 +203,74 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     dangerouslySkipPermissions,
     hasInitialPrompt,
     initialPrompt,
+    clearNewThreadPromptDraft,
   ]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const setInitialPrompt = useCallback(
+    (value: string) => setNewThreadPromptDraft(threadId, value),
+    [setNewThreadPromptDraft, threadId],
+  );
+
+  const insertInitialPromptText = useCallback(
+    (text: string, start: number, end: number) => {
+      const current = selectThreadTerminalState(
+        useTerminalStateStore.getState().terminalStateByThreadId,
+        threadId,
+      ).newThreadPromptDraft;
+      const safeStart = Math.max(0, Math.min(start, current.length));
+      const safeEnd = Math.max(safeStart, Math.min(end, current.length));
+      const next = `${current.slice(0, safeStart)}${text}${current.slice(safeEnd)}`;
+      setNewThreadPromptDraft(threadId, next);
+      const cursor = safeStart + text.length;
+      requestAnimationFrame(() => {
+        const textarea = initialPromptRef.current;
+        if (!textarea) return;
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(cursor, cursor);
+      });
+    },
+    [setNewThreadPromptDraft, threadId],
+  );
+
+  const handleInitialPromptPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const imageFiles = clipboardImageFiles(event.clipboardData?.items);
+      if (imageFiles.length === 0) return;
+
+      event.preventDefault();
+      const api = readNativeApi();
+      if (!api) {
+        setError("Image paste unavailable.");
+        return;
+      }
+
+      const selectionStart = event.currentTarget.selectionStart;
+      const selectionEnd = event.currentTarget.selectionEnd;
+      setError(null);
+      void (async () => {
+        try {
+          const filePaths: string[] = [];
+          for (const file of imageFiles) {
+            const dataUrl = await readFileAsDataUrl(file);
+            const result = await api.server.writeTempImage({
+              threadId,
+              name: file.name.trim() || "clipboard-image.png",
+              mimeType: file.type || "image/png",
+              sizeBytes: file.size,
+              dataUrl,
+            });
+            filePaths.push(result.filePath);
+          }
+          insertInitialPromptText(filePaths.join("\n"), selectionStart, selectionEnd);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to paste image.");
+        }
+      })();
+    },
+    [insertInitialPromptText, threadId],
+  );
 
   const handleHarnessChange = useCallback(
     (harness: Thread["harness"]) => {
@@ -212,10 +288,10 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     [setThreadHarness, thread.terminalStatus, threadId],
   );
 
-  // Auto-focus container so Enter works immediately
+  // Auto-focus the first-prompt textarea so new threads are keyboard-first.
   useEffect(() => {
-    containerRef.current?.focus();
-  }, []);
+    initialPromptRef.current?.focus({ preventScroll: true });
+  }, [threadId]);
 
   // Plain Enter triggers start from the empty state; Cmd/Ctrl+Enter also
   // submits from the first-prompt textarea.
@@ -248,7 +324,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       onKeyDown={handleKeyDown}
       className="flex h-full flex-col items-center justify-center p-8 outline-none"
     >
-      <div className="flex w-72 flex-col items-center gap-5 animate-fade-in">
+      <div className="flex w-full max-w-4xl flex-col items-center gap-5 animate-fade-in">
         {/* App logo with subtle glow */}
         <div className="relative animate-zoom-fade-in">
           <div className="absolute inset-0 rounded-full bg-primary/10 blur-xl" />
@@ -314,12 +390,14 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
             First prompt
           </span>
           <textarea
+            ref={initialPromptRef}
             value={initialPrompt}
             onChange={(event) => setInitialPrompt(event.target.value)}
+            onPaste={handleInitialPromptPaste}
             placeholder={`Ask ${thread.harness === "pi" ? "pi" : "Claude Code"} what to do first...`}
-            rows={4}
+            rows={8}
             spellCheck
-            className="max-h-32 min-h-20 w-full resize-none rounded-lg border border-border/40 bg-background/80 px-3 py-2 text-xs text-foreground outline-none ring-1 ring-transparent transition-colors placeholder:text-muted-foreground/40 focus:border-primary/40 focus:ring-primary/20 dark:border-border/20"
+            className="max-h-[45vh] min-h-40 w-full resize-none overflow-y-auto rounded-lg border border-border/40 bg-background/80 px-3 py-2 text-sm leading-5 text-foreground outline-none ring-1 ring-transparent transition-colors placeholder:text-muted-foreground/40 focus:border-primary/40 focus:ring-primary/20 dark:border-border/20"
           />
           <span className="text-center text-[10px] text-muted-foreground/45">
             {hasInitialPrompt
@@ -328,7 +406,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
           </span>
         </label>
 
-        <div className="flex w-full flex-col gap-2 animate-fade-in-up-delay">
+        <div className="flex w-full max-w-xs flex-col gap-2 animate-fade-in-up-delay">
           <span className="text-center text-[11px] uppercase tracking-wide text-muted-foreground/60">
             Coding harness
           </span>
@@ -757,6 +835,17 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       scheduleTerminalVisualSettle();
     };
 
+    let terminalPaintRefreshRafId: number | null = null;
+    const scheduleTerminalPaintRefresh = () => {
+      if (terminalPaintRefreshRafId !== null) return;
+      terminalPaintRefreshRafId = requestAnimationFrame(() => {
+        terminalPaintRefreshRafId = null;
+        if (disposed || !entry.container?.isConnected) return;
+        terminal.refresh(0, Math.max(0, terminal.rows - 1));
+        scheduleStickyPiInputMirrorRefresh();
+      });
+    };
+
     const scrollGuardedWrite = (data: string, onWriteComplete?: () => void) => {
       if (isAltBuffer()) {
         terminalWriteQueue.enqueue(data, () => {
@@ -817,6 +906,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
       scrollGuardedWrite(data, () => {
         scheduleInitialTerminalVisualSettle(wasCompacted);
+        scheduleTerminalPaintRefresh();
         if (wasCompacted) scheduleCatchUpRedraw();
       });
       if (offset != null && offset > entry.lastServerOffset) {
@@ -884,35 +974,46 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // (scrollback buffer was cleared after session restart, or old data was
       // trimmed by the ring buffer). In that case the returned content is a
       // full materialization — clear the terminal first to avoid stale content
-      // (e.g. duplicate Claude Code banners).
+      // (e.g. duplicate Claude Code banners). If live output already advanced
+      // past this response, skip the reset so fresh output is not erased.
+      const previousServerOffset = entry.lastServerOffset;
       const needsReset = sinceOffset == null || reset;
+      const isStaleReplay = sinceOffset != null && offset != null && offset <= previousServerOffset;
+      const resolvedReplay = resolveScrollbackReplay({
+        scrollback,
+        resultOffset: offset,
+        reset,
+        sinceOffset,
+        lastServerOffset: previousServerOffset,
+      });
+      const scrollbackToReplay = resolvedReplay.scrollback;
 
-      if (needsReset) {
+      if (needsReset && !isStaleReplay) {
         writeTerminalFullResetForReplay(queuedTerminalWriter, harness);
       } else {
         restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
       }
 
-      if (scrollback) {
-        const replay = compactTerminalCatchUpReplay(scrollback);
+      if (scrollbackToReplay) {
+        const replay = compactTerminalCatchUpReplay(scrollbackToReplay);
         if (document.visibilityState === "visible") {
           terminalWriteQueue.enqueue(replay.data, () => {
             restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
             scheduleInitialTerminalVisualSettle(replay.compacted);
+            scheduleTerminalPaintRefresh();
             if (replay.compacted) scheduleCatchUpRedraw();
           });
         } else {
           const next = appendCompactedTerminalOutput(queuedOutputData, replay.data);
           queuedOutputData = next.data;
           queuedOutputCompacted = queuedOutputCompacted || replay.compacted || next.compacted;
-          if (offset != null) {
-            queuedOutputMaxOffset = Math.max(queuedOutputMaxOffset ?? offset, offset);
-          }
+          queuedOutputMaxOffset = Math.max(
+            queuedOutputMaxOffset ?? resolvedReplay.nextLastServerOffset,
+            resolvedReplay.nextLastServerOffset,
+          );
         }
       }
-      if (offset != null) {
-        entry.lastServerOffset = offset;
-      }
+      entry.lastServerOffset = resolvedReplay.nextLastServerOffset;
       scheduleStickyPiInputMirrorRefresh();
       // Now safe to process live events — dimensions are correct.
       // Skip any buffered output events whose data was already included in the
@@ -942,7 +1043,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         writeEvent(event);
       }
       eventBuffer.length = 0;
-      if (!scrollback && !queuedPreReadyOutput) {
+      if (!scrollbackToReplay && !queuedPreReadyOutput) {
         scheduleInitialTerminalVisualSettle();
       }
     };
@@ -1031,8 +1132,8 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         return false;
       }
 
-      // Shift+Enter / Option+Enter — send CSI 13;2u so Claude Code CLI
-      // inserts a newline instead of submitting. xterm.js onData sends \r
+      // Shift+Enter / Option+Enter — send CSI 13;2u so harness TUIs
+      // insert a newline instead of submitting. xterm.js onData sends \r
       // for all Enter variants, losing the modifier, so we intercept here.
       if (
         event.type === "keydown" &&
@@ -1315,6 +1416,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       cancelAnimationFrame(initialFitRafId);
       if (outputWriteRafId !== null) cancelAnimationFrame(outputWriteRafId);
       if (catchUpRedrawRafId !== null) cancelAnimationFrame(catchUpRedrawRafId);
+      if (terminalPaintRefreshRafId !== null) cancelAnimationFrame(terminalPaintRefreshRafId);
       for (const rafId of visualSettleRafIds) cancelAnimationFrame(rafId);
       visualSettleRafIds = [];
       if (visualSettleTimeoutId !== null) clearTimeout(visualSettleTimeoutId);

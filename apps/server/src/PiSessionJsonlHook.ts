@@ -21,6 +21,37 @@ export interface PiSessionJsonlHookWatcherOptions {
   readonly emitHookStatus: (event: PiSessionEvent) => void;
 }
 
+const USER_INPUT_TOOL_NAMES = new Set([
+  "ask",
+  "askfollowupquestion",
+  "askquestion",
+  "askuser",
+  "askuserquestion",
+  "planreview",
+  "question",
+  "questionnaire",
+]);
+
+function normalizeToolName(toolName: unknown): string {
+  return String(toolName ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function isUserInputTool(toolName: unknown): boolean {
+  return USER_INPUT_TOOL_NAMES.has(normalizeToolName(toolName));
+}
+
+function assistantMessageCallsUserInputTool(message: Record<string, unknown>): boolean {
+  const content = message.content;
+  if (!Array.isArray(content)) return false;
+  return content.some((part) => {
+    if (!part || typeof part !== "object") return false;
+    const record = part as Record<string, unknown>;
+    return record.type === "toolCall" && isUserInputTool(record.name);
+  });
+}
+
 /**
  * Returns the hookStatus to apply after processing a complete JSONL line, or
  * `null` if the line does not imply a change.
@@ -39,14 +70,15 @@ export function hookStatusFromSessionJsonlLine(line: string): ClaudeHookStatus |
   if (rec.type !== "message") return null;
   const message = rec.message;
   if (!message || typeof message !== "object") return null;
-  const role = (message as Record<string, unknown>).role;
-  if (role === "user") {
+  const messageRecord = message as Record<string, unknown>;
+  const role = messageRecord.role;
+  if (role === "user" || role === "toolResult") {
     return "working";
   }
   if (role === "assistant") {
-    const stopReason = (message as Record<string, unknown>).stopReason;
+    const stopReason = messageRecord.stopReason;
     if (stopReason === "toolUse") {
-      return "working";
+      return assistantMessageCallsUserInputTool(messageRecord) ? "needsInput" : "working";
     }
     if (stopReason === "stop" || stopReason === "length") {
       return "completed";

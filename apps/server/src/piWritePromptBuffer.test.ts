@@ -27,6 +27,10 @@ describe("reconstructPiPromptLine", () => {
   it("ignores bracketed-paste wrappers while preserving pasted text", () => {
     expect(reconstructPiPromptLine("\x1b[200~fix login bug\x1b[201~")).toBe("fix login bug");
   });
+
+  it("reconstructs pi CSI-u Shift+Enter as a prompt newline", () => {
+    expect(reconstructPiPromptLine("line one\x1b[13;2uline two")).toBe("line one\nline two");
+  });
 });
 
 describe("advancePiWritePromptBuffer", () => {
@@ -49,5 +53,25 @@ describe("advancePiWritePromptBuffer", () => {
   it("returns empty_submit when the edited line is blank", () => {
     const buffers = new Map<string, string>();
     expect(advancePiWritePromptBuffer(buffers, "t1", "a\x7f\r")).toEqual({ kind: "empty_submit" });
+  });
+
+  it("treats pi CSI-u Enter as submit", () => {
+    const buffers = new Map<string, string>();
+    expect(advancePiWritePromptBuffer(buffers, "t1", "hello\x1b[13u")).toEqual({
+      kind: "submitted",
+      firstLineStripped: "hello",
+    });
+    expect(buffers.has("t1")).toBe(false);
+  });
+
+  it("keeps pi CSI-u Shift+Enter inside the submitted prompt", () => {
+    const buffers = new Map<string, string>();
+    expect(advancePiWritePromptBuffer(buffers, "t1", "line one\x1b[13;2u")).toEqual({
+      kind: "buffering",
+    });
+    expect(advancePiWritePromptBuffer(buffers, "t1", "line two\x1b[13u")).toEqual({
+      kind: "submitted",
+      firstLineStripped: "line one\nline two",
+    });
   });
 });
