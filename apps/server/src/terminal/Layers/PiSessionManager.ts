@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -36,9 +37,11 @@ const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
 const CLUI_PI_THREAD_ID_ENV = "CLUI_PI_THREAD_ID";
 const CLUI_PI_SESSION_SYNC_DIR_ENV = "CLUI_PI_SESSION_SYNC_DIR";
+const CLUI_PI_INITIAL_PROMPT_FILE_ENV = "CLUI_PI_INITIAL_PROMPT_FILE";
 const PI_RUNTIME_AGENT_DIR_NAME = "pi-agent";
 const PI_LEGACY_THREAD_SESSION_DIR_NAME = "pi-sessions";
 const PI_SESSION_SYNC_DIR_NAME = "pi-session-sync";
+const PI_INITIAL_PROMPT_DIR_NAME = "pi-initial-prompts";
 const PI_RUNTIME_EXTENSION_DIR_NAME = "pi-runtime";
 const PI_SESSION_SYNC_EXTENSION_FILENAME = "clui-pi-session-sync.js";
 const PI_HOOK_STATUSES = new Set<ClaudeHookStatus>([
@@ -52,6 +55,7 @@ const PI_HOOK_STATUSES = new Set<ClaudeHookStatus>([
 // the runtime extension / JSONL watcher provide the authoritative status.
 const PI_WORKING_STATUS_RE = /\r\s*Working(?:\.{3,4}|…)/;
 const PI_STATUS_DETECTION_TAIL_LENGTH = 160;
+const INITIAL_PROMPT_FILE_CLEANUP_MS = 5 * 60 * 1000;
 const TERMINAL_CONTROL_SEQUENCE_RE =
   /\x1b(?:\][\s\S]*?(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[PX^_][\s\S]*?\x1b\\|[@-Z\\-_])/g;
 
@@ -149,11 +153,12 @@ function encodePiSessionDirName(cwd: string): string {
 
 function buildPiSessionSyncExtensionSource(): string {
   return `
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const syncDir = process.env.${CLUI_PI_SESSION_SYNC_DIR_ENV};
 const threadId = process.env.${CLUI_PI_THREAD_ID_ENV};
+const initialPromptFile = process.env.${CLUI_PI_INITIAL_PROMPT_FILE_ENV};
 const processRegistryDir = process.env.${CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV};
 const processRegistryOwnerPid = Number(process.env.${CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV} ?? 0);
 const userInputToolNames = new Set([
@@ -167,6 +172,7 @@ const userInputToolNames = new Set([
   "questionnaire",
 ]);
 const pendingUserInputToolCallIds = new Set();
+let initialPromptSent = false;
 let lastHookStatus;
 
 function normalizeToolName(toolName) {
@@ -199,6 +205,22 @@ function setHookStatus(ctx, hookStatus, reason) {
   if (lastHookStatus === hookStatus) return;
   lastHookStatus = hookStatus;
   writePayload(ctx, reason, hookStatus);
+}
+
+function takeInitialPrompt() {
+  if (initialPromptSent || !initialPromptFile) return null;
+  initialPromptSent = true;
+  try {
+    const prompt = readFileSync(initialPromptFile, "utf8");
+    try {
+      unlinkSync(initialPromptFile);
+    } catch {
+      // Best-effort cleanup only.
+    }
+    return prompt.trim().length > 0 ? prompt : null;
+  } catch {
+    return null;
+  }
 }
 
 function isProcessAlive(pid) {
@@ -289,6 +311,18 @@ export default function (pi) {
     pendingUserInputToolCallIds.clear();
     lastHookStatus = undefined;
     writePayload(ctx, event.reason);
+
+    const initialPrompt = takeInitialPrompt();
+    if (initialPrompt) {
+      setHookStatus(ctx, "working", "initial_prompt");
+      setTimeout(() => {
+        try {
+          pi.sendUserMessage(initialPrompt);
+        } catch {
+          // Runtime errors are surfaced through pi's extension error channel when available.
+        }
+      }, 0);
+    }
   });
 
   pi.on("agent_start", async (_event, ctx) => {
@@ -344,6 +378,12 @@ function stripTerminalControlSequences(data: string): string {
   return data.replace(TERMINAL_CONTROL_SEQUENCE_RE, "");
 }
 
+function normalizeInitialPrompt(prompt: string | undefined): string | null {
+  if (prompt === undefined) return null;
+  const withoutTrailingSubmitChars = prompt.replace(/[\r\n]+$/u, "");
+  return withoutTrailingSubmitChars.trim().length > 0 ? withoutTrailingSubmitChars : null;
+}
+
 export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents> {
   private readonly sessions = new Map<string, PiSessionEntry>();
   private readonly threadLocks = new Map<string, Promise<void>>();
@@ -356,6 +396,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private readonly sessionsRootDir: string;
   private readonly legacySessionsRootDir: string;
   private readonly sessionSyncDir: string;
+  private readonly initialPromptDir: string;
   private readonly processRegistryDir: string;
   private readonly extensionFilePath: string;
   private runtimeFilesPromise: Promise<void> | null = null;
@@ -371,6 +412,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.sessionsRootDir = path.join(this.agentRootDir, "sessions");
     this.legacySessionsRootDir = path.join(options.stateDir, PI_LEGACY_THREAD_SESSION_DIR_NAME);
     this.sessionSyncDir = path.join(options.stateDir, PI_SESSION_SYNC_DIR_NAME);
+    this.initialPromptDir = path.join(options.stateDir, PI_INITIAL_PROMPT_DIR_NAME);
     this.processRegistryDir = getSessionProcessRegistryDir(options.stateDir);
     this.extensionFilePath = path.join(
       options.stateDir,
@@ -386,6 +428,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     rows: number;
     fresh?: boolean;
     resumeSessionFile?: string;
+    initialPrompt?: string;
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
       await this.ensureRuntimeFiles();
@@ -440,6 +483,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       if (resolvedSessionFile) {
         args.push("--session", resolvedSessionFile);
       }
+      const initialPromptFile = await this.createInitialPromptFile(
+        normalizeInitialPrompt(input.initialPrompt),
+      );
 
       try {
         await assertValidCwd(input.cwd);
@@ -449,6 +495,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         const spawnEnv = createSpawnEnv(process.env);
         spawnEnv[CLUI_PI_THREAD_ID_ENV] = input.threadId;
         spawnEnv[CLUI_PI_SESSION_SYNC_DIR_ENV] = this.sessionSyncDir;
+        if (initialPromptFile) {
+          spawnEnv[CLUI_PI_INITIAL_PROMPT_FILE_ENV] = initialPromptFile;
+        }
         spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV] = this.processRegistryDir;
         spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV] = String(process.pid);
 
@@ -464,6 +513,12 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         );
 
         entry.process = ptyProcess;
+        if (initialPromptFile) {
+          const cleanupTimer = setTimeout(() => {
+            void rm(initialPromptFile, { force: true });
+          }, INITIAL_PROMPT_FILE_CLEANUP_MS);
+          cleanupTimer.unref?.();
+        }
         this.registerProcess(entry, ptyProcess);
         const registerProcessTimer = setTimeout(() => {
           this.registerProcess(entry, ptyProcess);
@@ -504,6 +559,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
         void this.reconcileActiveSessions(this.maxActiveSessions);
       } catch (error) {
+        if (initialPromptFile) {
+          await rm(initialPromptFile, { force: true });
+        }
         this.unregisterProcess(entry);
         entry.status = "new";
         entry.process = null;
@@ -599,6 +657,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   getSessionFile(threadId: string): string | null {
     const entry = this.sessions.get(threadId);
     return entry?.activeSessionFile ?? null;
+  }
+
+  getSessionHookStatus(threadId: string): ClaudeHookStatus | null {
+    const entry = this.sessions.get(threadId);
+    return entry?.hookStatus ?? null;
   }
 
   async reconcileActiveSessions(maxActive: number): Promise<void> {
@@ -722,6 +785,14 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       })();
     }
     await this.runtimeFilesPromise;
+  }
+
+  private async createInitialPromptFile(prompt: string | null): Promise<string | null> {
+    if (prompt === null) return null;
+    await mkdir(this.initialPromptDir, { recursive: true });
+    const filePath = path.join(this.initialPromptDir, `${randomUUID()}.txt`);
+    await writeFile(filePath, prompt, { encoding: "utf8", mode: 0o600 });
+    return filePath;
   }
 
   private getSessionDirForCwd(cwd: string): string {
@@ -1174,6 +1245,7 @@ export const PiSessionManagerLive = Layer.effect(
         }),
       getSessionStatus: (threadId) => Effect.sync(() => runtime.getSessionStatus(threadId)),
       getSessionFile: (threadId) => Effect.sync(() => runtime.getSessionFile(threadId)),
+      getSessionHookStatus: (threadId) => Effect.sync(() => runtime.getSessionHookStatus(threadId)),
       reconcileActiveSessions: (maxActive) =>
         Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
       setMaxActiveSessions: (maxActive) =>

@@ -397,6 +397,38 @@ describe("store read model sync", () => {
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
   });
 
+  it("applies live hookStatus from snapshots when present", () => {
+    const initialState = makeState(makeThread({ harness: "pi", hookStatus: null }));
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        harness: "pi",
+        terminalStatus: "active",
+        hookStatus: "working",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.terminalStatus).toBe("active");
+    expect(next.threads[0]?.hookStatus).toBe("working");
+  });
+
+  it("clears local hookStatus when a snapshot explicitly reports null", () => {
+    const initialState = makeState(makeThread({ harness: "pi", hookStatus: "working" }));
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        harness: "pi",
+        terminalStatus: "active",
+        hookStatus: null,
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.terminalStatus).toBe("active");
+    expect(next.threads[0]?.hookStatus).toBeNull();
+  });
+
   it("filters hidden projects and their threads out of the synced store", () => {
     const thread = makeReadModelThread({});
     const readModel = {

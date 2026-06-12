@@ -4,6 +4,46 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-12 — Pi status badges survive missed live events
+
+**Problem:** Some pi-harness threads were working or waiting for input but the sidebar did not show `Working`, `Needs Input`, or related badges.
+
+**Root cause:** Pi hook status was only kept as process-local session state and live WebSocket pushes. If the client missed the push or refreshed/synced from a snapshot, `syncServerReadModel` preserved old local `terminalStatus` / `hookStatus` values instead of accepting the server's current live pi status.
+
+**Fix:** Added optional `hookStatus` to orchestration thread snapshots, exposed live pi hook status from `PiSessionManager`, hydrates pi snapshot rows with that status on `orchestration.getSnapshot`, and taught the web store to apply explicit snapshot terminal/hook-status values.
+
+**Affected files:**
+- `packages/contracts/src/orchestration.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/store.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-12 — Pi new-thread prompt submits through runtime extension
+
+**Problem:** A prompt typed into the new-thread main box could fail to appear or run when launching a new thread with the pi harness.
+
+**Root cause:** Clui sent the first pi prompt as PTY keystrokes immediately after spawning `pi`; the TUI can still be starting up and may not yet parse the CSI-u submit sequence reliably. Harness buttons could also keep focus after selection, making Enter behavior ambiguous.
+
+**Fix:** Added an `initialPrompt` field to `pi.start`, writes that prompt to a private temp file, and lets the generated pi runtime extension submit it via `pi.sendUserMessage()` after `session_start`. The web launch path now uses that startup submission for pi instead of immediate PTY input, keeps the prompt focused after harness changes, and avoids treating Enter on harness controls as a launch shortcut.
+
+**Affected files:**
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-11 — Version 0.0.28 Apple Silicon mac build produced
 
 **Problem:** A fresh macOS Apple Silicon desktop build was needed after the pi terminal/status fixes.

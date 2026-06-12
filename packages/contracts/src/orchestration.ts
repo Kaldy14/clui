@@ -1,5 +1,6 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
+import { ClaudeHookStatus } from "./claude-terminal";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -335,6 +336,11 @@ export const OrchestrationThread = Schema.Struct({
   terminalStatus: TerminalStatus.pipe(
     Schema.withDecodingDefault(() => "new" as const),
   ),
+  /**
+   * Ephemeral live terminal hook status for harnesses that can expose it in
+   * snapshots (currently pi). `null` means no active hook status.
+   */
+  hookStatus: Schema.optional(Schema.NullOr(ClaudeHookStatus)),
   scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(() => null),
   ),

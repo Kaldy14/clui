@@ -29,7 +29,7 @@ describe("terminalStateStore actions", () => {
       activeTerminalId: "default",
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
       activeTerminalGroupId: "group-default",
-      yoloMode: false,
+      yoloMode: true,
       newThreadPromptDraft: "",
     });
   });

@@ -1,6 +1,8 @@
 import { type NativeApi, type ThreadId } from "@clui/contracts";
 import type { ClaudeSessionEvent, PiSessionEvent } from "@clui/contracts";
 import { PlayIcon, TerminalIcon } from "lucide-react";
+
+import { Kbd } from "./ui/kbd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAppSettings } from "../appSettings";
@@ -54,7 +56,14 @@ const ALT_BUFFER_WHEEL_MAX_STEPS_PER_FRAME = 24;
 function startHarnessSession(
   api: NativeApi,
   thread: Thread,
-  input: { cwd: string; cols: number; rows: number; fresh?: boolean; yoloMode?: boolean },
+  input: {
+    cwd: string;
+    cols: number;
+    rows: number;
+    fresh?: boolean;
+    yoloMode?: boolean;
+    initialPrompt?: string;
+  },
 ): Promise<void> {
   if (thread.harness === "pi") {
     const shouldStartFresh = input.fresh || thread.terminalStatus === "new";
@@ -65,6 +74,7 @@ function startHarnessSession(
       rows: input.rows,
       ...(shouldStartFresh ? { fresh: true } : {}),
       ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
+      ...(input.initialPrompt !== undefined ? { initialPrompt: input.initialPrompt } : {}),
     });
   }
 
@@ -179,13 +189,15 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       if (!startCwd) return;
       // cols/rows are initial defaults — ActiveTerminalView sends a corrective
       // resize with actual container dimensions immediately after mounting.
+      const initialPromptSentByStart = thread.harness === "pi" && hasInitialPrompt;
       await startHarnessSession(api, thread, {
         cwd: startCwd,
         cols: 120,
         rows: 40,
         yoloMode: dangerouslySkipPermissions,
+        ...(initialPromptSentByStart ? { initialPrompt } : {}),
       });
-      if (hasInitialPrompt) {
+      if (hasInitialPrompt && !initialPromptSentByStart) {
         await submitThreadPrompt(api, thread.harness, threadId, initialPrompt);
       }
       clearNewThreadPromptDraft(threadId);
@@ -277,6 +289,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       if (thread.terminalStatus !== "new") return;
       const api = readNativeApi();
       setThreadHarness(threadId, harness);
+      requestAnimationFrame(() => initialPromptRef.current?.focus({ preventScroll: true }));
       if (!api) return;
       void api.orchestration.dispatchCommand({
         type: "thread.meta.update",
@@ -293,14 +306,24 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     initialPromptRef.current?.focus({ preventScroll: true });
   }, [threadId]);
 
-  // Plain Enter triggers start from the empty state; Cmd/Ctrl+Enter also
-  // submits from the first-prompt textarea.
+  // Enter starts the session: plain Enter from the empty state, or from the
+  // first-prompt textarea via handlePromptKeyDown (Shift+Enter inserts a
+  // newline there). Cmd/Ctrl+Enter starts from anywhere.
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const isTextEntry =
         e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      const isInteractiveControl =
+        e.target instanceof HTMLElement &&
+        e.target.closest("button,a,input,select,textarea,[role='button'],[role='switch']") !== null;
       const isPlainEnter =
-        e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !isTextEntry;
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        !isTextEntry &&
+        !isInteractiveControl;
       const isSubmitShortcut =
         e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
 
@@ -317,6 +340,19 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     [handleStart, starting, cwd, isWorktreePending, isWorktreeBaseSelected],
   );
 
+  // Enter submits from the textarea; Shift+Enter falls through as a newline.
+  const handlePromptKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.nativeEvent.isComposing) return;
+      e.preventDefault();
+      if (!starting && (cwd || isWorktreePending) && isWorktreeBaseSelected) {
+        handleStart();
+      }
+    },
+    [handleStart, starting, cwd, isWorktreePending, isWorktreeBaseSelected],
+  );
+
   return (
     <div
       ref={containerRef}
@@ -324,7 +360,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       onKeyDown={handleKeyDown}
       className="flex h-full flex-col items-center justify-center p-8 outline-none"
     >
-      <div className="flex w-full max-w-4xl flex-col items-center gap-5 animate-fade-in">
+      <div className="flex w-full max-w-2xl flex-col items-center gap-5 animate-fade-in">
         {/* App logo with subtle glow */}
         <div className="relative animate-zoom-fade-in">
           <div className="absolute inset-0 rounded-full bg-primary/10 blur-xl" />
@@ -332,12 +368,12 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         </div>
 
         {/* Copy — fixed height to prevent shift */}
-        <div className="flex h-10 flex-col items-center justify-center gap-1.5 text-center">
-          <h2 className="text-sm font-medium text-foreground/90">
+        <div className="flex h-12 flex-col items-center justify-center gap-1 text-center">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">
             {thread.harness === "pi" ? "New pi Session" : "New Claude Code Session"}
           </h2>
           <p
-            className="max-w-xs truncate font-mono text-[11px] text-muted-foreground/60 transition-opacity duration-200"
+            className="max-w-sm truncate font-mono text-[11px] text-muted-foreground/60 transition-opacity duration-200"
             title={isWorktreePending && thread.branch ? `Worktree from ${thread.branch}` : cwd}
           >
             {isWorktreePending && thread.branch ? (
@@ -352,16 +388,32 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
 
         {/* Branch/worktree picker */}
         {branchToolbar.isReady && branchToolbar.activeProjectCwd && (
-          <div className="flex w-full flex-col items-center gap-3 animate-fade-in-up-delay">
+          <div className="flex w-full flex-col items-center gap-2.5 animate-fade-in-up-delay">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setEnvMode(effectiveEnvMode === "local" ? "worktree" : "local")}
-                disabled={!!thread.worktreePath}
-                className="rounded-md border border-border/40 px-2 py-0.5 text-xs font-medium text-muted-foreground/70 transition-colors hover:bg-muted/50 hover:text-foreground/80 disabled:opacity-50 dark:border-border/20"
+              <div
+                role="group"
+                aria-label="Environment"
+                className="flex items-center rounded-md bg-muted/60 p-0.5"
               >
-                {effectiveEnvMode === "worktree" ? "Worktree" : "Local"}
-              </button>
+                {[
+                  { value: "local" as const, label: "Local" },
+                  { value: "worktree" as const, label: "Worktree" },
+                ].map((mode) => (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() => setEnvMode(mode.value)}
+                    disabled={!!thread.worktreePath}
+                    className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                      effectiveEnvMode === mode.value
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground/70 hover:text-foreground"
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
               <BranchToolbarBranchSelector
                 activeProjectCwd={branchToolbar.activeProjectCwd}
                 activeThreadBranch={branchToolbar.activeThreadBranch}
@@ -385,96 +437,104 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
           </div>
         )}
 
-        <label className="flex w-full flex-col gap-1.5 animate-fade-in-up-delay">
-          <span className="text-center text-[11px] uppercase tracking-wide text-muted-foreground/60">
-            First prompt
-          </span>
+        {/* Prompt composer — first prompt, harness, YOLO, and launch share one surface */}
+        <div className="w-full overflow-hidden rounded-xl border border-border/50 bg-background/80 shadow-sm transition-colors focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/25 animate-fade-in-up-delay">
           <textarea
             ref={initialPromptRef}
             value={initialPrompt}
             onChange={(event) => setInitialPrompt(event.target.value)}
             onPaste={handleInitialPromptPaste}
+            onKeyDown={handlePromptKeyDown}
             placeholder={`Ask ${thread.harness === "pi" ? "pi" : "Claude Code"} what to do first...`}
-            rows={8}
+            aria-label="First prompt"
+            rows={6}
             spellCheck
-            className="max-h-[45vh] min-h-40 w-full resize-none overflow-y-auto rounded-lg border border-border/40 bg-background/80 px-3 py-2 text-sm leading-5 text-foreground outline-none ring-1 ring-transparent transition-colors placeholder:text-muted-foreground/40 focus:border-primary/40 focus:ring-primary/20 dark:border-border/20"
+            className="max-h-[40vh] min-h-36 w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/40"
           />
-          <span className="text-center text-[10px] text-muted-foreground/45">
-            {hasInitialPrompt
-              ? "Start will auto-submit this prompt."
-              : "Optional — ⌘/Ctrl+Enter starts."}
-          </span>
-        </label>
-
-        <div className="flex w-full max-w-xs flex-col gap-2 animate-fade-in-up-delay">
-          <span className="text-center text-[11px] uppercase tracking-wide text-muted-foreground/60">
-            Coding harness
-          </span>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { value: "claudeCode" as const, label: "Claude Code" },
-              { value: "pi" as const, label: "pi" },
-            ].map((option) => {
-              const selected = thread.harness === option.value;
-              return (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 px-2 py-2 dark:border-border/20">
+            <div className="flex items-center gap-2">
+              <div
+                role="group"
+                aria-label="Coding harness"
+                className="flex items-center rounded-md bg-muted/60 p-0.5"
+              >
+                {[
+                  { value: "claudeCode" as const, label: "Claude Code" },
+                  { value: "pi" as const, label: "pi" },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleHarnessChange(option.value)}
+                    className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors ${
+                      thread.harness === option.value
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground/70 hover:text-foreground"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {thread.harness === "claudeCode" && (
                 <button
-                  key={option.value}
                   type="button"
-                  onClick={() => handleHarnessChange(option.value)}
-                  className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    selected
-                      ? "border-primary/60 bg-primary/8 text-foreground"
-                      : "border-border/40 bg-background/80 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  role="switch"
+                  aria-checked={dangerouslySkipPermissions}
+                  onClick={() => setYolo(!dangerouslySkipPermissions)}
+                  title="Skip all permission prompts (--dangerously-skip-permissions)"
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+                    dangerouslySkipPermissions
+                      ? "border-red-500/40 bg-red-500/10 text-red-500"
+                      : "border-border/40 text-muted-foreground/70 hover:text-foreground dark:border-border/20"
                   }`}
                 >
-                  {option.label}
+                  <span
+                    aria-hidden="true"
+                    className={`size-1.5 rounded-full ${
+                      dangerouslySkipPermissions ? "bg-red-500" : "bg-muted-foreground/40"
+                    }`}
+                  />
+                  YOLO
                 </button>
-              );
-            })}
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={starting || (!cwd && !isWorktreePending) || !isWorktreeBaseSelected}
+              aria-busy={starting}
+              onClick={handleStart}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {starting ? (
+                <>
+                  <span className="size-3 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
+                  {isWorktreePending ? "Creating worktree..." : "Starting..."}
+                </>
+              ) : (
+                <>
+                  <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
+                  {hasInitialPrompt
+                    ? thread.harness === "pi"
+                      ? "Start pi & send"
+                      : "Start Claude Code & send"
+                    : thread.harness === "pi"
+                      ? "Start pi"
+                      : "Start Claude Code"}
+                </>
+              )}
+            </button>
           </div>
         </div>
 
-        {/* Auto-accept toggle */}
-        {thread.harness === "claudeCode" ? (
-          <label
-            className={`flex items-center gap-2 text-xs animate-fade-in-up-delay ${dangerouslySkipPermissions ? "text-red-500" : "text-muted-foreground/70"}`}
-          >
-            <input
-              type="checkbox"
-              checked={dangerouslySkipPermissions}
-              onChange={(e) => setYolo(e.target.checked)}
-              className="size-3.5 rounded border-border/40 accent-red-500"
-            />
-            <span>YOLO mode</span>
-          </label>
-        ) : null}
-
-        {/* Launch button */}
-        <button
-          type="button"
-          disabled={starting || (!cwd && !isWorktreePending) || !isWorktreeBaseSelected}
-          aria-busy={starting}
-          onClick={handleStart}
-          className="group relative inline-flex items-center gap-2 overflow-hidden rounded-lg border border-primary/80 bg-primary px-5 py-2 text-xs font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow-md disabled:opacity-50 dark:border-primary/60 animate-fade-in-up-delay-2"
-        >
-          {starting ? (
-            <>
-              <span className="size-3 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
-              {isWorktreePending ? "Creating worktree..." : "Starting..."}
-            </>
-          ) : (
-            <>
-              <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
-              {hasInitialPrompt
-                ? thread.harness === "pi"
-                  ? "Start pi & send"
-                  : "Start Claude Code & send"
-                : thread.harness === "pi"
-                  ? "Start pi"
-                  : "Start Claude Code"}
-            </>
-          )}
-        </button>
+        {/* Keyboard hint */}
+        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/50 animate-fade-in-up-delay-2">
+          <Kbd className="h-4 bg-muted/60 px-1 text-[10px]">Enter</Kbd>
+          {hasInitialPrompt ? "starts & sends the prompt" : "starts"}
+          <span className="text-muted-foreground/30">·</span>
+          <Kbd className="h-4 bg-muted/60 px-1 text-[10px]">Shift+Enter</Kbd>
+          new line
+        </p>
 
         {error && (
           <p role="alert" className="text-center text-xs text-destructive animate-fade-in-up">

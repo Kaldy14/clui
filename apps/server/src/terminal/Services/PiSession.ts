@@ -5,7 +5,7 @@
  * hibernate, output fanout, and session state transitions.
  */
 import { Effect, Schema, ServiceMap } from "effect";
-import type { TerminalStatus, PiSessionEvent } from "@clui/contracts";
+import type { ClaudeHookStatus, TerminalStatus, PiSessionEvent } from "@clui/contracts";
 
 export class PiSessionError extends Schema.TaggedErrorClass<PiSessionError>()(
   "PiSessionError",
@@ -31,6 +31,7 @@ export interface PiSessionManagerShape {
     rows: number;
     fresh?: boolean;
     resumeSessionFile?: string;
+    initialPrompt?: string;
   }) => Effect.Effect<void, PiSessionError>;
   readonly hibernateSession: (threadId: string) => Effect.Effect<void, PiSessionError>;
   readonly getScrollback: (
@@ -47,6 +48,7 @@ export interface PiSessionManagerShape {
   ) => Effect.Effect<void, PiSessionError>;
   readonly getSessionStatus: (threadId: string) => Effect.Effect<TerminalStatus>;
   readonly getSessionFile: (threadId: string) => Effect.Effect<string | null>;
+  readonly getSessionHookStatus: (threadId: string) => Effect.Effect<ClaudeHookStatus | null>;
   readonly reconcileActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;

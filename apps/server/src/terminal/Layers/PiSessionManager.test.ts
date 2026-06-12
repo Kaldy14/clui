@@ -180,6 +180,42 @@ describe("PiSessionManagerRuntime", () => {
     expect(extensionSource).toContain("args.matchAll(/\\b\\d{2,}\\b/g)");
   });
 
+  it("passes a new-thread initial prompt through the runtime extension", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+
+    await runtime.startSession({
+      threadId: "thread-1",
+      cwd,
+      cols: 100,
+      rows: 24,
+      initialPrompt: "fix the pi first prompt\n",
+    });
+
+    const spawnInput = ptyAdapter.spawnInputs[0]!;
+    const promptFile = spawnInput.env.CLUI_PI_INITIAL_PROMPT_FILE;
+    if (typeof promptFile !== "string") {
+      throw new Error("Expected initial prompt file env to be set");
+    }
+    expect(promptFile).toContain(path.join(stateDir, "pi-initial-prompts"));
+    expect(await readFile(promptFile, "utf8")).toBe("fix the pi first prompt");
+    expect(spawnInput.args).toEqual([
+      "--session-dir",
+      encodedCwdDir(stateDir, cwd),
+      "--extension",
+      path.join(stateDir, "pi-runtime", "clui-pi-session-sync.js"),
+    ]);
+
+    const extensionSource = await readFile(
+      path.join(stateDir, "pi-runtime", "clui-pi-session-sync.js"),
+      "utf8",
+    );
+    expect(extensionSource).toContain("CLUI_PI_INITIAL_PROMPT_FILE");
+    expect(extensionSource).toContain("pi.sendUserMessage(initialPrompt)");
+  });
+
   it("reopens an explicit pi session file with --session", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);

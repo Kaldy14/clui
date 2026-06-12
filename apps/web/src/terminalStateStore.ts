@@ -160,6 +160,9 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
   );
 }
 
+/** YOLO (--dangerously-skip-permissions) defaults ON; only consumed by Claude Code starts. */
+const DEFAULT_YOLO_MODE = true;
+
 const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   terminalOpen: false,
   terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
@@ -173,7 +176,7 @@ const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
     },
   ],
   activeTerminalGroupId: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
-  yoloMode: false,
+  yoloMode: DEFAULT_YOLO_MODE,
   newThreadPromptDraft: "",
 });
 
@@ -183,7 +186,7 @@ function createDefaultThreadTerminalState(): ThreadTerminalState {
     terminalIds: [...DEFAULT_THREAD_TERMINAL_STATE.terminalIds],
     runningTerminalIds: [...DEFAULT_THREAD_TERMINAL_STATE.runningTerminalIds],
     terminalGroups: copyTerminalGroups(DEFAULT_THREAD_TERMINAL_STATE.terminalGroups),
-    yoloMode: false,
+    yoloMode: DEFAULT_YOLO_MODE,
     newThreadPromptDraft: "",
   };
 }
@@ -223,7 +226,7 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
       activeGroupIdFromTerminal ??
       terminalGroups[0]?.id ??
       fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
-    yoloMode: state.yoloMode ?? false,
+    yoloMode: state.yoloMode ?? DEFAULT_YOLO_MODE,
     newThreadPromptDraft: state.newThreadPromptDraft ?? "",
   };
   return threadTerminalStateEqual(state, normalized) ? state : normalized;

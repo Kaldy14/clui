@@ -22,6 +22,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
+  type ClaudeHookStatus,
   type ClaudeSessionEvent,
   type KeybindingsConfig,
   type OrchestrationReadModel,
@@ -237,6 +238,7 @@ const defaultPiSessionManager: PiSessionManagerShape = {
   resizeSession: () => Effect.void,
   getSessionStatus: () => Effect.succeed("new" as const),
   getSessionFile: () => Effect.succeed(null),
+  getSessionHookStatus: () => Effect.succeed(null),
   reconcileActiveSessions: () => Effect.void,
   setMaxActiveSessions: () => Effect.void,
   hibernateAll: () => Effect.void,
@@ -331,6 +333,24 @@ function sendFireAndForget(ws: WebSocket, method: string, params?: unknown): voi
       ? { _tag: method, ...(params as Record<string, unknown>) }
       : { _tag: method };
   ws.send(JSON.stringify({ id, body }));
+}
+
+async function waitForAssertion(
+  assertion: () => void | Promise<void>,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      if (Date.now() - start > timeoutMs) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
 }
 
 async function waitForPush(
@@ -1993,7 +2013,7 @@ describe("WebSocket Server", () => {
       getSnapshot: () =>
         Effect.sync(() => {
           snapshotReads++;
-          if (snapshotReads > 1) {
+          if (snapshotReads > 2) {
             throw new Error("session start should not read full snapshot");
           }
           return startupSnapshot();
@@ -2022,8 +2042,11 @@ describe("WebSocket Server", () => {
 
   function makeObservablePiSession() {
     const listeners = new Set<(event: PiSessionEvent) => void>();
+    const hookStatusByThreadId = new Map<string, ClaudeHookStatus | null>();
     const shape: PiSessionManagerShape = {
       ...defaultPiSessionManager,
+      getSessionHookStatus: (threadId) =>
+        Effect.succeed(hookStatusByThreadId.get(threadId) ?? null),
       subscribe: (listener) =>
         Effect.sync(() => {
           listeners.add(listener);
@@ -2032,6 +2055,9 @@ describe("WebSocket Server", () => {
     };
     return {
       shape,
+      setHookStatus: (threadId: string, hookStatus: ClaudeHookStatus | null) => {
+        hookStatusByThreadId.set(threadId, hookStatus);
+      },
       emit: (event: PiSessionEvent) => {
         for (const listener of listeners) listener(event);
       },
@@ -2134,6 +2160,45 @@ describe("WebSocket Server", () => {
       await waitForPush(unsubscribedWs, WS_CHANNELS.claudeSessionEvent, (push) => {
         const event = push.data as ClaudeSessionEvent;
         return event.type === "hookStatus" && event.hookStatus === "working";
+      });
+    });
+
+    it("hydrates current pi hookStatus into snapshots for clients that missed the live event", async () => {
+      const workspaceRoot = makeTempDir("clui-ws-pi-hook-snapshot-");
+      const piSession = makeObservablePiSession();
+      server = await createTestServer({
+        cwd: workspaceRoot,
+        piSessionManager: piSession.shape,
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      await createProjectedThread(ws, {
+        projectId: "project-1",
+        threadId: "thread-1",
+        workspaceRoot,
+        worktreePath: null,
+        harness: "pi",
+      });
+
+      piSession.setHookStatus("thread-1", "working");
+      piSession.emit({
+        type: "started",
+        threadId: "thread-1",
+        createdAt: new Date().toISOString(),
+      });
+
+      await waitForAssertion(async () => {
+        const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot);
+        expect(response.error).toBeUndefined();
+        const snapshot = response.result as OrchestrationReadModel;
+        const thread = snapshot.threads.find((entry) => entry.id === "thread-1");
+        expect(thread?.terminalStatus).toBe("active");
+        expect(thread?.hookStatus).toBe("working");
       });
     });
 
@@ -2444,6 +2509,40 @@ describe("WebSocket Server", () => {
       };
       return { calls, shape };
     }
+
+    it("pi.start forwards an initial prompt for pi to submit after startup", async () => {
+      const { calls, shape } = makeMockPiSession();
+      const workspaceRoot = makeTempDir("clui-ws-pi-initial-prompt-");
+      server = await createTestServer({
+        cwd: workspaceRoot,
+        piSessionManager: shape,
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+
+      const response = await sendRequest(ws, WS_METHODS.piStart, {
+        threadId: "thread-pi-initial",
+        cwd: workspaceRoot,
+        cols: 80,
+        rows: 24,
+        fresh: true,
+        initialPrompt: "fix the pi launch prompt",
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("startSession");
+      expect(calls[0]!.args[0]).toMatchObject({
+        threadId: "thread-pi-initial",
+        cwd: workspaceRoot,
+        fresh: true,
+        initialPrompt: "fix the pi launch prompt",
+      });
+    });
 
     it("pi.start allows a registered worktree outside the server root", async () => {
       const { calls, shape } = makeMockPiSession();

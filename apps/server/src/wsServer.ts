@@ -19,6 +19,7 @@ import {
   type ClaudeSessionEvent,
   type PiSessionEvent,
   type OrchestrationCommand,
+  type OrchestrationReadModel,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   MCP_WS_METHODS,
@@ -395,6 +396,27 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     subscriptions.claudeThreadIds = new Set(input.claudeThreadIds);
     subscriptions.piThreadIds = new Set(input.piThreadIds);
   };
+
+  const hydrateLivePiHookStatuses = Effect.fnUntraced(function* (
+    snapshot: OrchestrationReadModel,
+  ) {
+    const threads = yield* Effect.forEach(
+      snapshot.threads,
+      (thread) => {
+        if (thread.harness !== "pi") {
+          return Effect.succeed(thread);
+        }
+        return piSessionManager.getSessionHookStatus(thread.id).pipe(
+          Effect.map((hookStatus) => ({
+            ...thread,
+            hookStatus,
+          })),
+        );
+      },
+      { concurrency: 10 },
+    );
+    return { ...snapshot, threads };
+  });
 
   const broadcastPush = Effect.fnUntraced(function* (
     push: WsPush,
@@ -1390,7 +1412,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
-        return yield* projectionReadModelQuery.getSnapshot();
+        return yield* projectionReadModelQuery.getSnapshot().pipe(
+          Effect.flatMap(hydrateLivePiHookStatuses),
+        );
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand: {
         const { command } = request.body;
@@ -1692,18 +1716,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           rows,
           fresh,
           resumeSessionFile,
+          initialPrompt,
         } = stripRequestTag(request.body);
 
         const resolvedCwd = yield* resolveHarnessSessionCwd(requestedCwd, threadId);
 
-        return yield* piSessionManager.startSession({
+        yield* piSessionManager.startSession({
           threadId,
           cwd: resolvedCwd,
           cols,
           rows,
           ...(fresh !== undefined ? { fresh } : {}),
           ...(resumeSessionFile !== undefined ? { resumeSessionFile } : {}),
+          ...(initialPrompt !== undefined ? { initialPrompt } : {}),
         });
+        if (initialPrompt && initialPrompt.trim().length > 0) {
+          dispatchAutoTitleIfNeeded(threadId, initialPrompt);
+        }
+        return;
       }
 
       case WS_METHODS.piHibernate: {

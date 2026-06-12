@@ -348,6 +348,8 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.titleSource !== incoming.titleSource) return true;
   if (existing.bookmarked !== incoming.bookmarked) return true;
   if (existing.archivedAt !== incoming.archivedAt) return true;
+  if (existing.terminalStatus !== incoming.terminalStatus) return true;
+  if (existing.hookStatus !== incoming.hookStatus) return true;
   // Session check
   if ((existing.session?.updatedAt ?? null) !== (incoming.session?.updatedAt ?? null)) return true;
   if (
@@ -496,6 +498,10 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         pendingArchiveUpdates.delete(thread.id);
       }
       const preserveLocalArchivedAt = existing != null && hasPendingArchiveUpdate(thread.id);
+      const hasSnapshotHookStatus = thread.hookStatus !== undefined;
+      const terminalStatus = hasSnapshotHookStatus
+        ? (thread.terminalStatus ?? "new")
+        : (existing?.terminalStatus ?? thread.terminalStatus ?? "new");
 
       const newThread: Thread = {
         id: thread.id,
@@ -569,14 +575,14 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           files: checkpoint.files.map((file) => ({ ...file })),
         })),
         activities: thread.activities.map((activity) => ({ ...activity })),
-        terminalStatus: existing?.terminalStatus ?? thread.terminalStatus ?? "new",
+        terminalStatus,
         dormantReason: existing?.dormantReason ?? null,
         claudeSessionId: thread.claudeSessionId ?? null,
         piSessionFile: thread.piSessionFile ?? null,
         scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
         titleSource: thread.titleSource ?? "auto",
         bookmarked: thread.bookmarked ?? false,
-        hookStatus: existing?.hookStatus ?? null,
+        hookStatus: hasSnapshotHookStatus ? thread.hookStatus : (existing?.hookStatus ?? null),
       };
       if (existing && !threadChanged(existing, newThread)) {
         return existing;
