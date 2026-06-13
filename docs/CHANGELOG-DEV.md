@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-13 — Idle pi thread focus no longer flashes Working
+
+**Problem:** Clicking an idle pi thread could make the sidebar show `Working` for a few seconds even though no turn was running.
+
+**Root cause:** The client-side pi output activity fallback treated any visible PTY output as activity. Focusing a pi terminal sends resize/reattach traffic that can make pi redraw static UI text, so an idle redraw was misclassified as work until the fallback timer restored the previous status.
+
+**Fix:** Narrowed the fallback to only infer `Working` from pi's carriage-return `Working...` status line, not arbitrary visible terminal redraws. Added tests for working-status detection and idle redraw rejection.
+
+**Affected files:**
+- `apps/web/src/lib/piOutputActivityFallback.ts`
+- `apps/web/src/lib/piOutputActivityFallback.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-13 — Await output subscription before terminal catch-up
 
 **Problem:** A pi thread could reach `Needs Input` while unfocused, but opening it could still show an older terminal frame until a resize forced pi/xterm to repaint.

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PI_OUTPUT_ACTIVITY_IDLE_MS,
   createPiOutputActivityFallback,
+  hasPiWorkingStatusOutput,
   hasVisiblePiOutput,
 } from "./piOutputActivityFallback";
 
@@ -39,14 +40,31 @@ describe("piOutputActivityFallback", () => {
     expect(hasVisiblePiOutput("\x1b[2K\rRendering tool")).toBe(true);
   });
 
-  it("marks an active pi thread working while visible output is arriving", () => {
+  it("recognizes pi's carriage-return working status line", () => {
+    expect(hasPiWorkingStatusOutput("\x1b[?2026h\r\x1b[2K ⠧ \x1b[38;2;128;128;128mWorking...\x1b[39m")).toBe(
+      true,
+    );
+    expect(hasPiWorkingStatusOutput("assistant text mentioning Working...")).toBe(false);
+  });
+
+  it("marks an active pi thread working while the pi status line says working", () => {
     const ctx = createHarness();
     ctx.terminalStatusByThread.set("t1", "active");
     ctx.hookStatusByThread.set("t1", "completed");
 
-    expect(ctx.fallback.handleOutput("t1", "new assistant text")).toBe(true);
+    expect(ctx.fallback.handleOutput("t1", "\r\x1b[2K ⠧ Working...")).toBe(true);
     expect(ctx.hookStatusByThread.get("t1")).toBe("working");
     expect(ctx.onStatusChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark idle visible redraws as working", () => {
+    const ctx = createHarness();
+    ctx.terminalStatusByThread.set("t1", "active");
+    ctx.hookStatusByThread.set("t1", null);
+
+    expect(ctx.fallback.handleOutput("t1", "\x1b[2J\x1b[HUpdate Available\r\n~/project (main)")).toBe(false);
+    expect(ctx.hookStatusByThread.get("t1")).toBeNull();
+    expect(ctx.onStatusChanged).not.toHaveBeenCalled();
   });
 
   it("restores the prior status after output goes quiet", () => {
@@ -54,7 +72,7 @@ describe("piOutputActivityFallback", () => {
     ctx.terminalStatusByThread.set("t1", "active");
     ctx.hookStatusByThread.set("t1", "completed");
 
-    ctx.fallback.handleOutput("t1", "new assistant text");
+    ctx.fallback.handleOutput("t1", "\r\x1b[2K ⠧ Working...");
     vi.advanceTimersByTime(PI_OUTPUT_ACTIVITY_IDLE_MS - 1);
     expect(ctx.hookStatusByThread.get("t1")).toBe("working");
 
@@ -86,7 +104,7 @@ describe("piOutputActivityFallback", () => {
     ctx.terminalStatusByThread.set("t1", "active");
     ctx.hookStatusByThread.set("t1", "completed");
 
-    ctx.fallback.handleOutput("t1", "late rendered text");
+    ctx.fallback.handleOutput("t1", "\r\x1b[2K ⠧ Working...");
     ctx.hookStatusByThread.set("t1", "completed");
     ctx.fallback.handleRealHookStatus("t1");
 
