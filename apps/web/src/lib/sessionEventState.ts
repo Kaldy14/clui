@@ -17,8 +17,16 @@ export interface SessionEventDeps {
   now?: () => number;
 }
 
+export interface HandleHookStatusOptions {
+  readonly acceptStaleWorking?: boolean;
+}
+
 export interface SessionEventState {
-  handleHookStatus(rawThreadId: string, hookStatus: ClaudeHookStatus): HandleHookResult;
+  handleHookStatus(
+    rawThreadId: string,
+    hookStatus: ClaudeHookStatus,
+    options?: HandleHookStatusOptions,
+  ): HandleHookResult;
   /** Handle UserPromptSubmit — always accepted, bypasses completed grace period. */
   handleTurnStart(rawThreadId: string): void;
   handleOutput(rawThreadId: string, data: string): void;
@@ -151,6 +159,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleHookStatus(
     rawThreadId: string,
     hookStatus: ClaudeHookStatus,
+    options?: HandleHookStatusOptions,
   ): HandleHookResult {
     if (hookStatus === "completed") {
       completedAt.set(rawThreadId, now());
@@ -177,7 +186,10 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       // protection window is almost certainly from the *previous* tool,
       // not the one the user just approved.
       const currentHookStatus = deps.getThreadHookStatus(rawThreadId);
-      if (currentHookStatus === "pendingApproval" || currentHookStatus === "needsInput") {
+      if (
+        !options?.acceptStaleWorking &&
+        (currentHookStatus === "pendingApproval" || currentHookStatus === "needsInput")
+      ) {
         const actionTs = pendingApprovalAt.get(rawThreadId);
         if (actionTs != null && now() - actionTs < PENDING_APPROVAL_OUTPUT_DELAY_MS) {
           return { applied: false };
@@ -185,7 +197,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       }
 
       const doneTs = completedAt.get(rawThreadId);
-      if (doneTs && now() - doneTs < POST_COMPLETION_STALE_MS) {
+      if (doneTs && now() - doneTs < POST_COMPLETION_STALE_MS && !options?.acceptStaleWorking) {
         // Within the short stale window — reject concurrent Stop+PostToolUse
         // curl arrivals from the same tool.
         return { applied: false };

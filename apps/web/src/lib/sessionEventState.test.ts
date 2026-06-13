@@ -245,6 +245,18 @@ describe("createSessionEventState", () => {
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalled();
     });
 
+    it("'working' can bypass post-completion stale window for pi runtime events", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleHookStatus("t1", "completed");
+      vi.mocked(ctx.deps.setHookStatus).mockClear();
+
+      vi.advanceTimersByTime(1_000);
+      const result = state.handleHookStatus("t1", "working", { acceptStaleWorking: true });
+
+      expect(result).toEqual({ applied: true, hookStatus: "working" });
+      expect(ctx.deps.setHookStatus).toHaveBeenCalledWith("t1", "working");
+    });
+
     it("'working' is accepted after post-completion stale window (subagent activity)", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleHookStatus("t1", "completed");

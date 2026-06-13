@@ -4,6 +4,37 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-13 — Await output subscription before terminal catch-up
+
+**Problem:** A pi thread could reach `Needs Input` while unfocused, but opening it could still show an older terminal frame until a resize forced pi/xterm to repaint.
+
+**Root cause:** The client sent the output-subscription RPC before `getScrollback`, but did not wait for the server acknowledgment. The server handles WebSocket requests asynchronously, so `getScrollback` could snapshot before the relevant PTY bytes while those same bytes were still filtered from live pushes because the subscription had not been applied yet.
+
+**Fix:** `registerHarnessOutputSubscription` now returns a `ready` promise that resolves after the server applies the subscription, and `ActiveTerminalView` waits for it before issuing the catch-up scrollback request. Added a regression test for the subscription-ack ordering.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/harnessOutputSubscriptions.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-12 — Focused threads receive fresh catch-up output
+
+**Problem:** A background thread could show the correct `Needs Input` / working status, but opening that thread left the terminal visually stale until a window resize caused the TUI to redraw.
+
+**Root cause:** Active terminal views registered their harness output subscription via a microtask. The immediate catch-up `getScrollback` request could be sent first, leaving a gap where fresh PTY output was neither included in the snapshot nor delivered as live output.
+
+**Fix:** Send newly added harness output subscriptions synchronously before the terminal catch-up scrollback request can run, while still batching cleanup/unsubscribe updates. Added a regression test for the ordering.
+
+**Affected files:**
+- `apps/web/src/lib/harnessOutputSubscriptions.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-12 — Pi status badges survive missed live events
 
 **Problem:** Some pi-harness threads were working or waiting for input but the sidebar did not show `Working`, `Needs Input`, or related badges.

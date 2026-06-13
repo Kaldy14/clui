@@ -30,6 +30,7 @@ import {
   updateDockBadge,
 } from "../lib/notifications";
 import { providerQueryKeys } from "../lib/providerReactQuery";
+import { createPiOutputActivityFallback } from "../lib/piOutputActivityFallback";
 import { createSessionEventState, setGlobalSessionEventState } from "../lib/sessionEventState";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 
@@ -447,6 +448,16 @@ function EventRouter() {
     });
     setGlobalSessionEventState(sessionState);
 
+    const piOutputActivityFallback = createPiOutputActivityFallback({
+      getThreadState: (rawId) => {
+        const thread = useStore.getState().threads.find((t) => t.id === rawId);
+        return { hookStatus: thread?.hookStatus ?? null, terminalStatus: thread?.terminalStatus };
+      },
+      setHookStatus: (rawId, status) =>
+        useStore.getState().setHookStatus(ThreadId.makeUnsafe(rawId), status),
+      onStatusChanged: () => updateDockBadge(useStore.getState().threads),
+    });
+
     const unsubClaudeSessionEvent = api.claude.onSessionEvent((event) => {
       if (event.type === "turnStart") {
         sessionState.handleTurnStart(event.threadId);
@@ -515,54 +526,59 @@ function EventRouter() {
     });
     const unsubPiSessionEvent = api.pi.onSessionEvent((event) => {
       if (event.type === "output") {
+        piOutputActivityFallback.handleOutput(event.threadId, event.data);
         sessionState.handleOutput(event.threadId, event.data);
       }
       if (event.type === "started") {
         sessionState.handleStarted(event.threadId);
       }
       if (event.type === "hibernated" || event.type === "exited") {
+        piOutputActivityFallback.handleDormant(event.threadId);
         sessionState.handleDormant(event.threadId, event.type);
       }
       if (event.type === "hookStatus") {
         // Pi status comes from the server-side runtime extension / JSONL watcher,
-        // with PTY output matching only as a fallback. "working" is applied
-        // directly; "completed" goes through the shared hook handler so
-        // timers / notifications match Claude terminal sessions.
-        if (event.hookStatus === "completed") {
-          const result = sessionState.handleHookStatus(event.threadId, "completed");
-          if (result.applied) {
-            updateDockBadge(useStore.getState().threads);
-            const currentThreadId = getCurrentThreadId();
-            const threads = useStore.getState().threads;
-            const thread = threads.find((t) => t.id === event.threadId);
-            dispatchTurnCompletedNotification(
-              event.threadId,
-              thread?.title ?? "Thread",
-              event.threadId === currentThreadId,
-              () => {
-                void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
-              },
-            );
-
-            if (event.threadId !== currentThreadId) {
-              useStore.setState((state) => {
-                const threads = updateThread(state.threads, ThreadId.makeUnsafe(event.threadId), (t) => {
-                  if (!t.latestTurn?.startedAt) return t;
-                  if (t.latestTurn.completedAt) return t;
-                  return {
-                    ...t,
-                    latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
-                  };
-                });
-                return threads === state.threads ? state : { threads };
-              });
-            }
-          }
-        } else {
-          useStore
-            .getState()
-            .setHookStatus(ThreadId.makeUnsafe(event.threadId), event.hookStatus);
+        // with visible PTY output as a fallback while bytes are still arriving.
+        piOutputActivityFallback.handleRealHookStatus(event.threadId);
+        if (event.hookStatus === null) {
+          useStore.getState().setHookStatus(ThreadId.makeUnsafe(event.threadId), null);
           updateDockBadge(useStore.getState().threads);
+          return;
+        }
+
+        const result = sessionState.handleHookStatus(event.threadId, event.hookStatus, {
+          acceptStaleWorking: event.hookStatus === "working",
+        });
+        if (result.applied) {
+          updateDockBadge(useStore.getState().threads);
+        }
+
+        if (result.applied && result.hookStatus === "completed") {
+          const currentThreadId = getCurrentThreadId();
+          const threads = useStore.getState().threads;
+          const thread = threads.find((t) => t.id === event.threadId);
+          dispatchTurnCompletedNotification(
+            event.threadId,
+            thread?.title ?? "Thread",
+            event.threadId === currentThreadId,
+            () => {
+              void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
+            },
+          );
+
+          if (event.threadId !== currentThreadId) {
+            useStore.setState((state) => {
+              const threads = updateThread(state.threads, ThreadId.makeUnsafe(event.threadId), (t) => {
+                if (!t.latestTurn?.startedAt) return t;
+                if (t.latestTurn.completedAt) return t;
+                return {
+                  ...t,
+                  latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
+                };
+              });
+              return threads === state.threads ? state : { threads };
+            });
+          }
         }
       }
     });
@@ -572,6 +588,7 @@ function EventRouter() {
         // a previous server session don't cause dropped or misfiltered events.
         latestSequence = 0;
         sessionState.clearAll();
+        piOutputActivityFallback.clearAll();
         // Clear stale hookStatus values preserved in the Zustand store —
         // the state machine's internal tracking (timers, turnInProgress,
         // grace periods) was just wiped, so orphaned hookStatus values
@@ -647,6 +664,7 @@ function EventRouter() {
       syncSnapshotRef.current = null;
       domainEventFlushThrottler.cancel();
       sessionState.clearAll();
+      piOutputActivityFallback.clearAll();
       cancelQueuedSnapshotSyncRef.current = null;
       unsubDomainEvent();
       unsubTerminalEvent();

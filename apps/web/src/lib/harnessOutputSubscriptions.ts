@@ -26,24 +26,27 @@ function payloadSignature(payload: { claudeThreadIds: string[]; piThreadIds: str
   return `${payload.claudeThreadIds.toSorted().join(",")}\n${payload.piThreadIds.toSorted().join(",")}`;
 }
 
-function syncNow(): void {
+function syncNow(): Promise<void> {
   syncQueued = false;
-  if (!apiRef) return;
+  if (!apiRef) return Promise.resolve();
 
   const payload = payloadForVisibility();
   const signature = payloadSignature(payload);
-  if (signature === lastSentSignature) return;
+  if (signature === lastSentSignature) return Promise.resolve();
   lastSentSignature = signature;
 
-  void apiRef.server.setHarnessOutputSubscriptions(payload).catch(() => {
+  return apiRef.server.setHarnessOutputSubscriptions(payload).catch((error: unknown) => {
     lastSentSignature = null;
+    throw error;
   });
 }
 
 function scheduleSync(): void {
   if (syncQueued) return;
   syncQueued = true;
-  queueMicrotask(syncNow);
+  queueMicrotask(() => {
+    void syncNow().catch(() => undefined);
+  });
 }
 
 function ensureInitialized(): void {
@@ -61,20 +64,35 @@ function ensureInitialized(): void {
   });
 }
 
+export interface HarnessOutputSubscriptionRegistration {
+  /** Resolves after the server acknowledged the newly added subscription. */
+  readonly ready: Promise<void>;
+  readonly unsubscribe: () => void;
+}
+
 export function registerHarnessOutputSubscription(
   api: NativeApi,
   harness: HarnessKind,
   threadId: string,
-): () => void {
+): HarnessOutputSubscriptionRegistration {
   apiRef = api;
   ensureInitialized();
 
   const target = harness === "pi" ? piThreadIds : claudeThreadIds;
   target.add(threadId);
-  scheduleSync();
+  // The terminal view must not ask for catch-up scrollback until the server has
+  // acknowledged this subscription. Otherwise a status/hook event can prompt
+  // navigation, getScrollback can snapshot just before the corresponding PTY
+  // bytes, and those bytes can still be filtered because the subscription has
+  // not reached the server yet. A later PTY resize then makes the missing TUI
+  // frame appear, which looks like a render bug.
+  const ready = syncNow();
 
-  return () => {
-    target.delete(threadId);
-    scheduleSync();
+  return {
+    ready,
+    unsubscribe: () => {
+      target.delete(threadId);
+      scheduleSync();
+    },
   };
 }

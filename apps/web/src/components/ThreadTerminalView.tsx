@@ -755,7 +755,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     const api = readNativeApi();
     if (!api) return;
     const activeApi = api;
-    const unregisterOutputSubscription = registerHarnessOutputSubscription(api, harness, threadId);
+    const outputSubscription = registerHarnessOutputSubscription(api, harness, threadId);
 
     let disposed = false;
 
@@ -1129,35 +1129,32 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     // delta to avoid resetting the terminal and losing old scrollback history.
     const sinceOffset = entry.lastServerOffset > 0 ? entry.lastServerOffset : undefined;
     const scrollbackRequest = sinceOffset != null ? { threadId, sinceOffset } : { threadId };
-    void getHarnessScrollback(api, harness, scrollbackRequest)
-      .then((result) => {
+    void outputSubscription.ready
+      .catch(() => undefined)
+      .then(() => {
         if (disposed) return;
-        pendingScrollback = {
-          scrollback: result.scrollback,
-          offset: result.offset ?? null,
-          reset: result.reset ?? false,
-        };
-        flushIfReady();
-      })
-      .catch(() => {
-        if (disposed) return;
-        // Even if scrollback fetch fails, allow live events after fit
-        pendingScrollback = { scrollback: "", offset: null, reset: false };
-        flushIfReady();
+        return getHarnessScrollback(api, harness, scrollbackRequest)
+          .then((result) => {
+            if (disposed) return;
+            pendingScrollback = {
+              scrollback: result.scrollback,
+              offset: result.offset ?? null,
+              reset: result.reset ?? false,
+            };
+            flushIfReady();
+          })
+          .catch(() => {
+            if (disposed) return;
+            // Even if scrollback fetch fails, allow live events after fit
+            pendingScrollback = { scrollback: "", offset: null, reset: false };
+            flushIfReady();
+          });
       });
 
-    // Safety: for reattach (terminal already has content), don't block the
-    // terminal for more than 200ms if the scrollback fetch is slow.  The cached
-    // terminal already displays previous output, so live events can flow while
-    // the delta fills in later (or is skipped entirely).
-    let scrollbackTimeoutId: ReturnType<typeof setTimeout> | undefined;
-    if (sinceOffset != null) {
-      scrollbackTimeoutId = setTimeout(() => {
-        if (disposed || terminalReady) return;
-        pendingScrollback = pendingScrollback ?? { scrollback: null, offset: null, reset: false };
-        flushIfReady();
-      }, 200);
-    }
+    // Do not let live output overtake the scrollback response. PTY bytes are
+    // stateful terminal commands, not replaceable records: if a late delta is
+    // skipped after newer live bytes advanced lastServerOffset, the first attach
+    // can show an older cached screen until the next reattach/resize.
 
     // Intercept macOS navigation shortcuts before the browser captures them
     terminal.attachCustomKeyEventHandler((event) => {
@@ -1489,7 +1486,6 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       preReadyOutputCompacted = false;
       if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       if (stickyMirrorRafId !== null) cancelAnimationFrame(stickyMirrorRafId);
-      if (scrollbackTimeoutId != null) clearTimeout(scrollbackTimeoutId);
       resetQueuedAltBufferWheel();
       window.clearInterval(activeViewTouchIntervalId);
       el.removeEventListener("paste", onPaste, { capture: true });
@@ -1503,7 +1499,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       inputDisposable.dispose();
       resizeDisposable.dispose();
       scrollDisposable.dispose();
-      unregisterOutputSubscription();
+      outputSubscription.unsubscribe();
       // Detach but keep in cache for instant reattachment
       claudeCache.detach(threadId);
     };
