@@ -15,6 +15,18 @@ describe("resolveScrollbackReplay", () => {
     ).toEqual({ scrollback: "abcdef", nextLastServerOffset: 6 });
   });
 
+  it("keeps full replay when no sinceOffset was requested despite cached offset", () => {
+    expect(
+      resolveScrollbackReplay({
+        scrollback: "abcdef",
+        resultOffset: 6,
+        reset: false,
+        sinceOffset: undefined,
+        lastServerOffset: 4,
+      }),
+    ).toEqual({ scrollback: "abcdef", nextLastServerOffset: 6 });
+  });
+
   it("does not replay stale reset responses or move offsets backwards", () => {
     expect(
       resolveScrollbackReplay({

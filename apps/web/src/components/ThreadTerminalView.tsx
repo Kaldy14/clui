@@ -1123,12 +1123,13 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    // Fetch scrollback from the server to catch output that arrived while the
-    // terminal was detached (user switched to another thread). If the cached
-    // terminal already has scrollback (lastServerOffset > 0), request only the
-    // delta to avoid resetting the terminal and losing old scrollback history.
-    const sinceOffset = entry.lastServerOffset > 0 ? entry.lastServerOffset : undefined;
-    const scrollbackRequest = sinceOffset != null ? { threadId, sinceOffset } : { threadId };
+    // Fetch a full scrollback snapshot when focusing a running thread. Detached
+    // TUI sessions often emit only small incremental paints while hidden; replaying
+    // those deltas over an old xterm screen can leave stale/random content until a
+    // real resize forces the TUI to repaint. A full replay resets xterm and
+    // deterministically rebuilds the current terminal state.
+    const scrollbackRequest: { threadId: ThreadId; sinceOffset?: number } = { threadId };
+    const sinceOffset = scrollbackRequest.sinceOffset;
     void outputSubscription.ready
       .catch(() => undefined)
       .then(() => {

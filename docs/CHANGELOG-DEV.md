@@ -4,6 +4,38 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-14 — `0.0.28` Apple Silicon mac build refreshed
+
+**Problem:** A macOS Apple Silicon desktop artifact was needed for the current source version.
+
+**Root cause:** The latest focus-scrollback fix had not yet been packaged into a local arm64 release artifact.
+
+**Fix:** Revalidated with `bun lint` and `bun typecheck`, then built the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
+
+**Affected files:**
+- `release/Clui-0.0.28-arm64.dmg`
+- `release/Clui-0.0.28-arm64.zip`
+- `release/Clui-0.0.28-arm64.dmg.blockmap`
+- `release/Clui-0.0.28-arm64.zip.blockmap`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-14 — Focused running terminals replay full scrollback
+
+**Problem:** Returning to a running thread could show only a few fresh lines over stale/random cached terminal content until a manual window resize forced the TUI to repaint.
+
+**Root cause:** Active terminal reattach requested only the delta since the cached xterm offset. Background TUI output can be incremental and not a complete screen paint, so applying that delta over an old detached xterm surface was not deterministic.
+
+**Fix:** Active terminal focus now requests a full scrollback snapshot, using the existing reset-and-replay path to rebuild the terminal state before live output is released. Added focused replay coverage for the no-`sinceOffset` path.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/terminalScrollbackReplay.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-14 — Worktree thread indicator added
 
 **Problem:** Threads that were running from a dedicated worktree were not visually distinguishable in the top bar or sidebar thread list.
