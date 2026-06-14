@@ -60,6 +60,7 @@ import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "./ui/popove
 import { Toggle } from "./ui/toggle";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
+import { WorktreeIndicator } from "./WorktreeIndicator";
 
 // ── Status Badge ──────────────────────────────────────────────────────
 
@@ -110,7 +111,15 @@ type TitleDragState = {
 
 const TITLE_DRAG_THRESHOLD_PX = 3;
 
-function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string }) {
+function EditableTitle({
+  threadId,
+  title,
+  worktreePath,
+}: {
+  threadId: ThreadId;
+  title: string;
+  worktreePath: string | null;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -194,18 +203,21 @@ function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string 
 
   if (editing) {
     return (
-      <input
-        ref={inputRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-          if (e.key === "Escape") setEditing(false);
-        }}
-        className="h-5 w-full min-w-0 rounded-sm border border-primary/40 bg-background/80 px-1 font-[inherit] text-xs font-medium text-foreground outline-none ring-1 ring-primary/20"
-        spellCheck={false}
-      />
+      <div className="flex min-w-0 w-full items-center gap-1">
+        <WorktreeIndicator worktreePath={worktreePath} iconClassName="size-3.5" />
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          className="h-5 min-w-0 flex-1 rounded-sm border border-primary/40 bg-background/80 px-1 font-[inherit] text-xs font-medium text-foreground outline-none ring-1 ring-primary/20"
+          spellCheck={false}
+        />
+      </div>
     );
   }
 
@@ -231,8 +243,11 @@ function EditableTitle({ threadId, title }: { threadId: ThreadId; title: string 
       title="Double-click to rename"
       aria-label={`Rename ${title}`}
     >
-      <span className="thread-title-fade block min-w-0 overflow-hidden whitespace-nowrap">
-        {title}
+      <span className="flex min-w-0 items-center gap-1">
+        <WorktreeIndicator worktreePath={worktreePath} iconClassName="size-3.5" />
+        <span className="thread-title-fade block min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+          {title}
+        </span>
       </span>
     </button>
   );
@@ -712,7 +727,11 @@ export default function TerminalToolbar({
       >
         {/* Title */}
         <div className="flex min-w-0 flex-1">
-          <EditableTitle threadId={threadId} title={thread.title} />
+          <EditableTitle
+            threadId={threadId}
+            title={thread.title}
+            worktreePath={thread.worktreePath}
+          />
         </div>
 
         {/* Read-only branch badge */}

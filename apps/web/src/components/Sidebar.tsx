@@ -96,6 +96,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { PurgeSessionsButton, PurgeSessionsDialog } from "./PurgeSessionsButton";
+import { WorktreeIndicator } from "./WorktreeIndicator";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import {
@@ -521,6 +522,7 @@ function SidebarThreadRowBody({
         {thread.bookmarked && (
           <BookmarkIcon className="size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300/80 dark:text-amber-400/80" />
         )}
+        <WorktreeIndicator worktreePath={thread.worktreePath} />
         <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
       </div>
       <div className="relative ml-auto flex shrink-0 items-center gap-1.5">
@@ -2400,6 +2402,9 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                                   {thread.bookmarked && (
                                                     <BookmarkIcon className="size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300/80 dark:text-amber-400/80" />
                                                   )}
+                                                  <WorktreeIndicator
+                                                    worktreePath={thread.worktreePath}
+                                                  />
                                                   {renamingThreadId === thread.id ? (
                                                     <input
                                                       ref={(el) => {

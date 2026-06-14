@@ -4,6 +4,106 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-14 — Worktree thread indicator added
+
+**Problem:** Threads that were running from a dedicated worktree were not visually distinguishable in the top bar or sidebar thread list.
+
+**Root cause:** The UI showed branch and status metadata, but did not render any compact indicator from the existing `thread.worktreePath` state.
+
+**Fix:** Added a reusable worktree tree icon and rendered it before worktree-backed thread titles in the top bar, sidebar rows, and sidebar drag previews.
+
+**Affected files:**
+- `apps/web/src/components/WorktreeIndicator.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/components/Sidebar.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-13 — Pi decision gate wheel capture hardened
+
+**Problem:** The decision-gate dialog could still let mouse wheel input scroll the parent terminal instead of the modal after copy-mode changes.
+
+**Root cause:** Removing button-event mouse reporting made wheel capture unreliable in some terminal paths, and entering alternate screen separately from mouse capture could race the first render.
+
+**Fix:** Re-enabled button-event mouse reporting for normal dialog scroll mode, send alternate-screen plus mouse-capture as one startup sequence, and keep `Ctrl+O` copy mode disabling mouse capture for native text selection.
+
+**Affected files:**
+- `~/.pi/agent/extensions/decision-gate.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-13 — Pi decision gate copy support added
+
+**Problem:** Text in the decision-gate dialog could not be copied normally because mouse capture for dialog scrolling intercepted terminal selection.
+
+**Root cause:** Mouse reporting is required for wheel events, but drag mouse reporting blocks the terminal's native text selection path while the modal is open.
+
+**Fix:** Removed drag mouse reporting, split alternate-screen and mouse-capture modes, added `Ctrl+O` copy mode to temporarily disable mouse capture while the dialog stays visible, and added `Ctrl+Y` OSC 52 clipboard copy for the full decision transcript.
+
+**Affected files:**
+- `~/.pi/agent/extensions/decision-gate.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-13 — Pi decision gate mouse scroll restored
+
+**Problem:** After the streaming trace change, mouse wheel input could scroll the parent terminal history instead of the decision-gate dialog.
+
+**Root cause:** The modal enabled basic mouse reporting but did not enter the alternate screen or button-event reporting mode used by the more robust review dialogs, so some terminals still treated wheel input as scrollback.
+
+**Fix:** Enable alternate-screen mouse mode for the decision dialog, force a render after enabling it, disable the modes on close, and parse both SGR and legacy X10 wheel sequences.
+
+**Affected files:**
+- `~/.pi/agent/extensions/decision-gate.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-13 — Pi decision gate streams trace output
+
+**Problem:** Overscrolling upward in the decision-gate modal could hide lower chat content, and the side-agent response did not show live thinking or tool-call trace output.
+
+**Root cause:** The modal allowed `scrollFromBottom` to exceed the available chat content height and used `completeSimple()`, which only returns the final assistant message after streaming completes.
+
+**Fix:** Clamp modal scrolling to the rendered chat height and switch side-agent calls to `streamSimple()` so thinking deltas, tool-call events, and text deltas can render live inside the dialog. Tool-call execution remains disabled for the side agent.
+
+**Affected files:**
+- `~/.pi/agent/extensions/decision-gate.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-13 — Pi decision gate modal polished
+
+**Problem:** The decision-gate smoke test showed unnecessary final-summary review friction, repeated advisor labels, a redundant input label, and side-agent calls that did not inherit the main thread thinking level.
+
+**Root cause:** The first implementation treated the final handoff as an editable second screen and used `complete()` without passing pi's active thinking setting into the side-agent request.
+
+**Fix:** Auto-submit the generated handoff without showing a summary editor, render assistant text normally, tint user messages, remove the `Message` label, capture mouse wheel scrolling inside the modal, and call `completeSimple()` with the current pi thinking level.
+
+**Affected files:**
+- `~/.pi/agent/extensions/decision-gate.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-13 — Pi decision gate extension added
+
+**Problem:** Long-running pi threads needed a focused way to pause for high-impact decisions without writing shared decision files into the project root.
+
+**Root cause:** Existing pi flows either asked inline in the main thread or relied on project files, which is awkward for multiple concurrent threads and does not create a bounded decision handoff.
+
+**Fix:** Added a global `decision_gate` pi extension with a large modal side conversation, structured final handoff, `/decision` manual launch, `/decisions` session-local history, and session-scoped persistence through tool details/custom entries.
+
+**Affected files:**
+- `~/.pi/agent/extensions/decision-gate.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-13 — Idle pi thread focus no longer flashes Working
 
 **Problem:** Clicking an idle pi thread could make the sidebar show `Working` for a few seconds even though no turn was running.
