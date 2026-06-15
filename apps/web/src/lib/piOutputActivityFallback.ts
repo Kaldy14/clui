@@ -1,11 +1,13 @@
 import type { ClaudeHookStatus, TerminalStatus } from "@clui/contracts";
+import {
+  hasPiWorkingStatusOutput,
+  hasVisiblePiOutput,
+  stripPiTerminalControls,
+} from "@clui/shared/piTerminalStatus";
+
+export { hasPiWorkingStatusOutput, hasVisiblePiOutput, stripPiTerminalControls };
 
 export const PI_OUTPUT_ACTIVITY_IDLE_MS = 5_000;
-
-const TERMINAL_CONTROL_SEQUENCE_RE =
-  /\x1b(?:\][\s\S]*?(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[PX^_][\s\S]*?\x1b\\|[@-Z\\-_])/g;
-const NON_PRINTING_CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-const PI_WORKING_STATUS_RE = /\r[^\r\n]{0,80}\bWorking(?:\.{3,4}|…)/;
 
 export interface PiOutputActivityThreadState {
   readonly hookStatus: ClaudeHookStatus | null | undefined;
@@ -25,18 +27,6 @@ export interface PiOutputActivityFallback {
   readonly handleRealHookStatus: (rawThreadId: string) => void;
   readonly handleDormant: (rawThreadId: string) => void;
   readonly clearAll: () => void;
-}
-
-export function stripPiTerminalControls(data: string): string {
-  return data.replace(TERMINAL_CONTROL_SEQUENCE_RE, "").replace(NON_PRINTING_CONTROL_RE, "");
-}
-
-export function hasVisiblePiOutput(data: string): boolean {
-  return stripPiTerminalControls(data).trim().length > 0;
-}
-
-export function hasPiWorkingStatusOutput(data: string): boolean {
-  return PI_WORKING_STATUS_RE.test(stripPiTerminalControls(data));
 }
 
 export function createPiOutputActivityFallback(
@@ -91,7 +81,13 @@ export function createPiOutputActivityFallback(
     }
 
     if (!alreadyOutputDerived) {
-      restoreStatusByThread.set(rawThreadId, current.hookStatus ?? null);
+      // "Completed" is an attention marker, not a durable live state. Restoring
+      // it after a transient pi Working redraw can make a read completion look
+      // unread again because setHookStatus("completed") records a fresh marker.
+      restoreStatusByThread.set(
+        rawThreadId,
+        current.hookStatus === "completed" ? null : (current.hookStatus ?? null),
+      );
     }
 
     let changed = false;

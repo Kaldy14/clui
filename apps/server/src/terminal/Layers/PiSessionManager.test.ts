@@ -180,6 +180,33 @@ describe("PiSessionManagerRuntime", () => {
     expect(extensionSource).toContain("args.matchAll(/\\b\\d{2,}\\b/g)");
   });
 
+  it("enables per-process OpenAI fast mode through the runtime extension", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+
+    await runtime.startSession({
+      threadId: "thread-fast",
+      cwd,
+      cols: 100,
+      rows: 24,
+      fastMode: true,
+    });
+
+    const spawnInput = ptyAdapter.spawnInputs[0]!;
+    expect(spawnInput.env.CLUI_PI_FAST_MODE).toBe("1");
+
+    const extensionSource = await readFile(
+      path.join(stateDir, "pi-runtime", "clui-pi-session-sync.js"),
+      "utf8",
+    );
+    expect(extensionSource).toContain("before_provider_request");
+    expect(extensionSource).toContain("service_tier");
+    expect(extensionSource).toContain("openai-codex-responses");
+    expect(extensionSource).toContain("ctx.modelRegistry?.isUsingOAuth");
+  });
+
   it("passes a new-thread initial prompt through the runtime extension", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);
@@ -373,6 +400,30 @@ describe("PiSessionManagerRuntime", () => {
 
     await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
     ptyAdapter.processes[0]!.emitData("\x1b[2K\rWorking....");
+
+    const hookIndex = events.findIndex(
+      (event) => event.type === "hookStatus" && event.hookStatus === "working",
+    );
+    const outputIndex = events.findIndex(
+      (event) => event.type === "output" && event.data.includes("Working"),
+    );
+
+    expect(hookIndex).toBeGreaterThanOrEqual(0);
+    expect(outputIndex).toBeGreaterThanOrEqual(0);
+    expect(hookIndex).toBeLessThan(outputIndex);
+  });
+
+  it("infers working hook status from pi's spinner status line", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+    const events = collectEvents(runtime);
+
+    await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
+    ptyAdapter.processes[0]!.emitData(
+      "\x1b[?2026h\r\x1b[2K ⠧ \x1b[38;2;128;128;128mWorking...\x1b[39m",
+    );
 
     const hookIndex = events.findIndex(
       (event) => event.type === "hookStatus" && event.hookStatus === "working",

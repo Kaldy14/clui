@@ -20,6 +20,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./piTerminalStatus": {
+      "types": "./src/piTerminalStatus.ts",
+      "import": "./src/piTerminalStatus.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

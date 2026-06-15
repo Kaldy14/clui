@@ -67,7 +67,7 @@ describe("piOutputActivityFallback", () => {
     expect(ctx.onStatusChanged).not.toHaveBeenCalled();
   });
 
-  it("restores the prior status after output goes quiet", () => {
+  it("does not restore a completed attention badge after output goes quiet", () => {
     const ctx = createHarness();
     ctx.terminalStatusByThread.set("t1", "active");
     ctx.hookStatusByThread.set("t1", "completed");
@@ -77,7 +77,7 @@ describe("piOutputActivityFallback", () => {
     expect(ctx.hookStatusByThread.get("t1")).toBe("working");
 
     vi.advanceTimersByTime(1);
-    expect(ctx.hookStatusByThread.get("t1")).toBe("completed");
+    expect(ctx.hookStatusByThread.get("t1")).toBeNull();
   });
 
   it("keeps attention statuses instead of overriding them with working", () => {

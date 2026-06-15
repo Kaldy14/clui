@@ -4,6 +4,140 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-15 — macOS arm64 desktop artifact rebuilt
+
+**Problem:** A fresh Apple Silicon macOS desktop artifact was requested for the current Clui working tree.
+
+**Root cause:** The local release artifacts needed to be regenerated from the current version.
+
+**Fix:** Ran `bun lint`, `bun typecheck`, and `bun run dist:desktop:dmg:arm64`. The build completed and produced updated arm64 DMG/ZIP artifacts under ignored `release/` output.
+
+**Affected files:**
+- `release/Clui-0.0.28-arm64.dmg`
+- `release/Clui-0.0.28-arm64.zip`
+- `release/Clui-0.0.28-arm64.dmg.blockmap`
+- `release/Clui-0.0.28-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-15 — Completed sidebar badges stay read
+
+**Problem:** Sidebar threads could show `Completed` again after the user opened the completed thread and switched away without doing anything.
+
+**Root cause:** `Completed` hook status was treated like a durable live status. Snapshot/fallback paths could restore `hookStatus: "completed"` after the completion had already been visited, and the pi output fallback could record a fresh completion marker when restoring from transient `Working` output.
+
+**Fix:** Suppressed completed status pills when the completion marker has already been visited, and changed the pi output fallback to restore read completed states to idle instead of `completed`.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/lib/threadStatus.ts`
+- `apps/web/src/lib/threadStatus.test.ts`
+- `apps/web/src/lib/threadUnread.ts`
+- `apps/web/src/lib/piOutputActivityFallback.ts`
+- `apps/web/src/lib/piOutputActivityFallback.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-15 — Pi Fast mode checkbox for new threads
+
+**Problem:** The OpenAI Fast mode pi extension can only be toggled inside pi with `/fast`. Users creating pi threads from Clui had no way to opt in at thread creation, and no per-project default.
+
+**Root cause:** Clui's new-thread UI had no Fast mode control, did not persist a per-project Fast mode default, and did not propagate the flag to `pi.start` or the generated runtime extension.
+
+**Fix:** Added an optional `fastMode` field to the `pi.start` contract, forwarded it through the WebSocket server into `CLUI_PI_FAST_MODE`, and extended Clui's injected pi runtime extension to conditionally inject `service_tier: "priority"` for eligible OpenAI Codex OAuth GPT-5.4/5.5 requests. In the web UI, added a "Fast mode" toggle that appears only for pi harnesses, persists per project cwd, stores the value per thread, and is reused on resume/restart.
+
+**Affected files:**
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/lib/newThreadPreferences.ts`
+- `apps/web/src/lib/newThreadPreferences.test.ts`
+- `apps/web/src/terminalStateStore.ts`
+- `apps/web/src/terminalStateStore.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-14 — macOS arm64 desktop artifact rebuilt
+
+**Problem:** A fresh Apple Silicon macOS desktop binary was requested.
+
+**Root cause:** The local release artifacts needed to be regenerated from the current working tree.
+
+**Fix:** Ran `bun lint`, `bun typecheck`, then `bun run dist:desktop:dmg:arm64`. The build completed and produced updated arm64 DMG/ZIP artifacts under `release/`.
+
+**Affected files:**
+- `release/Clui-0.0.28-arm64.dmg`
+- `release/Clui-0.0.28-arm64.zip`
+- `release/Clui-0.0.28-arm64.dmg.blockmap`
+- `release/Clui-0.0.28-arm64.zip.blockmap`
+- `release/builder-debug.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-14 — New-thread branch picker shows local and origin refs, remembers project defaults
+
+**Problem:** New-thread branch selection collapsed matching local/remote refs to one visible option, so `main` and `origin/main` could not both be chosen. The picker also forgot the last env/branch choice for each project.
+
+**Root cause:** The branch picker always deduped remote refs with local-name matches, new-thread state had no per-project preference storage, and detached worktree creation silently converted local branch bases to the primary remote when one existed.
+
+**Fix:** Disabled remote dedupe only for the new-thread picker, deferred checkout until session start so selected refs stay distinct, persisted env mode + selected branch by project cwd, and made worktree creation honor the exact selected base (`main` vs `origin/main`).
+
+**Affected files:**
+- `apps/server/src/git/Layers/GitCore.ts`
+- `apps/server/src/git/Layers/GitCore.test.ts`
+- `apps/web/src/components/BranchToolbar.logic.ts`
+- `apps/web/src/components/BranchToolbar.logic.test.ts`
+- `apps/web/src/components/BranchToolbarBranchSelector.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/newThreadPreferences.ts`
+- `apps/web/src/lib/newThreadPreferences.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-14 — Pi Working badge kept for background threads
+
+**Problem:** The sidebar Working badge could disappear a few seconds after switching away from a still-running pi thread.
+
+**Root cause:** The server only recognized a bare `\rWorking...` status line. Real pi output includes spinner text before `Working...`, so the client used its temporary output fallback and then restored the previous status after 5s when the unfocused thread no longer received output.
+
+**Fix:** Moved pi status-line detection into shared code and used it on both server and web so spinner status lines emit a real hook status before output is filtered by focus.
+
+**Affected files:**
+- `packages/shared/src/piTerminalStatus.ts`
+- `packages/shared/package.json`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/web/src/lib/piOutputActivityFallback.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-14 — Sidebar status markers simplified
+
+**Problem:** Sidebar thread statuses showed a small dot before the status text, and worktree icons appeared after the status label.
+
+**Root cause:** The sidebar row markup rendered status dots inline before labels and placed the reusable worktree indicator later in the metadata sequence.
+
+**Fix:** Removed the sidebar status dot from thread rows and drag previews, extracted the status label renderer, and moved the worktree indicator before the status label.
+
+**Affected files:**
+- `apps/web/src/components/Sidebar.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-14 — `0.0.28` Apple Silicon mac build refreshed
 
 **Problem:** A macOS Apple Silicon desktop artifact was needed for the current source version.

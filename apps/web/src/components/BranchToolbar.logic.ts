@@ -33,8 +33,18 @@ export function resolveBranchToolbarValue(input: {
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
+  preferActiveThreadBranch?: boolean;
 }): string | null {
-  const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
+  const {
+    envMode,
+    activeWorktreePath,
+    activeThreadBranch,
+    currentGitBranch,
+    preferActiveThreadBranch = false,
+  } = input;
+  if (preferActiveThreadBranch && activeThreadBranch) {
+    return activeThreadBranch;
+  }
   if (envMode === "worktree" && !activeWorktreePath) {
     return activeThreadBranch ?? currentGitBranch;
   }
@@ -71,7 +81,12 @@ function deriveLocalBranchNameCandidatesFromRemoteRef(
 
 export function dedupeRemoteBranchesWithLocalMatches(
   branches: ReadonlyArray<GitBranch>,
+  options?: { dedupeRemotes?: boolean },
 ): ReadonlyArray<GitBranch> {
+  if (options?.dedupeRemotes === false) {
+    return branches;
+  }
+
   const localBranchNames = new Set(
     branches.filter((branch) => !branch.isRemote).map((branch) => branch.name),
   );

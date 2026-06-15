@@ -303,4 +303,27 @@ describe("resolveThreadStatusPill", () => {
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
   });
+
+  it("keeps a read completion hidden even if hookStatus remains completed", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestTurn: null,
+          lastCompletedAt: "2026-03-09T10:05:00.000Z",
+          lastVisitedAt: "2026-03-09T10:06:00.000Z",
+          terminalStatus: "active",
+          hookStatus: "completed",
+          session: {
+            ...baseThread.session,
+            status: "running",
+            orchestrationStatus: "running",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBeNull();
+  });
 });

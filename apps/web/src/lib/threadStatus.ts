@@ -1,6 +1,9 @@
 import type { ClaudeHookStatus, GitStatusResult, TerminalStatus } from "@clui/contracts";
 import type { Thread } from "../types";
-import { hasUnseenCompletion as hasUnseenThreadCompletion } from "./threadUnread";
+import {
+  hasSeenCompletion as hasSeenThreadCompletion,
+  hasUnseenCompletion as hasUnseenThreadCompletion,
+} from "./threadUnread";
 
 export interface ThreadStatusPill {
   label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Needs Input" | "Running" | "Paused" | "Error";
@@ -52,9 +55,12 @@ export function threadStatusPill(
     };
   }
 
+  const suppressReadCompletedHookStatus =
+    thread.hookStatus === "completed" && hasSeenThreadCompletion(thread);
+
   // Real-time hook status is the most authoritative signal when set.
   const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
-  if (pill) return pill;
+  if (pill && !suppressReadCompletedHookStatus) return pill;
 
   // Activity-based badges are only shown when the terminal is NOT active.
   // For active terminals, hookStatus (checked above) is the authoritative
@@ -79,7 +85,7 @@ export function threadStatusPill(
     }
   }
 
-  if (thread.session?.status === "running") {
+  if (thread.session?.status === "running" && !suppressReadCompletedHookStatus) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

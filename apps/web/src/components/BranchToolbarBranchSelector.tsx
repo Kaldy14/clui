@@ -47,6 +47,8 @@ interface BranchToolbarBranchSelectorProps {
   activeWorktreePath: string | null;
   branchCwd: string | null;
   branchPrefix?: string;
+  dedupeRemotes?: boolean;
+  deferCheckout?: boolean;
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
@@ -77,6 +79,8 @@ export function BranchToolbarBranchSelector({
   activeThreadBranch,
   activeWorktreePath,
   branchCwd,
+  dedupeRemotes = true,
+  deferCheckout = false,
   effectiveEnvMode,
   envLocked,
   onSetThreadBranch,
@@ -91,8 +95,11 @@ export function BranchToolbarBranchSelector({
   const branchesQuery = useQuery(gitBranchesQueryOptions(branchCwd));
   const branchStatusQuery = useQuery(gitStatusQueryOptions(branchCwd));
   const branches = useMemo(
-    () => dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? []),
-    [branchesQuery.data?.branches],
+    () =>
+      dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? [], {
+        dedupeRemotes,
+      }),
+    [branchesQuery.data?.branches, dedupeRemotes],
   );
   const currentGitBranch =
     branchStatusQuery.data?.branch ?? branches.find((branch) => branch.current)?.name ?? null;
@@ -101,6 +108,7 @@ export function BranchToolbarBranchSelector({
     activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
+    preferActiveThreadBranch: deferCheckout,
   });
   const branchNames = useMemo(() => branches.map((branch) => branch.name), [branches]);
   const branchByName = useMemo(
@@ -183,6 +191,13 @@ export function BranchToolbarBranchSelector({
     // In new-worktree mode, selecting a branch sets the base branch.
     if (isSelectingWorktreeBase) {
       onSetThreadBranch(branch.name, null);
+      setIsBranchMenuOpen(false);
+
+      return;
+    }
+
+    if (deferCheckout) {
+      onSetThreadBranch(branch.name, selectionTarget.nextWorktreePath);
       setIsBranchMenuOpen(false);
 
       return;

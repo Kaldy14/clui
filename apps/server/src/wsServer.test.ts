@@ -2531,6 +2531,7 @@ describe("WebSocket Server", () => {
         rows: 24,
         fresh: true,
         initialPrompt: "fix the pi launch prompt",
+        fastMode: true,
       });
 
       expect(response.error).toBeUndefined();
@@ -2541,6 +2542,7 @@ describe("WebSocket Server", () => {
         cwd: workspaceRoot,
         fresh: true,
         initialPrompt: "fix the pi launch prompt",
+        fastMode: true,
       });
     });
 

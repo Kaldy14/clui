@@ -479,6 +479,24 @@ function SidebarThreadDragHandle({
   );
 }
 
+function SidebarThreadStatusLabel({
+  threadStatus,
+}: {
+  threadStatus: ReturnType<typeof resolveThreadStatusPill> | null;
+}) {
+  if (!threadStatus) return null;
+
+  return (
+    <span
+      role="status"
+      aria-label={threadStatus.label}
+      className={`inline-flex items-center text-[10px] ${threadStatus.colorClass}`}
+    >
+      <span className="hidden md:inline">{threadStatus.label}</span>
+    </span>
+  );
+}
+
 function SidebarThreadRowBody({
   thread,
   isHighlighted,
@@ -503,26 +521,14 @@ function SidebarThreadRowBody({
             <GitPullRequestIcon className="size-3" />
           </span>
         )}
-        {threadStatus && (
-          <span
-            role="status"
-            aria-label={threadStatus.label}
-            className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
-          >
-            <span
-              aria-hidden="true"
-              className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${threadStatus.pulse ? "animate-pulse" : ""}`}
-            />
-            <span className="hidden md:inline">{threadStatus.label}</span>
-          </span>
-        )}
+        <WorktreeIndicator worktreePath={thread.worktreePath} />
+        <SidebarThreadStatusLabel threadStatus={threadStatus} />
         {thread.archivedAt && (
           <ArchiveIcon className="size-3 shrink-0 text-muted-foreground/55" />
         )}
         {thread.bookmarked && (
           <BookmarkIcon className="size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300/80 dark:text-amber-400/80" />
         )}
-        <WorktreeIndicator worktreePath={thread.worktreePath} />
         <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
       </div>
       <div className="relative ml-auto flex shrink-0 items-center gap-1.5">
@@ -2379,32 +2385,18 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                                       </TooltipPopup>
                                                     </Tooltip>
                                                   )}
-                                                  {threadStatus && (
-                                                    <span
-                                                      role="status"
-                                                      aria-label={threadStatus.label}
-                                                      className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
-                                                    >
-                                                      <span
-                                                        aria-hidden="true"
-                                                        className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
-                                                          threadStatus.pulse ? "animate-pulse" : ""
-                                                        }`}
-                                                      />
-                                                      <span className="hidden md:inline">
-                                                        {threadStatus.label}
-                                                      </span>
-                                                    </span>
-                                                  )}
+                                                  <WorktreeIndicator
+                                                    worktreePath={thread.worktreePath}
+                                                  />
+                                                  <SidebarThreadStatusLabel
+                                                    threadStatus={threadStatus}
+                                                  />
                                                   {thread.archivedAt && (
                                                     <ArchiveIcon className="size-3 shrink-0 text-muted-foreground/55" />
                                                   )}
                                                   {thread.bookmarked && (
                                                     <BookmarkIcon className="size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300/80 dark:text-amber-400/80" />
                                                   )}
-                                                  <WorktreeIndicator
-                                                    worktreePath={thread.worktreePath}
-                                                  />
                                                   {renamingThreadId === thread.id ? (
                                                     <input
                                                       ref={(el) => {

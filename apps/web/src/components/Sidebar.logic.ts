@@ -9,7 +9,10 @@ import type {
 import type { Thread } from "../types";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 import { claudeTerminalStatusPill } from "../lib/threadStatus";
-import { hasUnseenCompletion as hasUnseenThreadCompletion } from "../lib/threadUnread";
+import {
+  hasSeenCompletion as hasSeenThreadCompletion,
+  hasUnseenCompletion as hasUnseenThreadCompletion,
+} from "../lib/threadUnread";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
@@ -167,12 +170,15 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
+  const suppressReadCompletedHookStatus =
+    thread.hookStatus === "completed" && hasSeenThreadCompletion(thread);
+
   // Real-time hook status is the most authoritative signal when set.
   // Check it before activity-based pending approvals so that stale
   // "approval.requested" activities (whose "approval.resolved" event
   // hasn't arrived yet) don't override a live "Working" badge.
   const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
-  if (terminalPill) return terminalPill;
+  if (terminalPill && !suppressReadCompletedHookStatus) return terminalPill;
 
   // Activity-based badges are only shown when the terminal is NOT active.
   // For active terminals, hookStatus (checked above) is the authoritative
@@ -200,7 +206,7 @@ export function resolveThreadStatusPill(input: {
     }
   }
 
-  if (thread.session?.status === "running") {
+  if (thread.session?.status === "running" && !suppressReadCompletedHookStatus) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

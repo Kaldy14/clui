@@ -1717,6 +1717,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           fresh,
           resumeSessionFile,
           initialPrompt,
+          fastMode,
         } = stripRequestTag(request.body);
 
         const resolvedCwd = yield* resolveHarnessSessionCwd(requestedCwd, threadId);
@@ -1729,6 +1730,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ...(fresh !== undefined ? { fresh } : {}),
           ...(resumeSessionFile !== undefined ? { resumeSessionFile } : {}),
           ...(initialPrompt !== undefined ? { initialPrompt } : {}),
+          ...(fastMode !== undefined ? { fastMode } : {}),
         });
         if (initialPrompt && initialPrompt.trim().length > 0) {
           dispatchAutoTitleIfNeeded(threadId, initialPrompt);

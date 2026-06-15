@@ -655,6 +655,9 @@ export default function TerminalToolbar({
   const yoloMode = useTerminalStateStore(
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
   );
+  const piFastMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piFastMode,
+  );
   const setYoloMode = useTerminalStateStore((s) => s.setYoloMode);
 
   const handleYoloToggle = useCallback(
@@ -699,6 +702,7 @@ export default function TerminalToolbar({
           cols,
           rows,
           ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
+          ...(piFastMode ? { fastMode: true } : {}),
         });
       } else {
         await api.claude.start({
@@ -713,7 +717,7 @@ export default function TerminalToolbar({
     } catch {
       // Start failure handled by ThreadTerminalView
     }
-  }, [threadId, thread, project, yoloMode]);
+  }, [threadId, thread, project, yoloMode, piFastMode]);
 
   if (!thread) return null;
 
@@ -944,6 +948,7 @@ export default function TerminalToolbar({
                             ...(thread.piSessionFile
                               ? { resumeSessionFile: thread.piSessionFile }
                               : {}),
+                            ...(piFastMode ? { fastMode: true } : {}),
                           });
                         } else {
                           void api.claude.start({

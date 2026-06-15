@@ -5,6 +5,7 @@ import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs
 import path from "node:path";
 
 import type { ClaudeHookStatus, PiSessionEvent, TerminalStatus } from "@clui/contracts";
+import { hasPiWorkingStatusOutput, stripPiTerminalControls } from "@clui/shared/piTerminalStatus";
 import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
@@ -38,6 +39,7 @@ const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
 const CLUI_PI_THREAD_ID_ENV = "CLUI_PI_THREAD_ID";
 const CLUI_PI_SESSION_SYNC_DIR_ENV = "CLUI_PI_SESSION_SYNC_DIR";
 const CLUI_PI_INITIAL_PROMPT_FILE_ENV = "CLUI_PI_INITIAL_PROMPT_FILE";
+const CLUI_PI_FAST_MODE_ENV = "CLUI_PI_FAST_MODE";
 const PI_RUNTIME_AGENT_DIR_NAME = "pi-agent";
 const PI_LEGACY_THREAD_SESSION_DIR_NAME = "pi-sessions";
 const PI_SESSION_SYNC_DIR_NAME = "pi-session-sync";
@@ -53,11 +55,8 @@ const PI_HOOK_STATUSES = new Set<ClaudeHookStatus>([
 ]);
 // Fallback only: pi's TUI rewrites its status line with carriage returns while
 // the runtime extension / JSONL watcher provide the authoritative status.
-const PI_WORKING_STATUS_RE = /\r\s*Working(?:\.{3,4}|…)/;
 const PI_STATUS_DETECTION_TAIL_LENGTH = 160;
 const INITIAL_PROMPT_FILE_CLEANUP_MS = 5 * 60 * 1000;
-const TERMINAL_CONTROL_SEQUENCE_RE =
-  /\x1b(?:\][\s\S]*?(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[PX^_][\s\S]*?\x1b\\|[@-Z\\-_])/g;
 
 class ScrollbackRingBuffer {
   private lines: string[] = [];
@@ -159,6 +158,7 @@ import path from "node:path";
 const syncDir = process.env.${CLUI_PI_SESSION_SYNC_DIR_ENV};
 const threadId = process.env.${CLUI_PI_THREAD_ID_ENV};
 const initialPromptFile = process.env.${CLUI_PI_INITIAL_PROMPT_FILE_ENV};
+const fastModeEnabled = process.env.${CLUI_PI_FAST_MODE_ENV} === "1";
 const processRegistryDir = process.env.${CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV};
 const processRegistryOwnerPid = Number(process.env.${CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV} ?? 0);
 const userInputToolNames = new Set([
@@ -181,6 +181,39 @@ function normalizeToolName(toolName) {
 
 function isUserInputTool(toolName) {
   return userInputToolNames.has(normalizeToolName(toolName));
+}
+
+const FAST_STATUS_ID = "clui-openai-fast";
+const FAST_PROVIDER_ID = "openai-codex";
+const FAST_API_ID = "openai-codex-responses";
+const FAST_SERVICE_TIER = "priority";
+const FAST_SUPPORTED_MODELS = new Set(["gpt-5.4", "gpt-5.5"]);
+
+function isPayloadRecord(payload) {
+  return typeof payload === "object" && payload !== null && !Array.isArray(payload);
+}
+
+function isFastEligible(ctx) {
+  const model = ctx.model;
+  if (!model) return false;
+  if (model.provider !== FAST_PROVIDER_ID) return false;
+  if (model.api !== FAST_API_ID) return false;
+  if (!FAST_SUPPORTED_MODELS.has(model.id)) return false;
+  return ctx.modelRegistry?.isUsingOAuth?.(model) === true;
+}
+
+function updateFastModeStatus(ctx) {
+  if (!ctx.hasUI) return;
+  ctx.ui.setStatus(FAST_STATUS_ID, fastModeEnabled && isFastEligible(ctx) ? "fast" : undefined);
+}
+
+function maybeInjectFastServiceTier(payload, ctx) {
+  if (!fastModeEnabled) return undefined;
+  if (!isFastEligible(ctx)) return undefined;
+  if (!isPayloadRecord(payload)) return undefined;
+  if (payload.model !== ctx.model?.id) return undefined;
+  if ("service_tier" in payload) return undefined;
+  return { ...payload, service_tier: FAST_SERVICE_TIER };
 }
 
 function writePayload(ctx, reason, hookStatus) {
@@ -311,6 +344,7 @@ export default function (pi) {
     pendingUserInputToolCallIds.clear();
     lastHookStatus = undefined;
     writePayload(ctx, event.reason);
+    updateFastModeStatus(ctx);
 
     const initialPrompt = takeInitialPrompt();
     if (initialPrompt) {
@@ -323,6 +357,16 @@ export default function (pi) {
         }
       }, 0);
     }
+  });
+
+  pi.on("model_select", async (_event, ctx) => {
+    updateFastModeStatus(ctx);
+  });
+
+  pi.on("before_provider_request", (event, ctx) => {
+    const nextPayload = maybeInjectFastServiceTier(event.payload, ctx);
+    updateFastModeStatus(ctx);
+    return nextPayload;
   });
 
   pi.on("agent_start", async (_event, ctx) => {
@@ -372,10 +416,6 @@ function parsePiHookStatus(value: unknown): ClaudeHookStatus | null | undefined 
   if (value === null) return null;
   if (typeof value !== "string") return undefined;
   return PI_HOOK_STATUSES.has(value as ClaudeHookStatus) ? (value as ClaudeHookStatus) : undefined;
-}
-
-function stripTerminalControlSequences(data: string): string {
-  return data.replace(TERMINAL_CONTROL_SEQUENCE_RE, "");
 }
 
 function normalizeInitialPrompt(prompt: string | undefined): string | null {
@@ -429,6 +469,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     fresh?: boolean;
     resumeSessionFile?: string;
     initialPrompt?: string;
+    fastMode?: boolean;
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
       await this.ensureRuntimeFiles();
@@ -497,6 +538,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         spawnEnv[CLUI_PI_SESSION_SYNC_DIR_ENV] = this.sessionSyncDir;
         if (initialPromptFile) {
           spawnEnv[CLUI_PI_INITIAL_PROMPT_FILE_ENV] = initialPromptFile;
+        }
+        if (input.fastMode === true) {
+          spawnEnv[CLUI_PI_FAST_MODE_ENV] = "1";
         }
         spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV] = this.processRegistryDir;
         spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV] = String(process.pid);
@@ -923,13 +967,13 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   }
 
   private applyOutputInferredHookStatus(entry: PiSessionEntry, data: string): void {
-    const visibleText = stripTerminalControlSequences(data);
+    const visibleText = stripPiTerminalControls(data);
     if (!visibleText) return;
 
     const statusSample = `${entry.statusDetectionTail}${visibleText}`;
     entry.statusDetectionTail = statusSample.slice(-PI_STATUS_DETECTION_TAIL_LENGTH);
 
-    if (entry.status === "active" && PI_WORKING_STATUS_RE.test(statusSample)) {
+    if (entry.status === "active" && hasPiWorkingStatusOutput(statusSample)) {
       this.applyHookStatusIfChanged(entry, "working");
     }
   }

@@ -1147,32 +1147,29 @@ const makeGitCore = Effect.gen(function* () {
       const worktreePath =
         input.path ?? path.join(homeDir, ".clui", "worktrees", repoName, defaultWorktreeName);
 
-      // When creating a new branch or detached worktree from a base, prefer the
-      // remote tracking ref so the worktree starts from the latest remote state
-      // (e.g. origin/main instead of local main which may be many commits behind).
-      let startPoint = input.branch;
-      if (input.newBranch || isDetached) {
-        const remoteName = yield* resolvePrimaryRemoteName(input.cwd).pipe(
-          Effect.orElseSucceed(() => null as string | null),
-        );
-        if (remoteName) {
-          const hasRemoteRef = yield* executeGit(
-            "GitCore.createWorktree.remoteRefExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/remotes/${remoteName}/${input.branch}`],
-            { allowNonZeroExit: true },
-          ).pipe(Effect.map((r) => r.code === 0));
-          if (hasRemoteRef) {
-            startPoint = `${remoteName}/${input.branch}`;
-          }
-        }
-      }
+      // Preserve the caller's selected base. `main` means local `main`;
+      // `origin/main` means the remote-tracking ref.
+      const startPoint = input.branch;
+      const remoteNamesForStartPoint = input.newBranch
+        ? yield* executeGit("GitCore.createWorktree.remoteNames", input.cwd, ["remote"], {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          }).pipe(
+            Effect.map((result) =>
+              result.code === 0 ? parseRemoteNames(result.stdout) : ([] as string[]),
+            ),
+            Effect.catch(() => Effect.succeed([] as string[])),
+          )
+        : [];
+      const startsFromRemoteRef =
+        input.newBranch !== undefined &&
+        parseRemoteRefWithRemoteNames(startPoint, remoteNamesForStartPoint) !== null;
 
       // Use --no-track when branching from a remote-tracking ref so the new
       // feature branch does NOT auto-track the base branch (e.g. origin/main).
       // Without this, `git push` would target origin/main instead of
       // origin/<newBranch>, which is almost never what the user wants.
-      const needsNoTrack = input.newBranch && startPoint !== input.branch;
+      const needsNoTrack = input.newBranch !== undefined && startsFromRemoteRef;
       const args = isDetached
         ? ["worktree", "add", "--detach", worktreePath, startPoint]
         : input.newBranch

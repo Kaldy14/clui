@@ -73,6 +73,18 @@ describe("resolveBranchToolbarValue", () => {
       }),
     ).toBe("main");
   });
+
+  it("can prefer a selected branch before deferred checkout", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "origin/main",
+        currentGitBranch: "main",
+        preferActiveThreadBranch: true,
+      }),
+    ).toBe("origin/main");
+  });
 });
 
 describe("deriveLocalBranchNameFromRemoteRef", () => {
@@ -93,6 +105,31 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
 });
 
 describe("dedupeRemoteBranchesWithLocalMatches", () => {
+  it("shows both local and remote refs when deduplication is disabled", () => {
+    const input: GitBranch[] = [
+      {
+        name: "main",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+      },
+      {
+        name: "origin/main",
+        isRemote: true,
+        remoteName: "origin",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+      },
+    ];
+
+    expect(
+      dedupeRemoteBranchesWithLocalMatches(input, { dedupeRemotes: false }).map(
+        (branch) => branch.name,
+      ),
+    ).toEqual(["main", "origin/main"]);
+  });
+
   it("hides remote refs when the matching local branch exists", () => {
     const input: GitBranch[] = [
       {

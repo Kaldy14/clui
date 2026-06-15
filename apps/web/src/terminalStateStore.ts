@@ -26,6 +26,8 @@ interface ThreadTerminalState {
   activeTerminalGroupId: string;
   /** When true, Claude Code sessions for this thread run with --dangerously-skip-permissions. */
   yoloMode: boolean;
+  /** When true, pi sessions for this thread use Fast mode. */
+  piFastMode: boolean;
   /** Draft text for the new-thread first prompt. */
   newThreadPromptDraft: string;
 }
@@ -153,6 +155,7 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
     left.activeTerminalId === right.activeTerminalId &&
     left.activeTerminalGroupId === right.activeTerminalGroupId &&
     left.yoloMode === right.yoloMode &&
+    left.piFastMode === right.piFastMode &&
     left.newThreadPromptDraft === right.newThreadPromptDraft &&
     arraysEqual(left.terminalIds, right.terminalIds) &&
     arraysEqual(left.runningTerminalIds, right.runningTerminalIds) &&
@@ -162,6 +165,8 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
 
 /** YOLO (--dangerously-skip-permissions) defaults ON; only consumed by Claude Code starts. */
 const DEFAULT_YOLO_MODE = true;
+/** Fast mode defaults OFF; only consumed by pi starts. */
+const DEFAULT_PI_FAST_MODE = false;
 
 const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   terminalOpen: false,
@@ -177,6 +182,7 @@ const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   ],
   activeTerminalGroupId: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
   yoloMode: DEFAULT_YOLO_MODE,
+  piFastMode: DEFAULT_PI_FAST_MODE,
   newThreadPromptDraft: "",
 });
 
@@ -187,6 +193,7 @@ function createDefaultThreadTerminalState(): ThreadTerminalState {
     runningTerminalIds: [...DEFAULT_THREAD_TERMINAL_STATE.runningTerminalIds],
     terminalGroups: copyTerminalGroups(DEFAULT_THREAD_TERMINAL_STATE.terminalGroups),
     yoloMode: DEFAULT_YOLO_MODE,
+    piFastMode: DEFAULT_PI_FAST_MODE,
     newThreadPromptDraft: "",
   };
 }
@@ -227,6 +234,7 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
       terminalGroups[0]?.id ??
       fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
     yoloMode: state.yoloMode ?? DEFAULT_YOLO_MODE,
+    piFastMode: state.piFastMode ?? DEFAULT_PI_FAST_MODE,
     newThreadPromptDraft: state.newThreadPromptDraft ?? "",
   };
   return threadTerminalStateEqual(state, normalized) ? state : normalized;
@@ -418,6 +426,7 @@ function closeThreadTerminal(state: ThreadTerminalState, terminalId: string): Th
     terminalGroups,
     activeTerminalGroupId: nextActiveTerminalGroupId,
     yoloMode: normalized.yoloMode,
+    piFastMode: normalized.piFastMode,
     newThreadPromptDraft: normalized.newThreadPromptDraft,
   });
 }
@@ -499,6 +508,7 @@ interface TerminalStateStoreState {
     hasRunningSubprocess: boolean,
   ) => void;
   setYoloMode: (threadId: ThreadId, yolo: boolean) => void;
+  setPiFastMode: (threadId: ThreadId, fastMode: boolean) => void;
   setNewThreadPromptDraft: (threadId: ThreadId, draft: string) => void;
   clearNewThreadPromptDraft: (threadId: ThreadId) => void;
   clearTerminalState: (threadId: ThreadId) => void;
@@ -574,6 +584,12 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
             const normalized = normalizeThreadTerminalState(state);
             if (normalized.yoloMode === yolo) return normalized;
             return { ...normalized, yoloMode: yolo };
+          }),
+        setPiFastMode: (threadId, fastMode) =>
+          updateTerminal(threadId, (state) => {
+            const normalized = normalizeThreadTerminalState(state);
+            if (normalized.piFastMode === fastMode) return normalized;
+            return { ...normalized, piFastMode: fastMode };
           }),
         setNewThreadPromptDraft: (threadId, draft) =>
           updateTerminal(threadId, (state) => {

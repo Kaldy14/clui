@@ -17,6 +17,7 @@ export const PiStartInput = Schema.Struct({
   fresh: Schema.optional(Schema.Boolean),
   resumeSessionFile: Schema.optional(TrimmedNonEmptyString),
   initialPrompt: Schema.optional(Schema.String),
+  fastMode: Schema.optional(Schema.Boolean),
 });
 export type PiStartInput = Schema.Codec.Encoded<typeof PiStartInput>;
 

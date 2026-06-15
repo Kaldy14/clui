@@ -30,6 +30,7 @@ describe("terminalStateStore actions", () => {
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
       activeTerminalGroupId: "group-default",
       yoloMode: true,
+      piFastMode: false,
       newThreadPromptDraft: "",
     });
   });
@@ -65,6 +66,23 @@ describe("terminalStateStore actions", () => {
       { id: "group-default", terminalIds: ["default"] },
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
+  });
+
+  it("tracks fast mode per thread", () => {
+    const store = useTerminalStateStore.getState();
+    store.setPiFastMode(THREAD_ID, true);
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .piFastMode,
+    ).toBe(true);
+
+    store.setPiFastMode(THREAD_ID, false);
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .piFastMode,
+    ).toBe(false);
   });
 
   it("tracks and clears new-thread prompt drafts", () => {

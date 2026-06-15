@@ -1061,6 +1061,48 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("preserves local and remote base refs for detached worktrees", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const tmp = yield* makeTmpDir();
+        yield* git(remote, ["init", "--bare"]);
+        yield* initRepoWithCommit(tmp);
+        const defaultBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(tmp, ["remote", "add", "origin", remote]);
+        yield* git(tmp, ["push", "-u", "origin", defaultBranch]);
+        const remoteSha = yield* git(tmp, ["rev-parse", `origin/${defaultBranch}`]);
+
+        yield* writeTextFile(path.join(tmp, "local-only.txt"), "local only\n");
+        yield* git(tmp, ["add", "local-only.txt"]);
+        yield* git(tmp, ["commit", "-m", "local only"]);
+        const localSha = yield* git(tmp, ["rev-parse", defaultBranch]);
+        expect(localSha).not.toBe(remoteSha);
+
+        const localWtPath = path.join(tmp, "wt-detached-local");
+        yield* createGitWorktree({
+          cwd: tmp,
+          branch: defaultBranch,
+          detach: true,
+          path: localWtPath,
+        });
+        expect(yield* git(localWtPath, ["rev-parse", "HEAD"])).toBe(localSha);
+
+        const remoteWtPath = path.join(tmp, "wt-detached-remote");
+        yield* createGitWorktree({
+          cwd: tmp,
+          branch: `origin/${defaultBranch}`,
+          detach: true,
+          path: remoteWtPath,
+        });
+        expect(yield* git(remoteWtPath, ["rev-parse", "HEAD"])).toBe(remoteSha);
+
+        yield* removeGitWorktree({ cwd: tmp, path: localWtPath });
+        yield* removeGitWorktree({ cwd: tmp, path: remoteWtPath });
+      }),
+    );
+
     it.effect("throws when new branch name already exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

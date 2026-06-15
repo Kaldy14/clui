@@ -2,6 +2,7 @@ import { type NativeApi, type ThreadId } from "@clui/contracts";
 import type { ClaudeSessionEvent, PiSessionEvent } from "@clui/contracts";
 import { PlayIcon, TerminalIcon } from "lucide-react";
 
+import { Checkbox } from "./ui/checkbox";
 import { Kbd } from "./ui/kbd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -44,6 +45,12 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { runProjectScriptInTerminal } from "./TerminalToolbar";
 import { useBranchToolbar } from "./useBranchToolbar";
+import {
+  readNewThreadPreference,
+  readNewThreadFastModePreference,
+  writeNewThreadPreference,
+  writeNewThreadFastModePreference,
+} from "../lib/newThreadPreferences";
 
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
 type HarnessKind = Thread["harness"];
@@ -62,6 +69,7 @@ function startHarnessSession(
     rows: number;
     fresh?: boolean;
     yoloMode?: boolean;
+    piFastMode?: boolean;
     initialPrompt?: string;
   },
 ): Promise<void> {
@@ -75,6 +83,7 @@ function startHarnessSession(
       ...(shouldStartFresh ? { fresh: true } : {}),
       ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
       ...(input.initialPrompt !== undefined ? { initialPrompt: input.initialPrompt } : {}),
+      ...(input.piFastMode ? { fastMode: true } : {}),
     });
   }
 
@@ -138,11 +147,18 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     (v: boolean) => setDangerouslySkipPermissions(threadId, v),
     [threadId, setDangerouslySkipPermissions],
   );
-  const [envMode, setEnvMode] = useState<EnvMode>("local");
+  const piFastMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piFastMode,
+  );
+  const setPiFastMode = useTerminalStateStore((s) => s.setPiFastMode);
+  const [envMode, setEnvModeState] = useState<EnvMode>("local");
+  const [localFastMode, setLocalFastMode] = useState<boolean>(piFastMode);
   const [prDialogOpen, setPrDialogOpen] = useState(false);
   const [prInitialReference, setPrInitialReference] = useState<string | null>(null);
   const project = useStore((s) => s.projects.find((p) => p.id === thread.projectId));
   const branchToolbar = useBranchToolbar(threadId);
+  const activeProjectCwd = branchToolbar.activeProjectCwd ?? project?.cwd ?? null;
+  const setThreadBranchMetadata = branchToolbar.setThreadBranch;
   const setThreadHarness = useStore((s) => s.setThreadHarness);
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
   const initialPrompt = useTerminalStateStore(
@@ -155,6 +171,59 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   const isWorktreePending = effectiveEnvMode === "worktree" && !thread.worktreePath;
   const isWorktreeBaseSelected = !isWorktreePending || !!thread.branch;
   const hasInitialPrompt = initialPrompt.trim().length > 0;
+
+  const persistNewThreadPreference = useCallback(
+    (nextEnvMode: EnvMode, nextBranch: string | null) => {
+      const cwd = activeProjectCwd;
+      const branch = nextBranch ?? thread.branch;
+      if (!cwd || !branch) return;
+      writeNewThreadPreference(cwd, { envMode: nextEnvMode, branch, fastMode: localFastMode });
+    },
+    [activeProjectCwd, thread.branch, localFastMode],
+  );
+
+  const setEnvMode = useCallback(
+    (nextEnvMode: EnvMode) => {
+      setEnvModeState(nextEnvMode);
+      persistNewThreadPreference(nextEnvMode, thread.branch);
+    },
+    [persistNewThreadPreference, thread.branch],
+  );
+
+  const setThreadBranch = useCallback(
+    (branch: string | null, worktreePath: string | null) => {
+      setThreadBranchMetadata(branch, worktreePath);
+      persistNewThreadPreference(worktreePath ? "worktree" : effectiveEnvMode, branch);
+    },
+    [effectiveEnvMode, persistNewThreadPreference, setThreadBranchMetadata],
+  );
+
+  // Load saved new-thread preference for this project once the project cwd is known.
+  const preferenceLoadedProjectCwdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (thread.terminalStatus !== "new") return;
+    const cwd = activeProjectCwd;
+    if (!cwd || preferenceLoadedProjectCwdRef.current === cwd) return;
+    preferenceLoadedProjectCwdRef.current = cwd;
+
+    const fastDefault = readNewThreadFastModePreference(cwd) ?? false;
+    setLocalFastMode(fastDefault);
+    setPiFastMode(threadId, fastDefault);
+
+    if (thread.branch || thread.worktreePath) return;
+    const saved = readNewThreadPreference(cwd);
+    if (!saved) return;
+    setEnvModeState(saved.envMode);
+    setThreadBranchMetadata(saved.branch, null);
+  }, [
+    activeProjectCwd,
+    setPiFastMode,
+    setThreadBranchMetadata,
+    thread.branch,
+    thread.worktreePath,
+    threadId,
+    thread.terminalStatus,
+  ]);
 
   const handleStart = useCallback(async () => {
     const api = readNativeApi();
@@ -176,7 +245,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
           detach: true,
           path: null,
         });
-        branchToolbar.setThreadBranch(null, result.worktree.path);
+        setThreadBranchMetadata(null, result.worktree.path);
         startCwd = result.worktree.path;
 
         // Run the setup script (runOnWorktreeCreate) if one is configured.
@@ -185,6 +254,13 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         if (setupScript) {
           runProjectScriptInTerminal(setupScript, threadId, project, result.worktree.path);
         }
+      } else if (effectiveEnvMode === "local" && thread.branch && project?.cwd) {
+        await api.git.checkout({ cwd: project.cwd, branch: thread.branch });
+        const status = await api.git.status({ cwd: project.cwd }).catch(() => null);
+        if (status?.branch && status.branch !== thread.branch) {
+          setThreadBranchMetadata(status.branch, null);
+        }
+        startCwd = project.cwd;
       }
       if (!startCwd) return;
       // cols/rows are initial defaults — ActiveTerminalView sends a corrective
@@ -195,6 +271,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         cols: 120,
         rows: 40,
         yoloMode: dangerouslySkipPermissions,
+        piFastMode: thread.harness === "pi" ? localFastMode : false,
         ...(initialPromptSentByStart ? { initialPrompt } : {}),
       });
       if (hasInitialPrompt && !initialPromptSentByStart) {
@@ -211,10 +288,12 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     cwd,
     isWorktreePending,
     project,
-    branchToolbar,
+    setThreadBranchMetadata,
     dangerouslySkipPermissions,
+    effectiveEnvMode,
     hasInitialPrompt,
     initialPrompt,
+    localFastMode,
     clearNewThreadPromptDraft,
   ]);
 
@@ -419,9 +498,11 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                 activeThreadBranch={branchToolbar.activeThreadBranch}
                 activeWorktreePath={branchToolbar.activeWorktreePath}
                 branchCwd={branchToolbar.branchCwd}
+                dedupeRemotes={false}
+                deferCheckout
                 effectiveEnvMode={effectiveEnvMode}
                 envLocked={!!thread.worktreePath}
-                onSetThreadBranch={branchToolbar.setThreadBranch}
+                onSetThreadBranch={setThreadBranch}
                 onCheckoutPullRequestRequest={(ref) => {
                   setPrInitialReference(ref);
                   setPrDialogOpen(true);
@@ -476,6 +557,21 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                   </button>
                 ))}
               </div>
+              {thread.harness === "pi" && activeProjectCwd && (
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs font-medium text-muted-foreground/70 transition-colors hover:text-foreground dark:border-border/20">
+                  <Checkbox
+                    checked={localFastMode}
+                    onCheckedChange={(checked) => {
+                      const next = checked === true;
+                      setLocalFastMode(next);
+                      setPiFastMode(threadId, next);
+                      writeNewThreadFastModePreference(activeProjectCwd, next);
+                    }}
+                    aria-label="Use OpenAI Fast mode for this pi thread"
+                  />
+                  Fast mode
+                </label>
+              )}
               {thread.harness === "claudeCode" && (
                 <button
                   type="button"
@@ -549,8 +645,13 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         initialReference={prInitialReference}
         onOpenChange={setPrDialogOpen}
         onPrepared={(input) => {
-          branchToolbar.setThreadBranch(input.branch, input.worktreePath);
-          if (input.worktreePath) setEnvMode("worktree");
+          setThreadBranch(input.branch, input.worktreePath);
+          if (input.worktreePath) {
+            setEnvModeState("worktree");
+            persistNewThreadPreference("worktree", input.branch);
+          } else {
+            persistNewThreadPreference("local", input.branch);
+          }
         }}
       />
     </div>
@@ -588,6 +689,9 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
   const yoloMode = useTerminalStateStore(
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  );
+  const piFastMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piFastMode,
   );
 
   // Render scrollback in a read-only xterm.js instance (or reuse cached)
@@ -675,12 +779,13 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
         cols,
         rows,
         yoloMode,
+        piFastMode,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resume session");
       setResuming(false);
     }
-  }, [thread, threadId, cwd, yoloMode]);
+  }, [thread, threadId, cwd, yoloMode, piFastMode]);
 
   // Auto-resume on mount for normal dormant threads. Archived threads must
   // stay paused when opened so the user sees the dormant snapshot + Resume

@@ -32,6 +32,15 @@ export function getUnreadVisitedAtForThread(thread: ThreadCompletionFields): str
   return completion ? new Date(completion.completedAtMs - 1).toISOString() : null;
 }
 
+export function hasSeenCompletion(thread: ThreadVisitFields): boolean {
+  const completion = getThreadCompletionMarker(thread);
+  if (!completion || !thread.lastVisitedAt) return false;
+
+  const lastVisitedAtMs = parseTimestamp(thread.lastVisitedAt);
+  if (lastVisitedAtMs === null) return false;
+  return completion.completedAtMs <= lastVisitedAtMs;
+}
+
 export function hasUnseenCompletion(thread: ThreadVisitFields): boolean {
   const completion = getThreadCompletionMarker(thread);
   if (!completion) return false;
