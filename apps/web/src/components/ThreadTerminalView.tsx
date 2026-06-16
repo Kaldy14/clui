@@ -25,10 +25,7 @@ import { appendCompactedTerminalOutput } from "../lib/terminalOutputCompaction";
 import { requestTerminalRepaint } from "../lib/terminalPtyRepaint";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
-import {
-  restoreTerminalInputModesForHarness,
-  writeTerminalActiveRepaintReset,
-} from "../lib/terminalReplay";
+import { restoreTerminalInputModesForHarness } from "../lib/terminalReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import { submitThreadPrompt } from "../lib/threadInput";
 import { setupProjectScript } from "../projectScripts";
@@ -1163,10 +1160,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (!requestInitialTerminalPtyRepaint()) return;
       gateOpened = true;
 
-      // Reset the local xterm to discard any stale cached screen. The PTY is
-      // the source of truth and will repaint shortly; do not synthesize
-      // alternate screen here because that makes wheel events become arrows.
-      writeTerminalActiveRepaintReset(queuedTerminalWriter, harness);
+      // Preserve the cached xterm buffer/scrollback on reattach. The PTY repaint
+      // refreshes the live screen without throwing away history, so normal scroll
+      // and pi's alternate-buffer scroll keep working after thread switches.
+      restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
       // The cached offset may belong to an older server-side session. We keep
       // the stored value until fresh output arrives, then accept that first
       // repaint/live offset even if it is lower than the cached baseline.

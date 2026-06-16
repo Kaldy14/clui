@@ -36,17 +36,3 @@ export function writeTerminalFullResetForReplay(
   terminal.write(TERMINAL_FULL_RESET_SEQUENCE);
   restoreTerminalInputModesForHarness(terminal, harness);
 }
-
-/**
- * Prepare xterm for fresh active repaint bytes without replaying full history.
- * Do not synthesize alternate-screen mode here: doing so makes wheel input take
- * the alternate-buffer arrow-key path even when the live TUI did not explicitly
- * re-enter alternate screen, which turns normal scroll into prompt history.
- */
-export function writeTerminalActiveRepaintReset(
-  terminal: TerminalWriter,
-  harness: CodingHarness,
-): void {
-  terminal.write(TERMINAL_FULL_RESET_SEQUENCE);
-  restoreTerminalInputModesForHarness(terminal, harness);
-}
