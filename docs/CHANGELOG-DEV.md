@@ -4,6 +4,25 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-16 — Title generation provider is selectable and visible
+
+**Problem:** Settings still showed a Claude Code-only install note even though Clui can use Codex for title and Git text generation, leaving users unable to tell whether `codex` was visible to Clui or choose it for thread titles.
+
+**Root cause:** CLI availability was not populated in `server.getConfig.providers`, and title generation always used the Claude-first path with Codex only as an implicit fallback. The persisted server settings schema had no title-generation provider preference.
+
+**Fix:** Added persisted `titleGenerationProvider` server setting (`claudeCode` or `codex`), surfaced Claude/Codex PATH availability in Settings, added a refreshable title-generation provider selector, and routed title generation through the selected primary provider with fallback to the other provider.
+
+**Affected files:**
+- `packages/contracts/src/server.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/server/src/git/Layers/HarnessTextGeneration.ts`
+- `apps/server/src/git/Layers/HarnessTextGeneration.test.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-15 — Active terminal attach is repaint-based instead of full-history replay
 
 **Problem:** Opening a long-running working thread could be both slow and visually stale/broken. The full-scrollback replay avoided some stale frames, but replaying huge terminal history through xterm made thread focus laggy.

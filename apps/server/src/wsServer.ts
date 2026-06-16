@@ -18,6 +18,7 @@ import {
   type ClientOrchestrationCommand,
   type ClaudeSessionEvent,
   type PiSessionEvent,
+  type ServerProviderStatus,
   type OrchestrationCommand,
   type OrchestrationReadModel,
   ORCHESTRATION_WS_CHANNELS,
@@ -65,7 +66,7 @@ import { CheckpointReactor } from "./orchestration/Services/CheckpointReactor";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { DiffReview } from "./diffReview/Services/DiffReview.ts";
 import { clamp } from "effect/Number";
-import { Open, resolveAvailableEditors } from "./open";
+import { isCommandAvailable, Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { loadServerSettings, saveServerSettings } from "./serverSettings";
 import { GitCore } from "./git/Services/GitCore.ts";
@@ -310,6 +311,40 @@ export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycl
 class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("RouteRequestError", {
   message: Schema.String,
 }) {}
+
+function buildProviderStatuses(): ServerProviderStatus[] {
+  const checkedAt = new Date().toISOString();
+  const providers: Array<{
+    provider: ServerProviderStatus["provider"];
+    command: string;
+    usage: string;
+  }> = [
+    {
+      provider: "claudeCode",
+      command: "claude",
+      usage: "terminal sessions and title generation",
+    },
+    {
+      provider: "codex",
+      command: "codex",
+      usage: "title and Git text generation",
+    },
+  ];
+
+  return providers.map(({ provider, command, usage }) => {
+    const available = isCommandAvailable(command);
+    return {
+      provider,
+      status: available ? "ready" : "warning",
+      available,
+      authStatus: "unknown",
+      checkedAt,
+      message: available
+        ? `${command} found on PATH for ${usage}.`
+        : `${command} was not found on PATH.`,
+    } satisfies ServerProviderStatus;
+  });
+}
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
@@ -1133,7 +1168,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       channel: WS_CHANNELS.serverConfigUpdated,
       data: {
         issues: event.issues,
-        providers: [],
+        providers: buildProviderStatuses(),
       },
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
@@ -1821,7 +1856,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
-          providers: [],
+          providers: buildProviderStatuses(),
           availableEditors,
           settings,
         };
@@ -1837,10 +1872,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         const settings = yield* Effect.promise(() => saveServerSettings(stateDir, body));
 
-        yield* claudeSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
-        yield* piSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
-        yield* macosSleepPreventer.setEnabled(settings.preventMacosSleepWhenThreadInProgress);
-        yield* runInactiveThreadAutoArchiveSweepSafely("settings-updated");
+        if (body.maxActiveHarnessSessions !== undefined) {
+          yield* claudeSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
+          yield* piSessionManager.setMaxActiveSessions(settings.maxActiveHarnessSessions);
+        }
+        if (body.preventMacosSleepWhenThreadInProgress !== undefined) {
+          yield* macosSleepPreventer.setEnabled(settings.preventMacosSleepWhenThreadInProgress);
+        }
+        if (body.autoArchiveInactiveThreadDays !== undefined) {
+          yield* runInactiveThreadAutoArchiveSweepSafely("settings-updated");
+        }
 
         return settings;
       }

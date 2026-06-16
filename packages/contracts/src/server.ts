@@ -51,6 +51,10 @@ export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
 const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 
+export const TitleGenerationProvider = Schema.Literals(["claudeCode", "codex"]);
+export type TitleGenerationProvider = typeof TitleGenerationProvider.Type;
+
+export const DEFAULT_TITLE_GENERATION_PROVIDER: TitleGenerationProvider = "claudeCode";
 export const DEFAULT_ACTIVE_HARNESS_SESSION_CAP = 10;
 export const MIN_ACTIVE_HARNESS_SESSION_CAP = 1;
 export const MAX_ACTIVE_HARNESS_SESSION_CAP = 100;
@@ -68,6 +72,10 @@ const AutoArchiveInactiveThreadDays = NonNegativeInt.check(
 );
 
 export const ServerSettings = Schema.Struct({
+  titleGenerationProvider: TitleGenerationProvider.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_TITLE_GENERATION_PROVIDER),
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TITLE_GENERATION_PROVIDER)),
+  ),
   maxActiveHarnessSessions: MaxActiveHarnessSessions.pipe(
     Schema.withDecodingDefault(() => DEFAULT_ACTIVE_HARNESS_SESSION_CAP),
     Schema.withConstructorDefault(() => Option.some(DEFAULT_ACTIVE_HARNESS_SESSION_CAP)),
@@ -97,6 +105,7 @@ export const ServerConfig = Schema.Struct({
 export type ServerConfig = typeof ServerConfig.Type;
 
 export const ServerUpdateSettingsInput = Schema.Struct({
+  titleGenerationProvider: Schema.optional(TitleGenerationProvider),
   maxActiveHarnessSessions: Schema.optional(MaxActiveHarnessSessions),
   preventMacosSleepWhenThreadInProgress: Schema.optional(Schema.Boolean),
   autoArchiveInactiveThreadDays: Schema.optional(AutoArchiveInactiveThreadDays),

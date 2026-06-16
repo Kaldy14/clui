@@ -17,6 +17,7 @@ import {
   DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
   DEFAULT_TERMINAL_ID,
+  DEFAULT_TITLE_GENERATION_PROVIDER,
   EDITORS,
   ORCHESTRATION_WS_METHODS,
   WS_CHANNELS,
@@ -445,6 +446,17 @@ function expectAvailableEditors(value: unknown): void {
   }
 }
 
+function expectCliProviderStatuses(value: unknown): void {
+  expect(Array.isArray(value)).toBe(true);
+  const providers = value as Array<{ provider?: unknown; available?: unknown; message?: unknown }>;
+  expect(providers.some((provider) => provider.provider === "claudeCode")).toBe(true);
+  expect(providers.some((provider) => provider.provider === "codex")).toBe(true);
+  for (const provider of providers) {
+    expect(typeof provider.available).toBe("boolean");
+    expect(typeof provider.message).toBe("string");
+  }
+}
+
 describe("WebSocket Server", () => {
   let server: Http.Server | null = null;
   let serverScope: Scope.Closeable | null = null;
@@ -867,15 +879,64 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
-      providers: [],
+      providers: expect.any(Array),
       availableEditors: expect.any(Array),
       settings: {
+        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
         autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
       },
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+    expectCliProviderStatuses((response.result as { providers: unknown }).providers);
+  });
+
+  it("reports CLI provider availability from PATH", async () => {
+    const stateDir = makeTempDir("clui-state-provider-status-");
+    const binDir = makeTempDir("clui-provider-bin-");
+    const codexName = process.platform === "win32" ? "codex.cmd" : "codex";
+    const codexPath = path.join(binDir, codexName);
+    fs.writeFileSync(codexPath, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+    if (process.platform !== "win32") {
+      fs.chmodSync(codexPath, 0o755);
+    }
+
+    const previousPath = process.env.PATH;
+    try {
+      process.env.PATH = binDir;
+      server = await createTestServer({ cwd: "/my/workspace", stateDir });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws);
+
+      const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
+      expect(response.error).toBeUndefined();
+      const providers = (response.result as { providers: Array<Record<string, unknown>> }).providers;
+      expect(providers.find((provider) => provider.provider === "codex")).toMatchObject({
+        provider: "codex",
+        available: true,
+        status: "ready",
+        authStatus: "unknown",
+        message: expect.stringContaining("codex found on PATH"),
+      });
+      expect(providers.find((provider) => provider.provider === "claudeCode")).toMatchObject({
+        provider: "claudeCode",
+        available: false,
+        status: "warning",
+        authStatus: "unknown",
+        message: expect.stringContaining("claude was not found on PATH"),
+      });
+    } finally {
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
   });
 
   it("bootstraps default keybindings file when missing", async () => {
@@ -898,9 +959,10 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
-      providers: [],
+      providers: expect.any(Array),
       availableEditors: expect.any(Array),
       settings: {
+        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
         autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
@@ -939,9 +1001,10 @@ describe("WebSocket Server", () => {
           message: expect.stringContaining("expected JSON array"),
         },
       ],
-      providers: [],
+      providers: expect.any(Array),
       availableEditors: expect.any(Array),
       settings: {
+        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
         autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
@@ -1004,8 +1067,9 @@ describe("WebSocket Server", () => {
     expect(result.keybindings).toHaveLength(DEFAULT_RESOLVED_KEYBINDINGS.length);
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
-    expect(result.providers).toEqual([]);
+    expect(result.providers).toEqual(expect.any(Array));
     expect(result.settings).toEqual({
+      titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
       maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
@@ -1017,7 +1081,7 @@ describe("WebSocket Server", () => {
     const stateDir = makeTempDir("clui-state-server-settings-");
     fs.writeFileSync(
       getServerSettingsPath(stateDir),
-      JSON.stringify({ maxActiveHarnessSessions: 7 }),
+      JSON.stringify({ titleGenerationProvider: "codex", maxActiveHarnessSessions: 7 }),
       "utf8",
     );
 
@@ -1032,11 +1096,14 @@ describe("WebSocket Server", () => {
     const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(response.error).toBeUndefined();
     expect(response.result).toMatchObject({
-      settings: { maxActiveHarnessSessions: 7 },
+      settings: {
+        titleGenerationProvider: "codex",
+        maxActiveHarnessSessions: 7,
+      },
     });
   });
 
-  it("updates server settings and applies the active session cap to both harness managers", async () => {
+  it("updates server settings and applies changed runtime settings", async () => {
     const stateDir = makeTempDir("clui-state-update-server-settings-");
     const claudeCaps: number[] = [];
     const piCaps: number[] = [];
@@ -1075,29 +1142,82 @@ describe("WebSocket Server", () => {
     await waitForMessage(ws);
 
     const response = await sendRequest(ws, WS_METHODS.serverUpdateSettings, {
+      titleGenerationProvider: "codex",
       maxActiveHarnessSessions: 7,
     });
 
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
+      titleGenerationProvider: "codex",
       maxActiveHarnessSessions: 7,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
     });
     expect(claudeCaps).toEqual([7]);
     expect(piCaps).toEqual([7]);
-    expect(sleepPreventionEnabled).toEqual([DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS]);
+    expect(sleepPreventionEnabled).toEqual([]);
     expect(
       JSON.parse(fs.readFileSync(getServerSettingsPath(stateDir), "utf8")) as {
+        titleGenerationProvider: string;
         maxActiveHarnessSessions: number;
         preventMacosSleepWhenThreadInProgress: boolean;
         autoArchiveInactiveThreadDays: number;
       },
     ).toEqual({
+      titleGenerationProvider: "codex",
       maxActiveHarnessSessions: 7,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
     });
+  });
+
+  it("updates the title generation provider without touching harness runtime settings", async () => {
+    const stateDir = makeTempDir("clui-state-update-title-provider-");
+    const claudeCaps: number[] = [];
+    const piCaps: number[] = [];
+    const sleepPreventionEnabled: boolean[] = [];
+
+    server = await createTestServer({
+      cwd: "/my/workspace",
+      stateDir,
+      claudeSessionManager: {
+        ...defaultClaudeSessionManager,
+        setMaxActiveSessions: (maxActive) => {
+          claudeCaps.push(maxActive);
+          return Effect.void;
+        },
+      },
+      piSessionManager: {
+        ...defaultPiSessionManager,
+        setMaxActiveSessions: (maxActive) => {
+          piCaps.push(maxActive);
+          return Effect.void;
+        },
+      },
+      macosSleepPreventer: {
+        ...defaultMacosSleepPreventer,
+        setEnabled: (enabled) => {
+          sleepPreventionEnabled.push(enabled);
+          return Effect.void;
+        },
+      },
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.serverUpdateSettings, {
+      titleGenerationProvider: "codex",
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({ titleGenerationProvider: "codex" });
+    expect(claudeCaps).toEqual([]);
+    expect(piCaps).toEqual([]);
+    expect(sleepPreventionEnabled).toEqual([]);
   });
 
   it("purges dormant sessions and hibernates eligible active sessions", async () => {
@@ -1208,7 +1328,7 @@ describe("WebSocket Server", () => {
     );
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
-      providers: [],
+      providers: expect.any(Array),
     });
 
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
@@ -1219,7 +1339,7 @@ describe("WebSocket Server", () => {
         Array.isArray((push.data as { issues?: unknown[] }).issues) &&
         (push.data as { issues: unknown[] }).issues.length === 0,
     );
-    expect(successPush.data).toEqual({ issues: [], providers: [] });
+    expect(successPush.data).toEqual({ issues: [], providers: expect.any(Array) });
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -1279,9 +1399,10 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
-      providers: [],
+      providers: expect.any(Array),
       availableEditors: expect.any(Array),
       settings: {
+        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
         autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
@@ -1332,9 +1453,10 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
-      providers: [],
+      providers: expect.any(Array),
       availableEditors: expect.any(Array),
       settings: {
+        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
         maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
         preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
         autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,

@@ -11,8 +11,10 @@ import {
   MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   type CodingHarness,
   type ProviderKind,
+  type ServerConfig,
   type ServerUpdateSettingsInput,
   type ThreadId,
+  type TitleGenerationProvider,
 } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 
@@ -168,6 +170,9 @@ function SettingsRouteView() {
   const [maxActiveHarnessSessionsInput, setMaxActiveHarnessSessionsInput] = useState("");
   const [autoArchiveInactiveThreadDaysInput, setAutoArchiveInactiveThreadDaysInput] = useState("");
   const [serverSettingsError, setServerSettingsError] = useState<string | null>(null);
+  const [serverSettingsErrorSource, setServerSettingsErrorSource] = useState<
+    "titleGeneration" | "sessionHibernation" | "chatHistory" | null
+  >(null);
   const [isSavingServerSettings, setIsSavingServerSettings] = useState(false);
   const [archivedThreadQuery, setArchivedThreadQuery] = useState("");
   const [archivedThreadsError, setArchivedThreadsError] = useState<string | null>(null);
@@ -196,6 +201,7 @@ function SettingsRouteView() {
     if (typeof currentCap === "number") {
       setMaxActiveHarnessSessionsInput(String(currentCap));
       setServerSettingsError(null);
+      setServerSettingsErrorSource(null);
     }
   }, [serverConfigQuery.data?.settings.maxActiveHarnessSessions]);
 
@@ -204,6 +210,7 @@ function SettingsRouteView() {
     if (typeof currentDays === "number") {
       setAutoArchiveInactiveThreadDaysInput(String(currentDays));
       setServerSettingsError(null);
+      setServerSettingsErrorSource(null);
     }
   }, [serverConfigQuery.data?.settings.autoArchiveInactiveThreadDays]);
 
@@ -233,6 +240,13 @@ function SettingsRouteView() {
   }, [settings.whisperModel]);
 
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const cliProviderStatuses = useMemo(
+    () =>
+      serverConfigQuery.data?.providers.filter(
+        (provider) => provider.provider === "claudeCode" || provider.provider === "codex",
+      ) ?? [],
+    [serverConfigQuery.data?.providers],
+  );
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -252,18 +266,45 @@ function SettingsRouteView() {
   }, [keybindingsConfigPath]);
 
   const persistServerSettings = useCallback(
-    (patch: ServerUpdateSettingsInput) => {
+    (
+      patch: ServerUpdateSettingsInput,
+      source: "titleGeneration" | "sessionHibernation" | "chatHistory",
+    ) => {
       setServerSettingsError(null);
+      setServerSettingsErrorSource(null);
       setIsSavingServerSettings(true);
+      const previousConfig = queryClient.getQueryData<ServerConfig>(serverQueryKeys.config());
+      queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), (previous) =>
+        previous
+          ? {
+              ...previous,
+              settings: {
+                titleGenerationProvider:
+                  patch.titleGenerationProvider ?? previous.settings.titleGenerationProvider,
+                maxActiveHarnessSessions:
+                  patch.maxActiveHarnessSessions ?? previous.settings.maxActiveHarnessSessions,
+                preventMacosSleepWhenThreadInProgress:
+                  patch.preventMacosSleepWhenThreadInProgress ??
+                  previous.settings.preventMacosSleepWhenThreadInProgress,
+                autoArchiveInactiveThreadDays:
+                  patch.autoArchiveInactiveThreadDays ??
+                  previous.settings.autoArchiveInactiveThreadDays,
+              },
+            }
+          : previous,
+      );
+
       const api = ensureNativeApi();
       void api.server
         .updateSettings(patch)
         .then((nextSettings) => {
-          queryClient.setQueryData(serverQueryKeys.config(), (previous) =>
+          queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), (previous) =>
             previous ? { ...previous, settings: nextSettings } : previous,
           );
         })
         .catch((error) => {
+          queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), previousConfig);
+          setServerSettingsErrorSource(source);
           setServerSettingsError(
             error instanceof Error ? error.message : "Unable to save server settings.",
           );
@@ -322,13 +363,14 @@ function SettingsRouteView() {
       nextCap < MIN_ACTIVE_HARNESS_SESSION_CAP ||
       nextCap > MAX_ACTIVE_HARNESS_SESSION_CAP
     ) {
+      setServerSettingsErrorSource("sessionHibernation");
       setServerSettingsError(
         `Enter a whole number between ${MIN_ACTIVE_HARNESS_SESSION_CAP} and ${MAX_ACTIVE_HARNESS_SESSION_CAP}.`,
       );
       return;
     }
 
-    persistServerSettings({ maxActiveHarnessSessions: nextCap });
+    persistServerSettings({ maxActiveHarnessSessions: nextCap }, "sessionHibernation");
   }, [maxActiveHarnessSessionsInput, persistServerSettings]);
 
   const saveAutoArchiveSettings = useCallback(() => {
@@ -338,13 +380,14 @@ function SettingsRouteView() {
       nextDays < MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS ||
       nextDays > MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS
     ) {
+      setServerSettingsErrorSource("chatHistory");
       setServerSettingsError(
         `Enter a whole number between ${MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS} and ${MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS}.`,
       );
       return;
     }
 
-    persistServerSettings({ autoArchiveInactiveThreadDays: nextDays });
+    persistServerSettings({ autoArchiveInactiveThreadDays: nextDays }, "chatHistory");
   }, [autoArchiveInactiveThreadDaysInput, persistServerSettings]);
 
   const addCustomModel = useCallback(
@@ -477,26 +520,107 @@ function SettingsRouteView() {
             </header>
 
             <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Claude Code CLI</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Clui requires the Claude Code CLI to run terminal sessions.
-                </p>
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-medium text-foreground">CLI availability</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Which command-line tools Clui can reach on your PATH.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => serverConfigQuery.refetch()}
+                  disabled={serverConfigQuery.isFetching}
+                >
+                  {serverConfigQuery.isFetching ? "Checking…" : "Refresh"}
+                </Button>
               </div>
 
-              <div className="rounded-lg border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                <p>
-                  Don't have Claude Code installed?{" "}
-                  <a
-                    href="https://claude.com/product/claude-code"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-primary underline underline-offset-2 hover:text-primary/80"
-                  >
-                    Get it here
-                  </a>
-                  .
+              {serverConfigQuery.isLoading ? (
+                <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                  Checking CLI availability…
+                </div>
+              ) : cliProviderStatuses.length > 0 ? (
+                <ul className="space-y-2">
+                  {cliProviderStatuses.map((provider) => (
+                    <li
+                      key={provider.provider}
+                      className="flex items-start gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                    >
+                      <span
+                        className={`mt-0.5 size-1.5 shrink-0 rounded-full ${
+                          provider.available ? "bg-emerald-500" : "bg-amber-500"
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <span className="flex flex-col">
+                        <span className="font-medium text-foreground">
+                          {provider.provider === "claudeCode" ? "Claude Code" : "Codex"}
+                        </span>
+                        <span className="text-muted-foreground">{provider.message}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                  CLI status unavailable.
+                </div>
+              )}
+
+              <div className="mt-4">
+                <h3 className="text-xs font-medium text-foreground">Title generation</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Pick the primary provider for new thread titles. The other is used as fallback.
                 </p>
+                <div
+                  className="mt-2 space-y-2"
+                  role="radiogroup"
+                  aria-label="Title generation provider"
+                >
+                  {(
+                    [
+                      { value: "claudeCode", label: "Claude Code" },
+                      { value: "codex", label: "Codex" },
+                    ] as const
+                  ).map((option) => {
+                    const selected =
+                      serverConfigQuery.data?.settings.titleGenerationProvider === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        disabled={serverConfigQuery.isLoading || isSavingServerSettings}
+                        className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                          selected
+                            ? "border-primary/60 bg-primary/8 text-foreground"
+                            : "border-border bg-background text-muted-foreground hover:bg-accent"
+                        }`}
+                        onClick={() =>
+                          persistServerSettings(
+                            {
+                              titleGenerationProvider: option.value as TitleGenerationProvider,
+                            },
+                            "titleGeneration",
+                          )
+                        }
+                      >
+                        <span>{option.label}</span>
+                        {selected ? (
+                          <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                            Selected
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                {serverSettingsError && serverSettingsErrorSource === "titleGeneration" ? (
+                  <p className="mt-2 text-xs text-destructive">{serverSettingsError}</p>
+                ) : null}
               </div>
             </section>
 
@@ -565,6 +689,7 @@ function SettingsRouteView() {
                       onChange={(event) => {
                         setMaxActiveHarnessSessionsInput(event.target.value);
                         setServerSettingsError(null);
+                        setServerSettingsErrorSource(null);
                       }}
                       className="w-28"
                     />
@@ -600,15 +725,18 @@ function SettingsRouteView() {
                       checked={configuredPreventMacosSleepWhenThreadInProgress}
                       disabled={serverConfigQuery.isLoading || isSavingServerSettings}
                       onCheckedChange={(checked) => {
-                        persistServerSettings({
-                          preventMacosSleepWhenThreadInProgress: checked,
-                        });
+                        persistServerSettings(
+                          {
+                            preventMacosSleepWhenThreadInProgress: checked,
+                          },
+                          "sessionHibernation",
+                        );
                       }}
                     />
                   </div>
                 </div>
 
-                {serverSettingsError ? (
+                {serverSettingsError && serverSettingsErrorSource === "sessionHibernation" ? (
                   <p className="text-xs text-destructive">{serverSettingsError}</p>
                 ) : null}
 
@@ -623,6 +751,7 @@ function SettingsRouteView() {
                     onClick={() => {
                       setMaxActiveHarnessSessionsInput(String(configuredMaxActiveHarnessSessions));
                       setServerSettingsError(null);
+                      setServerSettingsErrorSource(null);
                     }}
                   >
                     Reset
@@ -671,6 +800,7 @@ function SettingsRouteView() {
                           onChange={(event) => {
                             setAutoArchiveInactiveThreadDaysInput(event.target.value);
                             setServerSettingsError(null);
+                            setServerSettingsErrorSource(null);
                           }}
                           className="w-28"
                         />
@@ -689,7 +819,7 @@ function SettingsRouteView() {
                       .
                     </p>
 
-                    {serverSettingsError ? (
+                    {serverSettingsError && serverSettingsErrorSource === "chatHistory" ? (
                       <p className="text-xs text-destructive">{serverSettingsError}</p>
                     ) : null}
 
@@ -707,6 +837,7 @@ function SettingsRouteView() {
                             String(configuredAutoArchiveInactiveThreadDays),
                           );
                           setServerSettingsError(null);
+                          setServerSettingsErrorSource(null);
                         }}
                       >
                         Reset
