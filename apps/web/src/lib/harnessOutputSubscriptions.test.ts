@@ -2,14 +2,30 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { NativeApi } from "@clui/contracts";
 
-function installDocumentStub(visibilityState: DocumentVisibilityState = "visible") {
+function installDocumentStub(initialVisibilityState: DocumentVisibilityState = "visible") {
+  let visibilityState = initialVisibilityState;
+  const listeners = new Set<() => void>();
   Object.defineProperty(globalThis, "document", {
     configurable: true,
     value: {
-      visibilityState,
-      addEventListener: vi.fn(),
+      get visibilityState() {
+        return visibilityState;
+      },
+      addEventListener: vi.fn((event: string, listener: () => void) => {
+        if (event === "visibilitychange") listeners.add(listener);
+      }),
+      removeEventListener: vi.fn((event: string, listener: () => void) => {
+        if (event === "visibilitychange") listeners.delete(listener);
+      }),
     },
   });
+
+  return {
+    setVisibilityState(nextVisibilityState: DocumentVisibilityState) {
+      visibilityState = nextVisibilityState;
+      for (const listener of [...listeners]) listener();
+    },
+  };
 }
 
 function removeDocumentStub() {
@@ -66,5 +82,39 @@ describe("harness output subscriptions", () => {
       claudeThreadIds: [],
       piThreadIds: [],
     });
+  });
+
+  it("does not resolve ready while hidden because hidden subscriptions are empty", async () => {
+    const documentStub = installDocumentStub("hidden");
+    const { registerHarnessOutputSubscription } = await import("./harnessOutputSubscriptions");
+    const api = {
+      server: {
+        setHarnessOutputSubscriptions: vi.fn(() => Promise.resolve()),
+      },
+    } as unknown as NativeApi;
+
+    const registration = registerHarnessOutputSubscription(api, "pi", "thread-1");
+    let ready = false;
+    void registration.ready.then(() => {
+      ready = true;
+    });
+    await Promise.resolve();
+
+    expect(ready).toBe(false);
+    expect(api.server.setHarnessOutputSubscriptions).not.toHaveBeenCalledWith({
+      claudeThreadIds: [],
+      piThreadIds: ["thread-1"],
+    });
+
+    documentStub.setVisibilityState("visible");
+    await registration.ready;
+
+    expect(ready).toBe(true);
+    expect(api.server.setHarnessOutputSubscriptions).toHaveBeenLastCalledWith({
+      claudeThreadIds: [],
+      piThreadIds: ["thread-1"],
+    });
+
+    registration.unsubscribe();
   });
 });

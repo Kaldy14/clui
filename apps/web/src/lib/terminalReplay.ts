@@ -1,6 +1,7 @@
 import type { CodingHarness } from "@clui/contracts";
 
 export const TERMINAL_FULL_RESET_SEQUENCE = "\u001bc";
+export const TERMINAL_ENTER_ALT_SCREEN_SEQUENCE = "\x1b[?1049h";
 export const TERMINAL_ENABLE_BRACKETED_PASTE_SEQUENCE = "\x1b[?2004h";
 
 export interface TerminalWriter {
@@ -34,5 +35,20 @@ export function writeTerminalFullResetForReplay(
   harness: CodingHarness,
 ): void {
   terminal.write(TERMINAL_FULL_RESET_SEQUENCE);
+  restoreTerminalInputModesForHarness(terminal, harness);
+}
+
+/**
+ * Prepare xterm for fresh active-TUI repaint bytes without replaying the full
+ * historical startup stream. Claude Code and pi run as TUIs, so the live repaint
+ * should land in xterm's alternate screen even when the retained byte window no
+ * longer contains the original alternate-screen DECSET.
+ */
+export function writeTerminalActiveRepaintReset(
+  terminal: TerminalWriter,
+  harness: CodingHarness,
+): void {
+  terminal.write(TERMINAL_FULL_RESET_SEQUENCE);
+  terminal.write(TERMINAL_ENTER_ALT_SCREEN_SEQUENCE);
   restoreTerminalInputModesForHarness(terminal, harness);
 }

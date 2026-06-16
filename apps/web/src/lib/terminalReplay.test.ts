@@ -5,6 +5,7 @@ import {
   restoreTerminalInputModesForHarness,
   TERMINAL_ENABLE_BRACKETED_PASTE_SEQUENCE,
   TERMINAL_FULL_RESET_SEQUENCE,
+  writeTerminalActiveRepaintReset,
   writeTerminalFullResetForReplay,
 } from "./terminalReplay";
 
@@ -62,6 +63,21 @@ describe("terminal replay input modes", () => {
       restoreTerminalInputModesForHarness(terminal, "pi");
       await flushWrites(terminal);
 
+      expect(terminal.modes.bracketedPasteMode).toBe(true);
+    } finally {
+      terminal.dispose();
+    }
+  });
+
+  it("prepares active repaint replay in the alternate screen", async () => {
+    const terminal = new Terminal({ allowProposedApi: true });
+    try {
+      expect(terminal.buffer.active.type).toBe("normal");
+
+      writeTerminalActiveRepaintReset(terminal, "pi");
+      await flushWrites(terminal);
+
+      expect(terminal.buffer.active.type).toBe("alternate");
       expect(terminal.modes.bracketedPasteMode).toBe(true);
     } finally {
       terminal.dispose();

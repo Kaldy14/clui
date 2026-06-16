@@ -21,17 +21,14 @@ import {
   readPiStickyInputMirror,
   type PiStickyInputMirror,
 } from "../lib/piStickyInputMirror";
-import {
-  appendCompactedTerminalOutput,
-  compactTerminalCatchUpReplay,
-} from "../lib/terminalOutputCompaction";
+import { appendCompactedTerminalOutput } from "../lib/terminalOutputCompaction";
+import { requestTerminalRepaint } from "../lib/terminalPtyRepaint";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
 import {
   restoreTerminalInputModesForHarness,
-  writeTerminalFullResetForReplay,
+  writeTerminalActiveRepaintReset,
 } from "../lib/terminalReplay";
-import { resolveScrollbackReplay } from "../lib/terminalScrollbackReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import { submitThreadPrompt } from "../lib/threadInput";
 import { setupProjectScript } from "../projectScripts";
@@ -864,22 +861,24 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
     let disposed = false;
 
-    // ── Gate: buffer ALL writes until both fit() and scrollback are ready ──
-    // fitAddon.fit() runs in rAF (needs layout) and getScrollback() is async.
-    // Writing before fit produces content at stale dimensions — TUI escape
-    // sequences with hardcoded cursor positions can't be reflowed by xterm.js,
-    // causing permanent overlapping/garbled lines when switching threads.
+    // ── Gate: buffer ALL writes until fit(), subscription ack, and PTY repaint ──
+    // Active attach no longer replays the full scrollback history (that caused
+    // severe lag on long sessions). Instead it resets the local xterm, forces
+    // the harness TUI to repaint via a real SIGWINCH, and then releases only
+    // the buffered + live output. This is fast and produces a correct current
+    // screen because the PTY itself sends the authoritative frame.
     const eventBuffer: HarnessSessionEvent[] = [];
     let preReadyOutputData = "";
     let preReadyOutputMaxOffset: number | null = null;
     let preReadyOutputCompacted = false;
     let terminalReady = false;
     let fitComplete = false;
-    let pendingScrollback: {
-      scrollback: string | null;
-      offset: number | null;
-      reset: boolean;
-    } | null = null;
+    let subscriptionAcked = false;
+    let gateOpened = false;
+    const REPAINT_SETTLE_MS = 120;
+    let repaintSettleTimeoutId: number | null = null;
+    let cancelInitialPtyRepaint: (() => void) | null = null;
+    let repaintOffsetBaselineInvalid = false;
 
     const entry = claudeCache.attach(threadId, el);
     const { terminal, fitAddon } = entry;
@@ -1000,6 +999,30 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       scheduleTerminalVisualSettle();
     };
 
+    let initialPtyRepaintRequested = false;
+    const requestInitialTerminalPtyRepaint = (): boolean => {
+      if (initialPtyRepaintRequested) return true;
+      if (disposed || !entry.container?.isConnected) return false;
+      fitAddon.fit();
+      const repaint = requestTerminalRepaint({
+        api: activeApi,
+        harness,
+        threadId,
+        cols: terminal.cols,
+        rows: terminal.rows,
+        readRestoreSize: () => {
+          if (!disposed && entry.container?.isConnected) {
+            fitAddon.fit();
+          }
+          return { cols: terminal.cols, rows: terminal.rows };
+        },
+      });
+      if (!repaint.scheduled) return false;
+      cancelInitialPtyRepaint = repaint.cancel;
+      initialPtyRepaintRequested = true;
+      return true;
+    };
+
     let terminalPaintRefreshRafId: number | null = null;
     const scheduleTerminalPaintRefresh = () => {
       if (terminalPaintRefreshRafId !== null) return;
@@ -1074,8 +1097,9 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         scheduleTerminalPaintRefresh();
         if (wasCompacted) scheduleCatchUpRedraw();
       });
-      if (offset != null && offset > entry.lastServerOffset) {
+      if (offset != null && (repaintOffsetBaselineInvalid || offset > entry.lastServerOffset)) {
         entry.lastServerOffset = offset;
+        repaintOffsetBaselineInvalid = false;
       }
     };
 
@@ -1129,88 +1153,58 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       preReadyOutputMaxOffset = Math.max(preReadyOutputMaxOffset ?? event.offset, event.offset);
     };
 
-    /** Flush scrollback + buffered events once both fit and scrollback are ready. */
-    const flushIfReady = () => {
-      if (!fitComplete || !pendingScrollback || disposed) return;
-      const { scrollback, offset, reset } = pendingScrollback;
-      pendingScrollback = null;
+    /** Open the terminal gate once fit and subscription ack are both ready. */
+    const openTerminalGate = () => {
+      if (!fitComplete || !subscriptionAcked || disposed || terminalReady || gateOpened) return;
 
-      // The server sets `reset: true` when it couldn't provide a delta
-      // (scrollback buffer was cleared after session restart, or old data was
-      // trimmed by the ring buffer). In that case the returned content is a
-      // full materialization — clear the terminal first to avoid stale content
-      // (e.g. duplicate Claude Code banners). If live output already advanced
-      // past this response, skip the reset so fresh output is not erased.
-      const previousServerOffset = entry.lastServerOffset;
-      const needsReset = sinceOffset == null || reset;
-      const isStaleReplay = sinceOffset != null && offset != null && offset <= previousServerOffset;
-      const resolvedReplay = resolveScrollbackReplay({
-        scrollback,
-        resultOffset: offset,
-        reset,
-        sinceOffset,
-        lastServerOffset: previousServerOffset,
-      });
-      const scrollbackToReplay = resolvedReplay.scrollback;
+      // Force the harness TUI to repaint with a real SIGWINCH. A same-size
+      // resize can be ignored by the PTY/TUI; a one-row nudge followed by the
+      // fitted size mirrors the manual window resize that repairs stale screens.
+      if (!requestInitialTerminalPtyRepaint()) return;
+      gateOpened = true;
 
-      if (needsReset && !isStaleReplay) {
-        writeTerminalFullResetForReplay(queuedTerminalWriter, harness);
-      } else {
-        restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
-      }
+      // Reset the local xterm to discard any stale cached screen. The PTY is
+      // the source of truth for the active TUI, and it will repaint shortly.
+      writeTerminalActiveRepaintReset(queuedTerminalWriter, harness);
+      // The cached offset may belong to an older server-side session. We keep
+      // the stored value until fresh output arrives, then accept that first
+      // repaint/live offset even if it is lower than the cached baseline.
+      repaintOffsetBaselineInvalid = true;
 
-      if (scrollbackToReplay) {
-        const replay = compactTerminalCatchUpReplay(scrollbackToReplay);
-        if (document.visibilityState === "visible") {
-          terminalWriteQueue.enqueue(replay.data, () => {
-            restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
-            scheduleInitialTerminalVisualSettle(replay.compacted);
+      // Give the repaint command one animation frame + network round-trip to
+      // start producing output before releasing buffered/live events. If no
+      // output arrives in time, we still open so the terminal is interactive.
+      repaintSettleTimeoutId = window.setTimeout(() => {
+        repaintSettleTimeoutId = null;
+        if (disposed || terminalReady) return;
+        terminalReady = true;
+
+        if (preReadyOutputData) {
+          const data = preReadyOutputData;
+          const offset = preReadyOutputMaxOffset ?? 0;
+          const wasCompacted = preReadyOutputCompacted;
+          preReadyOutputData = "";
+          preReadyOutputMaxOffset = null;
+          preReadyOutputCompacted = false;
+          scrollGuardedWrite(data, () => {
+            scheduleInitialTerminalVisualSettle(wasCompacted);
             scheduleTerminalPaintRefresh();
-            if (replay.compacted) scheduleCatchUpRedraw();
+            if (wasCompacted) scheduleCatchUpRedraw();
           });
-        } else {
-          const next = appendCompactedTerminalOutput(queuedOutputData, replay.data);
-          queuedOutputData = next.data;
-          queuedOutputCompacted = queuedOutputCompacted || replay.compacted || next.compacted;
-          queuedOutputMaxOffset = Math.max(
-            queuedOutputMaxOffset ?? resolvedReplay.nextLastServerOffset,
-            resolvedReplay.nextLastServerOffset,
-          );
+          if (repaintOffsetBaselineInvalid || offset > entry.lastServerOffset) {
+            entry.lastServerOffset = offset;
+            repaintOffsetBaselineInvalid = false;
+          }
         }
-      }
-      entry.lastServerOffset = resolvedReplay.nextLastServerOffset;
-      scheduleStickyPiInputMirrorRefresh();
-      // Now safe to process live events — dimensions are correct.
-      // Skip any buffered output events whose data was already included in the
-      // scrollback delta (their offset <= the offset we just synced to).
-      terminalReady = true;
-      const syncedOffset = entry.lastServerOffset;
-      const queuedPreReadyOutput =
-        preReadyOutputMaxOffset != null && preReadyOutputMaxOffset > syncedOffset;
-      if (queuedPreReadyOutput) {
-        const data = preReadyOutputData;
-        const offset = preReadyOutputMaxOffset ?? syncedOffset;
-        const wasCompacted = preReadyOutputCompacted;
-        preReadyOutputData = "";
-        preReadyOutputMaxOffset = null;
-        preReadyOutputCompacted = false;
-        const next = appendCompactedTerminalOutput(queuedOutputData, data);
-        queuedOutputData = next.data;
-        queuedOutputCompacted = queuedOutputCompacted || wasCompacted || next.compacted;
-        queuedOutputMaxOffset = Math.max(queuedOutputMaxOffset ?? offset, offset);
-        scheduleOutputWriteFlush();
-      } else {
-        preReadyOutputData = "";
-        preReadyOutputMaxOffset = null;
-        preReadyOutputCompacted = false;
-      }
-      for (const event of eventBuffer) {
-        writeEvent(event);
-      }
-      eventBuffer.length = 0;
-      if (!scrollbackToReplay && !queuedPreReadyOutput) {
+
+        for (const event of eventBuffer) {
+          writeEvent(event);
+        }
+        eventBuffer.length = 0;
+
         scheduleInitialTerminalVisualSettle();
-      }
+        scheduleStickyPiInputMirrorRefresh();
+      }, REPAINT_SETTLE_MS);
     };
 
     const unsubscribe = subscribeHarnessSessionEvents(api, harness, (event) => {
@@ -1228,39 +1222,25 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    // Fetch a full scrollback snapshot when focusing a running thread. Detached
-    // TUI sessions often emit only small incremental paints while hidden; replaying
-    // those deltas over an old xterm screen can leave stale/random content until a
-    // real resize forces the TUI to repaint. A full replay resets xterm and
-    // deterministically rebuilds the current terminal state.
-    const scrollbackRequest: { threadId: ThreadId; sinceOffset?: number } = { threadId };
-    const sinceOffset = scrollbackRequest.sinceOffset;
-    void outputSubscription.ready
-      .catch(() => undefined)
-      .then(() => {
+    // Wait for the server to acknowledge the harness output subscription before
+    // forcing a PTY repaint. Otherwise the repaint bytes could still be filtered
+    // because the subscription has not been applied yet.
+    void outputSubscription.ready.then(
+      () => {
         if (disposed) return;
-        return getHarnessScrollback(api, harness, scrollbackRequest)
-          .then((result) => {
-            if (disposed) return;
-            pendingScrollback = {
-              scrollback: result.scrollback,
-              offset: result.offset ?? null,
-              reset: result.reset ?? false,
-            };
-            flushIfReady();
-          })
-          .catch(() => {
-            if (disposed) return;
-            // Even if scrollback fetch fails, allow live events after fit
-            pendingScrollback = { scrollback: "", offset: null, reset: false };
-            flushIfReady();
-          });
-      });
+        subscriptionAcked = true;
+        openTerminalGate();
+      },
+      () => {
+        // Do not reset/repaint unless the server has acknowledged the output
+        // subscription. Otherwise the fresh repaint bytes can be filtered out.
+      },
+    );
 
-    // Do not let live output overtake the scrollback response. PTY bytes are
-    // stateful terminal commands, not replaceable records: if a late delta is
-    // skipped after newer live bytes advanced lastServerOffset, the first attach
-    // can show an older cached screen until the next reattach/resize.
+    // Do not let live output overtake the repaint gate. PTY bytes are stateful
+    // terminal commands, not replaceable records: if a late output event is
+    // processed before the repaint settles, the first attach can show a partial
+    // or stale frame.
 
     // Intercept macOS navigation shortcuts before the browser captures them
     terminal.attachCustomKeyEventHandler((event) => {
@@ -1390,7 +1370,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       terminal.focus();
       // Signal that dimensions are now correct — safe to write content
       fitComplete = true;
-      flushIfReady();
+      openTerminalGate();
       scheduleStickyPiInputMirrorRefresh();
     });
 
@@ -1398,6 +1378,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     // position natively via isUserScrolling during dimension changes.
     const onWindowResize = () => {
       fitAddon.fit();
+      openTerminalGate();
       scheduleStickyPiInputMirrorRefresh();
     };
     window.addEventListener("resize", onWindowResize);
@@ -1547,6 +1528,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = null;
         fitAddon.fit();
+        openTerminalGate();
         scheduleStickyPiInputMirrorRefresh();
       });
     });
@@ -1583,6 +1565,8 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       for (const rafId of visualSettleRafIds) cancelAnimationFrame(rafId);
       visualSettleRafIds = [];
       if (visualSettleTimeoutId !== null) clearTimeout(visualSettleTimeoutId);
+      if (repaintSettleTimeoutId !== null) clearTimeout(repaintSettleTimeoutId);
+      cancelInitialPtyRepaint?.();
       terminalWriteQueue.dispose();
       queuedOutputData = "";
       queuedOutputMaxOffset = null;

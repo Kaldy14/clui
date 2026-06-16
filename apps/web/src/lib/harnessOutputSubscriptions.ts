@@ -41,6 +41,30 @@ function syncNow(): Promise<void> {
   });
 }
 
+function syncNowWithRetry(attemptsRemaining = 2): Promise<void> {
+  return syncNow().catch((error: unknown) => {
+    if (attemptsRemaining <= 0) throw error;
+    return new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        syncNowWithRetry(attemptsRemaining - 1).then(resolve, reject);
+      }, 150);
+    });
+  });
+}
+
+function syncWhenVisible(): Promise<void> {
+  if (document.visibilityState === "visible") return syncNowWithRetry();
+
+  return new Promise<void>((resolve, reject) => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      syncNowWithRetry().then(resolve, reject);
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+  });
+}
+
 function scheduleSync(): void {
   if (syncQueued) return;
   syncQueued = true;
@@ -86,7 +110,7 @@ export function registerHarnessOutputSubscription(
   // bytes, and those bytes can still be filtered because the subscription has
   // not reached the server yet. A later PTY resize then makes the missing TUI
   // frame appear, which looks like a render bug.
-  const ready = syncNow();
+  const ready = syncWhenVisible();
 
   return {
     ready,
