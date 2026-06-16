@@ -9,14 +9,18 @@ export interface RequestTerminalRepaintInput extends TerminalPtySize {
   api: NativeApi;
   harness: CodingHarness;
   threadId: ThreadId;
-  /** Optional current-size reader used right before restoring on the next frame. */
+  /** Optional current-size reader used right before restoring. */
   readRestoreSize?: () => TerminalPtySize;
+  /** How long to keep the PTY at the nudge size before restoring. */
+  restoreDelayMs?: number;
 }
 
 export interface TerminalRepaintRequest {
   scheduled: boolean;
   cancel: () => void;
 }
+
+const DEFAULT_REPAINT_RESTORE_DELAY_MS = 90;
 
 const NOT_SCHEDULED_REPAINT_REQUEST: TerminalRepaintRequest = Object.freeze({
   scheduled: false,
@@ -60,17 +64,20 @@ export function resolveTerminalRepaintResizeSequence(
 }
 
 /**
- * Request a real PTY repaint by momentarily changing terminal dimensions.
+ * Request a real PTY repaint by briefly changing terminal dimensions.
  *
- * TUI harnesses (Claude Code / pi) often buffer the current screen and only
- * repaint on SIGWINCH. A local xterm fit/refresh does not generate a new
- * SIGWINCH if the final dimensions match the PTY's current size, so sending a
- * one-row shrink followed by the actual size on the next frame forces the
- * harness to emit a fresh full-screen paint.
+ * TUI harnesses (Claude Code / pi) often buffer the current screen and repaint
+ * on SIGWINCH. Keep the nudge size alive briefly before restoring; restoring on
+ * the next animation frame can be too fast and some TUIs coalesce it away.
  */
 export function requestTerminalRepaint(input: RequestTerminalRepaintInput): TerminalRepaintRequest {
   const sequence = resolveTerminalRepaintResizeSequence(input);
   if (sequence.length === 0) return NOT_SCHEDULED_REPAINT_REQUEST;
+
+  const restoreDelayMs = Math.max(
+    0,
+    Math.trunc(input.restoreDelayMs ?? DEFAULT_REPAINT_RESTORE_DELAY_MS),
+  );
 
   const resize = (size: TerminalPtySize) => {
     if (input.harness === "pi") {
@@ -95,24 +102,11 @@ export function requestTerminalRepaint(input: RequestTerminalRepaintInput): Term
     resize(normalizeTerminalPtySize(latestRestoreSize) ?? sequence[1]);
   };
 
-  if (typeof requestAnimationFrame === "function") {
-    const rafId = requestAnimationFrame(runRestore);
-    return {
-      scheduled: true,
-      cancel: () => {
-        cancelAnimationFrame(rafId);
-        runRestore();
-      },
-    };
-  }
-
-  // Tests run outside a browser environment, so fall back to setTimeout(0)
-  // to keep the two resizes ordered and asynchronous.
-  const timeoutId = setTimeout(runRestore, 0);
+  const restoreTimeoutId = setTimeout(runRestore, restoreDelayMs);
   return {
     scheduled: true,
     cancel: () => {
-      clearTimeout(timeoutId);
+      clearTimeout(restoreTimeoutId);
       runRestore();
     },
   };

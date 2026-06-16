@@ -873,6 +873,9 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     let subscriptionAcked = false;
     let gateOpened = false;
     const REPAINT_SETTLE_MS = 120;
+    const MAX_REPAINT_GATE_RETRIES = 12;
+    let repaintGateRetryCount = 0;
+    let repaintGateRetryRafId: number | null = null;
     let repaintSettleTimeoutId: number | null = null;
     let cancelInitialPtyRepaint: (() => void) | null = null;
     let repaintOffsetBaselineInvalid = false;
@@ -1150,6 +1153,19 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       preReadyOutputMaxOffset = Math.max(preReadyOutputMaxOffset ?? event.offset, event.offset);
     };
 
+    const scheduleOpenTerminalGateRetry = () => {
+      if (repaintGateRetryRafId !== null || repaintGateRetryCount >= MAX_REPAINT_GATE_RETRIES) {
+        return;
+      }
+      repaintGateRetryCount += 1;
+      repaintGateRetryRafId = requestAnimationFrame(() => {
+        repaintGateRetryRafId = null;
+        if (disposed || terminalReady || gateOpened) return;
+        fitAddon.fit();
+        openTerminalGate();
+      });
+    };
+
     /** Open the terminal gate once fit and subscription ack are both ready. */
     const openTerminalGate = () => {
       if (!fitComplete || !subscriptionAcked || disposed || terminalReady || gateOpened) return;
@@ -1157,7 +1173,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       // Force the harness TUI to repaint with a real SIGWINCH. A same-size
       // resize can be ignored by the PTY/TUI; a one-row nudge followed by the
       // fitted size mirrors the manual window resize that repairs stale screens.
-      if (!requestInitialTerminalPtyRepaint()) return;
+      if (!requestInitialTerminalPtyRepaint()) {
+        scheduleOpenTerminalGateRetry();
+        return;
+      }
       gateOpened = true;
 
       // Preserve the cached xterm buffer/scrollback on reattach. The PTY repaint
@@ -1560,6 +1579,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (outputWriteRafId !== null) cancelAnimationFrame(outputWriteRafId);
       if (catchUpRedrawRafId !== null) cancelAnimationFrame(catchUpRedrawRafId);
       if (terminalPaintRefreshRafId !== null) cancelAnimationFrame(terminalPaintRefreshRafId);
+      if (repaintGateRetryRafId !== null) cancelAnimationFrame(repaintGateRetryRafId);
       for (const rafId of visualSettleRafIds) cancelAnimationFrame(rafId);
       visualSettleRafIds = [];
       if (visualSettleTimeoutId !== null) clearTimeout(visualSettleTimeoutId);

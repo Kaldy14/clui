@@ -29,7 +29,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 **Root cause:** Active attach treated raw scrollback history as the source of truth. That made correctness depend on replaying large stateful byte streams; the first repaint-based attempt went too far the other way and reset the cached xterm buffer on every reattach, throwing away scrollback/history before the PTY repaint arrived.
 
-**Fix:** Changed active attach to wait for a visible output-subscription ack and first fit, preserve the cached xterm buffer/scroll state, force a real PTY repaint with a one-row resize nudge, then release only buffered fresh repaint/live output after a short settle. Full scrollback fetch remains for dormant/read-only views only. Added retry/visibility handling for subscription readiness and repaint helper tests.
+**Fix:** Changed active attach to wait for a visible output-subscription ack and first fit, preserve the cached xterm buffer/scroll state, force a real PTY repaint with a one-row resize nudge that is held briefly before restore, then release only buffered fresh repaint/live output after a short settle. Full scrollback fetch remains for dormant/read-only views only. Added retry/visibility handling for subscription readiness, invalid initial fit retries, and repaint helper tests.
 
 **Affected files:**
 - `apps/web/src/components/ThreadTerminalView.tsx`

@@ -14,6 +14,10 @@ function makeMockApi(): NativeApi {
   } as unknown as NativeApi;
 }
 
+function advanceBeforeDefaultRestore(): void {
+  vi.advanceTimersByTime(89);
+}
+
 function flushRestoreResize(): void {
   vi.runAllTimers();
 }
@@ -43,10 +47,9 @@ describe("resolveTerminalRepaintResizeSequence", () => {
 describe("requestTerminalRepaint", () => {
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
   });
 
-  it("sends the repaint sequence through claude resize", () => {
+  it("sends the repaint sequence through claude resize after holding the nudge", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = makeMockApi();
     const threadId = "thread-1" as ThreadId;
@@ -64,13 +67,16 @@ describe("requestTerminalRepaint", () => {
     expect(api.claude.resize).toHaveBeenLastCalledWith({ threadId, cols: 120, rows: 39 });
     expect(api.pi.resize).not.toHaveBeenCalled();
 
+    advanceBeforeDefaultRestore();
+    expect(api.claude.resize).toHaveBeenCalledTimes(1);
+
     flushRestoreResize();
 
     expect(api.claude.resize).toHaveBeenCalledTimes(2);
     expect(api.claude.resize).toHaveBeenLastCalledWith({ threadId, cols: 120, rows: 40 });
   });
 
-  it("sends the repaint sequence through pi resize", () => {
+  it("sends the repaint sequence through pi resize after holding the nudge", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = makeMockApi();
     const threadId = "thread-2" as ThreadId;
@@ -82,13 +88,16 @@ describe("requestTerminalRepaint", () => {
     expect(api.pi.resize).toHaveBeenLastCalledWith({ threadId, cols: 100, rows: 29 });
     expect(api.claude.resize).not.toHaveBeenCalled();
 
+    advanceBeforeDefaultRestore();
+    expect(api.pi.resize).toHaveBeenCalledTimes(1);
+
     flushRestoreResize();
 
     expect(api.pi.resize).toHaveBeenCalledTimes(2);
     expect(api.pi.resize).toHaveBeenLastCalledWith({ threadId, cols: 100, rows: 30 });
   });
 
-  it("uses the latest restore size when the terminal resizes before the restore frame", () => {
+  it("uses the latest restore size when the terminal resizes before restore", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = makeMockApi();
     const threadId = "thread-3" as ThreadId;
@@ -122,7 +131,7 @@ describe("requestTerminalRepaint", () => {
     expect(api.pi.resize).not.toHaveBeenCalled();
   });
 
-  it("restores the PTY size when canceling the fallback restore", () => {
+  it("restores the PTY size when canceling the restore", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = makeMockApi();
     const threadId = "thread-5" as ThreadId;
@@ -135,28 +144,24 @@ describe("requestTerminalRepaint", () => {
     expect(api.pi.resize).toHaveBeenLastCalledWith({ threadId, cols: 120, rows: 40 });
   });
 
-  it("restores the PTY size when canceling the animation-frame restore", () => {
+  it("supports overriding the restore delay", () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = makeMockApi();
     const threadId = "thread-6" as ThreadId;
-    const frameCallbacks = new Map<number, FrameRequestCallback>();
-    let nextFrameId = 1;
-    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-      const frameId = nextFrameId++;
-      frameCallbacks.set(frameId, callback);
-      return frameId;
-    });
-    const cancelAnimationFrame = vi.fn((frameId: number) => {
-      frameCallbacks.delete(frameId);
-    });
-    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
-    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
 
-    const repaint = requestTerminalRepaint({ api, harness: "pi", threadId, cols: 120, rows: 40 });
-    repaint.cancel();
-    frameCallbacks.get(1)?.(0);
+    requestTerminalRepaint({
+      api,
+      harness: "pi",
+      threadId,
+      cols: 120,
+      rows: 40,
+      restoreDelayMs: 250,
+    });
 
-    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
-    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+    vi.advanceTimersByTime(249);
+    expect(api.pi.resize).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1);
     expect(api.pi.resize).toHaveBeenCalledTimes(2);
     expect(api.pi.resize).toHaveBeenLastCalledWith({ threadId, cols: 120, rows: 40 });
   });
