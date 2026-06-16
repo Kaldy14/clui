@@ -1136,6 +1136,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         case "hibernated":
         case "sessionId":
         case "hookStatus":
+        case "activityStatus":
         case "hookNotification":
           // Handled by orchestration layer / EventRouter, not terminal view
           break;

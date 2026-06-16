@@ -4,6 +4,44 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-16 — Sidebar working badges show deterministic activity
+
+**Problem:** Sidebar and toolbar badges only showed generic `Working` while an agent was actively planning, editing, testing, committing, or running other recognizable work.
+
+**Root cause:** Clui only transported lifecycle hook status (`working`, `completed`, blockers, errors). Tool names, prompt intent, and pi runtime reasons were available but were not converted into a separate live activity signal.
+
+**Fix:** Added a transient `activityStatus` event and deterministic classifier for prompts, Claude Code tool hooks, and pi runtime/tool metadata. The web store keeps lifecycle status authoritative, shows activity labels only for working/running states, clears stale activity on completion/errors/input waits, and hydrates live pi activity on reconnect.
+
+**Affected files:**
+- `packages/contracts/src/claude-terminal.ts`
+- `packages/contracts/src/pi-terminal.ts`
+- `packages/contracts/src/orchestration.ts`
+- `packages/shared/src/agentActivity.ts`
+- `packages/shared/src/agentActivity.test.ts`
+- `packages/shared/package.json`
+- `apps/server/src/hooks/hookReceiver.ts`
+- `apps/server/src/hooks/hookReceiver.test.ts`
+- `apps/server/src/hooks/hookSettings.ts`
+- `apps/server/src/hooks/hookSettings.test.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/store.test.ts`
+- `apps/web/src/lib/threadStatus.ts`
+- `apps/web/src/lib/threadStatus.test.ts`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/routes/__root.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-16 — Title generation provider is selectable and visible
 
 **Problem:** Settings still showed a Claude Code-only install note even though Clui can use Codex for title and Git text generation, leaving users unable to tell whether `codex` was visible to Clui or choose it for thread titles.

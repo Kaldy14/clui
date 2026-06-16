@@ -74,4 +74,14 @@ describe("threadStatusPill", () => {
 
     expect(pill).toMatchObject({ label: "Completed", pulse: false });
   });
+
+  it("uses activity labels for working threads", () => {
+    const pill = threadStatusPill(
+      makeThread({ hookStatus: "working", activityStatus: "coding" }),
+      false,
+      false,
+    );
+
+    expect(pill).toMatchObject({ label: "Coding", pulse: true });
+  });
 });

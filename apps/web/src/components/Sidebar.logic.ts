@@ -5,6 +5,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@clui/contracts";
+import { AGENT_ACTIVITY_LABELS } from "@clui/shared/agentActivity";
 
 import type { Thread } from "../types";
 import { DEFAULT_RUNTIME_MODE } from "../types";
@@ -18,16 +19,7 @@ import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 
 export interface ThreadStatusPill {
-  label:
-    | "Working"
-    | "Connecting"
-    | "Completed"
-    | "Pending Approval"
-    | "Needs Input"
-    | "Plan Ready"
-    | "Running"
-    | "Paused"
-    | "Error";
+  label: string;
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -43,6 +35,7 @@ type ThreadStatusInput = Pick<
   | "session"
   | "terminalStatus"
   | "hookStatus"
+  | "activityStatus"
 >;
 
 type HarnessSessionStatsThread = Pick<Thread, "harness" | "terminalStatus">;
@@ -177,7 +170,11 @@ export function resolveThreadStatusPill(input: {
   // Check it before activity-based pending approvals so that stale
   // "approval.requested" activities (whose "approval.resolved" event
   // hasn't arrived yet) don't override a live "Working" badge.
-  const terminalPill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  const terminalPill = claudeTerminalStatusPill(
+    thread.terminalStatus,
+    thread.hookStatus,
+    thread.activityStatus,
+  );
   if (terminalPill && !suppressReadCompletedHookStatus) return terminalPill;
 
   // Activity-based badges are only shown when the terminal is NOT active.
@@ -208,7 +205,7 @@ export function resolveThreadStatusPill(input: {
 
   if (thread.session?.status === "running" && !suppressReadCompletedHookStatus) {
     return {
-      label: "Working",
+      label: thread.activityStatus ? AGENT_ACTIVITY_LABELS[thread.activityStatus] : "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,

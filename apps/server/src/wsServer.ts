@@ -89,6 +89,7 @@ import {
   buildStopEvents,
   buildNotificationEvents,
   buildUserPromptSubmitEvents,
+  buildPreToolUseEvents,
   buildPermissionRequestEvents,
   buildPostToolUseEvents,
 } from "./hooks/hookReceiver";
@@ -432,19 +433,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     subscriptions.piThreadIds = new Set(input.piThreadIds);
   };
 
-  const hydrateLivePiHookStatuses = Effect.fnUntraced(function* (
-    snapshot: OrchestrationReadModel,
-  ) {
+  const hydrateLivePiHookStatuses = Effect.fnUntraced(function* (snapshot: OrchestrationReadModel) {
     const threads = yield* Effect.forEach(
       snapshot.threads,
       (thread) => {
         if (thread.harness !== "pi") {
           return Effect.succeed(thread);
         }
-        return piSessionManager.getSessionHookStatus(thread.id).pipe(
-          Effect.map((hookStatus) => ({
+        return Effect.all({
+          hookStatus: piSessionManager.getSessionHookStatus(thread.id),
+          activityStatus: piSessionManager.getSessionActivityStatus(thread.id),
+        }).pipe(
+          Effect.map(({ hookStatus, activityStatus }) => ({
             ...thread,
             hookStatus,
+            activityStatus,
           })),
         );
       },
@@ -760,7 +763,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           let events: ClaudeSessionEvent[] = [];
 
           if (hookPath === "/hooks/user-prompt-submit") {
-            events = buildUserPromptSubmitEvents(threadId);
+            events = buildUserPromptSubmitEvents(threadId, body);
 
             // A new prompt clears any lingering pending approvals (user may
             // have interrupted or the approval was granted via the terminal).
@@ -786,6 +789,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             if (promptText) {
               dispatchAutoTitleIfNeeded(threadId, promptText);
             }
+          } else if (hookPath === "/hooks/pre-tool-use") {
+            events = buildPreToolUseEvents(threadId, body);
           } else if (hookPath === "/hooks/permission-request") {
             events = buildPermissionRequestEvents(threadId, body);
 
@@ -1447,9 +1452,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
-        return yield* projectionReadModelQuery.getSnapshot().pipe(
-          Effect.flatMap(hydrateLivePiHookStatuses),
-        );
+        return yield* projectionReadModelQuery
+          .getSnapshot()
+          .pipe(Effect.flatMap(hydrateLivePiHookStatuses));
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand: {
         const { command } = request.body;
@@ -1836,14 +1841,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return yield* new RouteRequestError({ message: "Failed to resolve image path." });
         }
 
-        yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
-          Effect.mapError(
-            () => new RouteRequestError({ message: "Failed to create image directory." }),
-          ),
-        );
-        yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
-          Effect.mapError(() => new RouteRequestError({ message: "Failed to write image file." })),
-        );
+        yield* fileSystem
+          .makeDirectory(path.dirname(attachmentPath), { recursive: true })
+          .pipe(
+            Effect.mapError(
+              () => new RouteRequestError({ message: "Failed to create image directory." }),
+            ),
+          );
+        yield* fileSystem
+          .writeFile(attachmentPath, bytes)
+          .pipe(
+            Effect.mapError(
+              () => new RouteRequestError({ message: "Failed to write image file." }),
+            ),
+          );
 
         return { filePath: attachmentPath, sizeBytes: bytes.byteLength };
       }

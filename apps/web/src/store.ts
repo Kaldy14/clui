@@ -9,6 +9,7 @@ import {
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
   type ClaudeHookStatus,
+  type AgentActivityStatus,
   type TerminalStatus,
 } from "@clui/contracts";
 import {
@@ -350,6 +351,7 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.archivedAt !== incoming.archivedAt) return true;
   if (existing.terminalStatus !== incoming.terminalStatus) return true;
   if (existing.hookStatus !== incoming.hookStatus) return true;
+  if ((existing.activityStatus ?? null) !== (incoming.activityStatus ?? null)) return true;
   // Session check
   if ((existing.session?.updatedAt ?? null) !== (incoming.session?.updatedAt ?? null)) return true;
   if (
@@ -499,6 +501,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
       }
       const preserveLocalArchivedAt = existing != null && hasPendingArchiveUpdate(thread.id);
       const hasSnapshotHookStatus = thread.hookStatus !== undefined;
+      const hasSnapshotActivityStatus = thread.activityStatus !== undefined;
       const terminalStatus = hasSnapshotHookStatus
         ? (thread.terminalStatus ?? "new")
         : (existing?.terminalStatus ?? thread.terminalStatus ?? "new");
@@ -583,6 +586,11 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         titleSource: thread.titleSource ?? "auto",
         bookmarked: thread.bookmarked ?? false,
         hookStatus: hasSnapshotHookStatus ? thread.hookStatus : (existing?.hookStatus ?? null),
+        activityStatus: terminalStatus === "active"
+          ? hasSnapshotActivityStatus
+            ? thread.activityStatus
+            : (existing?.activityStatus ?? null)
+          : null,
       };
       if (existing && !threadChanged(existing, newThread)) {
         return existing;
@@ -805,10 +813,38 @@ export function setThreadHookStatus(
       hookStatus === "completed"
         ? (completedAt ?? new Date().toISOString())
         : thread.lastCompletedAt;
-    if (thread.hookStatus === hookStatus && thread.lastCompletedAt === nextLastCompletedAt) {
+    const shouldClearActivity =
+      hookStatus === null ||
+      hookStatus === "completed" ||
+      hookStatus === "error" ||
+      hookStatus === "needsInput";
+    const nextActivityStatus = shouldClearActivity ? null : (thread.activityStatus ?? null);
+    if (
+      thread.hookStatus === hookStatus &&
+      thread.lastCompletedAt === nextLastCompletedAt &&
+      (thread.activityStatus ?? null) === nextActivityStatus
+    ) {
       return thread;
     }
-    return { ...thread, hookStatus, lastCompletedAt: nextLastCompletedAt };
+    return {
+      ...thread,
+      hookStatus,
+      lastCompletedAt: nextLastCompletedAt,
+      activityStatus: nextActivityStatus,
+    };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setThreadActivityStatus(
+  state: AppState,
+  threadId: ThreadId,
+  activityStatus: AgentActivityStatus | null,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (activityStatus !== null && thread.terminalStatus === "dormant") return thread;
+    if ((thread.activityStatus ?? null) === activityStatus) return thread;
+    return { ...thread, activityStatus };
   });
   return threads === state.threads ? state : { ...state, threads };
 }
@@ -835,13 +871,21 @@ export function setTerminalLifecycle(
 ): AppState {
   const threads = updateThread(state.threads, threadId, (thread) => {
     const newDormantReason = dormantReason !== undefined ? dormantReason : thread.dormantReason;
+    const nextActivityStatus = terminalStatus === "active" ? (thread.activityStatus ?? null) : null;
     if (
       thread.terminalStatus === terminalStatus &&
       thread.hookStatus === hookStatus &&
-      thread.dormantReason === newDormantReason
+      thread.dormantReason === newDormantReason &&
+      (thread.activityStatus ?? null) === nextActivityStatus
     )
       return thread;
-    return { ...thread, terminalStatus, hookStatus, dormantReason: newDormantReason };
+    return {
+      ...thread,
+      terminalStatus,
+      hookStatus,
+      dormantReason: newDormantReason,
+      activityStatus: nextActivityStatus,
+    };
   });
   return threads === state.threads ? state : { ...state, threads };
 }
@@ -883,6 +927,7 @@ interface AppStore extends AppState {
   removeThread: (threadId: ThreadId) => void;
   setThreadArchived: (threadId: ThreadId, archivedAt: string | null) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
+  setActivityStatus: (threadId: ThreadId, activityStatus: AgentActivityStatus | null) => void;
   /** Bump lastInteractedAt to now. Called once on turnStart (user sent a message). */
   bumpLastInteractedAt: (threadId: ThreadId) => void;
   /** Reset all status-related fields for a thread (hookStatus, activities, session status). */
@@ -940,6 +985,8 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setThreadArchived(state, threadId, archivedAt)),
   setHookStatus: (threadId, hookStatus) =>
     set((state) => setThreadHookStatus(state, threadId, hookStatus)),
+  setActivityStatus: (threadId, activityStatus) =>
+    set((state) => setThreadActivityStatus(state, threadId, activityStatus)),
   bumpLastInteractedAt: (threadId) =>
     set((state) => {
       const now = new Date().toISOString();
@@ -957,6 +1004,7 @@ export const useStore = create<AppStore>((set) => ({
       const threads = updateThread(state.threads, threadId, (thread) => ({
         ...thread,
         hookStatus: null,
+        activityStatus: null,
         activities: [],
       }));
       return threads === state.threads ? state : { ...state, threads };

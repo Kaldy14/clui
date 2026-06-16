@@ -65,7 +65,11 @@ import { WorktreeIndicator } from "./WorktreeIndicator";
 // ── Status Badge ──────────────────────────────────────────────────────
 
 function TerminalStatusBadge({ thread }: { thread: Thread }) {
-  const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  const pill = claudeTerminalStatusPill(
+    thread.terminalStatus,
+    thread.hookStatus,
+    thread.activityStatus,
+  );
   if (!pill) return null;
 
   // Pick background tint based on color class

@@ -12,6 +12,25 @@ export const ClaudeHookStatus = Schema.Literals([
 ]);
 export type ClaudeHookStatus = typeof ClaudeHookStatus.Type;
 
+export const AgentActivityStatus = Schema.Literals([
+  "planning",
+  "reading",
+  "searching",
+  "researching",
+  "coding",
+  "debugging",
+  "testing",
+  "checking",
+  "building",
+  "installing",
+  "committing",
+  "pushing",
+  "reviewing",
+  "translating",
+  "running",
+]);
+export type AgentActivityStatus = typeof AgentActivityStatus.Type;
+
 export const ClaudeHookNotificationCategory = Schema.Literals([
   "permission",
   "error",
@@ -109,6 +128,12 @@ const ClaudeHookStatusEvent = Schema.Struct({
   hookStatus: ClaudeHookStatus,
 });
 
+const ClaudeActivityStatusEvent = Schema.Struct({
+  ...ClaudeSessionEventBase.fields,
+  type: Schema.Literal("activityStatus"),
+  activityStatus: Schema.NullOr(AgentActivityStatus),
+});
+
 /** Fired by UserPromptSubmit — signals an unambiguous new turn. */
 const ClaudeTurnStartEvent = Schema.Struct({
   ...ClaudeSessionEventBase.fields,
@@ -132,6 +157,7 @@ export const ClaudeSessionEvent = Schema.Union([
   ClaudeSessionIdEvent,
   ClaudeErrorEvent,
   ClaudeHookStatusEvent,
+  ClaudeActivityStatusEvent,
   ClaudeTurnStartEvent,
   ClaudeHookNotificationEvent,
 ]);

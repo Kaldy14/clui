@@ -24,6 +24,10 @@
       "types": "./src/piTerminalStatus.ts",
       "import": "./src/piTerminalStatus.ts"
     },
+    "./agentActivity": {
+      "types": "./src/agentActivity.ts",
+      "import": "./src/agentActivity.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

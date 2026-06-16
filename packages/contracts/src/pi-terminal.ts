@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { ClaudeHookStatus } from "./claude-terminal";
+import { AgentActivityStatus, ClaudeHookStatus } from "./claude-terminal";
 import { TrimmedNonEmptyString } from "./baseSchemas";
 
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(20)).check(
@@ -85,6 +85,12 @@ const PiHookStatusEvent = Schema.Struct({
   hookStatus: Schema.NullOr(ClaudeHookStatus),
 });
 
+const PiActivityStatusEvent = Schema.Struct({
+  ...PiSessionEventBase.fields,
+  type: Schema.Literal("activityStatus"),
+  activityStatus: Schema.NullOr(AgentActivityStatus),
+});
+
 const PiSessionFileEvent = Schema.Struct({
   ...PiSessionEventBase.fields,
   type: Schema.Literal("sessionFile"),
@@ -98,6 +104,7 @@ export const PiSessionEvent = Schema.Union([
   PiExitedEvent,
   PiErrorEvent,
   PiHookStatusEvent,
+  PiActivityStatusEvent,
   PiSessionFileEvent,
 ]);
 export type PiSessionEvent = typeof PiSessionEvent.Type;

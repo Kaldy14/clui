@@ -6,7 +6,9 @@
  *
  * @module hookReceiver
  */
-import type { ClaudeHookNotificationCategory, ClaudeSessionEvent } from "@clui/contracts";
+import type { AgentActivityStatus, ClaudeHookNotificationCategory, ClaudeSessionEvent } from "@clui/contracts";
+import { classifyAgentActivityFromPrompt, classifyAgentActivityFromTool } from "@clui/shared/agentActivity";
+import { extractPromptText } from "../terminal/titleGenerator";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_NOTIFICATION_BODY_LENGTH = 180;
@@ -163,12 +165,15 @@ function now(): string {
   return new Date().toISOString();
 }
 
-export function buildUserPromptSubmitEvents(threadId: string): ClaudeSessionEvent[] {
+export function buildUserPromptSubmitEvents(threadId: string, rawBody = ""): ClaudeSessionEvent[] {
   // User sent a message — Claude is about to start processing.
   // Uses "turnStart" instead of "hookStatus" so the client can bypass
   // the completed grace period (a new turn is unambiguous).
+  const promptText = extractPromptText(rawBody);
+  const activityStatus = promptText ? classifyAgentActivityFromPrompt(promptText) : null;
   return [
     { type: "turnStart", threadId, createdAt: now() },
+    ...(activityStatus ? [buildActivityStatusEvent(threadId, activityStatus)] : []),
   ];
 }
 
@@ -184,15 +189,48 @@ const ASK_TOOL_NAMES = new Set([
   "askuser",
 ]);
 
+function extractToolName(rawObject: Record<string, unknown>): string | null {
+  return firstString(rawObject, ["tool_name", "toolName", "tool", "name"]);
+}
+
+function extractToolInput(rawObject: Record<string, unknown>): unknown {
+  return rawObject.tool_input ?? rawObject.toolInput ?? rawObject.input;
+}
+
 function isAskTool(rawBody: string): boolean {
   const { rawObject } = parseHookInput(rawBody);
   if (!rawObject) return false;
 
-  // Claude Code sends tool_name / toolName in the PermissionRequest body
-  const toolName = firstString(rawObject, ["tool_name", "toolName", "tool", "name"]);
+  const toolName = extractToolName(rawObject);
   if (!toolName) return false;
 
   return ASK_TOOL_NAMES.has(toolName.toLowerCase().replace(/[_-]/g, ""));
+}
+
+function buildActivityStatusEvent(
+  threadId: string,
+  activityStatus: AgentActivityStatus | null,
+): ClaudeSessionEvent {
+  return { type: "activityStatus", threadId, createdAt: now(), activityStatus };
+}
+
+function buildActivityStatusEventsFromTool(
+  threadId: string,
+  rawBody: string,
+): ClaudeSessionEvent[] {
+  const { rawObject } = parseHookInput(rawBody);
+  if (!rawObject) return [];
+  const toolName = extractToolName(rawObject);
+  if (!toolName) return [];
+  const activityStatus = classifyAgentActivityFromTool({
+    toolName,
+    toolInput: extractToolInput(rawObject),
+  });
+  return activityStatus ? [buildActivityStatusEvent(threadId, activityStatus)] : [];
+}
+
+export function buildPreToolUseEvents(threadId: string, rawBody: string): ClaudeSessionEvent[] {
+  return buildActivityStatusEventsFromTool(threadId, rawBody);
 }
 
 export function buildPermissionRequestEvents(threadId: string, rawBody: string): ClaudeSessionEvent[] {
@@ -203,6 +241,7 @@ export function buildPermissionRequestEvents(threadId: string, rawBody: string):
     ];
   }
   return [
+    ...buildActivityStatusEventsFromTool(threadId, rawBody),
     { type: "hookStatus", threadId, createdAt: now(), hookStatus: "pendingApproval" },
   ];
 }

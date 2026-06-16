@@ -3,6 +3,7 @@ import {
   parseHookInput,
   summarizeNotification,
   buildUserPromptSubmitEvents,
+  buildPreToolUseEvents,
   buildPermissionRequestEvents,
   buildPostToolUseEvents,
   buildStopEvents,
@@ -126,14 +127,44 @@ describe("buildUserPromptSubmitEvents", () => {
     expect(events[0]!.type).toBe("turnStart");
     expect(events[0]!.threadId).toBe("thread-1");
   });
+
+  it("returns an activity event when prompt text is present", () => {
+    const events = buildUserPromptSubmitEvents(
+      "thread-1",
+      JSON.stringify({ user_prompt: "translate this settings screen" }),
+    );
+    expect(events.map((event) => event.type)).toEqual(["turnStart", "activityStatus"]);
+    if (events[1]!.type === "activityStatus") {
+      expect(events[1]!.activityStatus).toBe("translating");
+    }
+  });
+});
+
+describe("buildPreToolUseEvents", () => {
+  it("returns an activity event for deterministic tool categories", () => {
+    const events = buildPreToolUseEvents(
+      "thread-1",
+      JSON.stringify({ tool_name: "Bash", tool_input: { command: "git commit -m test" } }),
+    );
+    expect(events).toHaveLength(1);
+    if (events[0]!.type === "activityStatus") {
+      expect(events[0]!.activityStatus).toBe("committing");
+    }
+  });
 });
 
 describe("buildPermissionRequestEvents", () => {
-  it("returns a hookStatus pendingApproval event for regular tools", () => {
-    const events = buildPermissionRequestEvents("thread-1", JSON.stringify({ tool_name: "Bash" }));
-    expect(events).toHaveLength(1);
-    if (events[0]!.type === "hookStatus") {
-      expect(events[0]!.hookStatus).toBe("pendingApproval");
+  it("returns an activity event and hookStatus pendingApproval event for regular tools", () => {
+    const events = buildPermissionRequestEvents(
+      "thread-1",
+      JSON.stringify({ tool_name: "Bash", tool_input: { command: "bun run typecheck" } }),
+    );
+    expect(events.map((event) => event.type)).toEqual(["activityStatus", "hookStatus"]);
+    if (events[0]!.type === "activityStatus") {
+      expect(events[0]!.activityStatus).toBe("checking");
+    }
+    if (events[1]!.type === "hookStatus") {
+      expect(events[1]!.hookStatus).toBe("pendingApproval");
     }
   });
 

@@ -1,6 +1,6 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
-import { ClaudeHookStatus } from "./claude-terminal";
+import { AgentActivityStatus, ClaudeHookStatus } from "./claude-terminal";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -341,6 +341,7 @@ export const OrchestrationThread = Schema.Struct({
    * snapshots (currently pi). `null` means no active hook status.
    */
   hookStatus: Schema.optional(Schema.NullOr(ClaudeHookStatus)),
+  activityStatus: Schema.optional(Schema.NullOr(AgentActivityStatus)),
   scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(() => null),
   ),

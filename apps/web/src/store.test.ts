@@ -15,6 +15,7 @@ import {
   setTerminalStatus,
   setTerminalLifecycle,
   setThreadHookStatus,
+  setThreadActivityStatus,
   type AppState,
 } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
@@ -211,6 +212,7 @@ describe("store pure functions", () => {
       makeThread({
         harness: "pi",
         hookStatus: "working",
+        activityStatus: "coding",
         lastCompletedAt: undefined,
       }),
     );
@@ -223,7 +225,31 @@ describe("store pure functions", () => {
     );
 
     expect(next.threads[0]?.hookStatus).toBe("completed");
+    expect(next.threads[0]?.activityStatus).toBeNull();
     expect(next.threads[0]?.lastCompletedAt).toBe(completedAt);
+  });
+
+  it("setThreadHookStatus clears activity when the agent needs input", () => {
+    const initialState = makeState(
+      makeThread({ hookStatus: "working", activityStatus: "committing" }),
+    );
+
+    const next = setThreadHookStatus(initialState, ThreadId.makeUnsafe("thread-1"), "needsInput");
+
+    expect(next.threads[0]?.hookStatus).toBe("needsInput");
+    expect(next.threads[0]?.activityStatus).toBeNull();
+  });
+
+  it("setThreadActivityStatus stores transient activity labels", () => {
+    const initialState = makeState(makeThread({ hookStatus: "working", terminalStatus: "new" }));
+
+    const next = setThreadActivityStatus(
+      initialState,
+      ThreadId.makeUnsafe("thread-1"),
+      "committing",
+    );
+
+    expect(next.threads[0]?.activityStatus).toBe("committing");
   });
 
   it("reorderProjects moves a project to a target index", () => {
@@ -411,6 +437,24 @@ describe("store read model sync", () => {
 
     expect(next.threads[0]?.terminalStatus).toBe("active");
     expect(next.threads[0]?.hookStatus).toBe("working");
+  });
+
+  it("applies live activityStatus from snapshots when present", () => {
+    const initialState = makeState(
+      makeThread({ harness: "pi", terminalStatus: "active", activityStatus: null }),
+    );
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        harness: "pi",
+        terminalStatus: "active",
+        hookStatus: "working",
+        activityStatus: "committing",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.activityStatus).toBe("committing");
   });
 
   it("clears local hookStatus when a snapshot explicitly reports null", () => {

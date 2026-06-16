@@ -1,4 +1,5 @@
-import type { ClaudeHookStatus, GitStatusResult, TerminalStatus } from "@clui/contracts";
+import type { AgentActivityStatus, ClaudeHookStatus, GitStatusResult, TerminalStatus } from "@clui/contracts";
+import { AGENT_ACTIVITY_LABELS } from "@clui/shared/agentActivity";
 import type { Thread } from "../types";
 import {
   hasSeenCompletion as hasSeenThreadCompletion,
@@ -6,7 +7,7 @@ import {
 } from "./threadUnread";
 
 export interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Needs Input" | "Running" | "Paused" | "Error";
+  label: string;
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -59,7 +60,11 @@ export function threadStatusPill(
     thread.hookStatus === "completed" && hasSeenThreadCompletion(thread);
 
   // Real-time hook status is the most authoritative signal when set.
-  const pill = claudeTerminalStatusPill(thread.terminalStatus, thread.hookStatus);
+  const pill = claudeTerminalStatusPill(
+    thread.terminalStatus,
+    thread.hookStatus,
+    thread.activityStatus,
+  );
   if (pill && !suppressReadCompletedHookStatus) return pill;
 
   // Activity-based badges are only shown when the terminal is NOT active.
@@ -86,12 +91,7 @@ export function threadStatusPill(
   }
 
   if (thread.session?.status === "running" && !suppressReadCompletedHookStatus) {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
+    return workingPill(thread.activityStatus);
   }
 
   if (hasUnseenCompletion(thread)) {
@@ -109,13 +109,14 @@ export function threadStatusPill(
 export function claudeTerminalStatusPill(
   terminalStatus: TerminalStatus | undefined,
   hookStatus?: ClaudeHookStatus | null,
+  activityStatus?: AgentActivityStatus | null,
 ): ThreadStatusPill | null {
   if (terminalStatus === "active") {
     // Rich hook-derived status when available.
     // When hookStatus is null (idle at prompt), show no badge —
     // the terminal being alive is obvious from the terminal content.
     if (hookStatus) {
-      return hookStatusPill(hookStatus);
+      return hookStatusPill(hookStatus, activityStatus);
     }
     return null;
   }
@@ -127,15 +128,22 @@ export function claudeTerminalStatusPill(
   return null;
 }
 
-function hookStatusPill(hookStatus: ClaudeHookStatus): ThreadStatusPill {
+function workingPill(activityStatus?: AgentActivityStatus | null): ThreadStatusPill {
+  return {
+    label: activityStatus ? AGENT_ACTIVITY_LABELS[activityStatus] : "Working",
+    colorClass: "text-sky-600 dark:text-sky-300/80",
+    dotClass: "bg-sky-500 dark:bg-sky-300/80",
+    pulse: true,
+  };
+}
+
+function hookStatusPill(
+  hookStatus: ClaudeHookStatus,
+  activityStatus?: AgentActivityStatus | null,
+): ThreadStatusPill {
   switch (hookStatus) {
     case "working":
-      return {
-        label: "Working",
-        colorClass: "text-sky-600 dark:text-sky-300/80",
-        dotClass: "bg-sky-500 dark:bg-sky-300/80",
-        pulse: true,
-      };
+      return workingPill(activityStatus);
     case "needsInput":
       return {
         label: "Needs Input",

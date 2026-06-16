@@ -505,6 +505,42 @@ describe("PiSessionManagerRuntime", () => {
     });
   });
 
+  it("tracks activity updates from the pi sync sidecar", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+    const events = collectEvents(runtime);
+
+    await runtime.startSession({
+      threadId: "thread-1",
+      cwd,
+      cols: 100,
+      rows: 24,
+    });
+
+    await writeFile(
+      path.join(stateDir, "pi-session-sync", "thread-1.json"),
+      JSON.stringify({
+        threadId: "thread-1",
+        sessionFile: null,
+        timestamp: new Date().toISOString(),
+        reason: "tool_call:Bash",
+        toolName: "Bash",
+        toolInputCommand: "git commit -m test",
+      }),
+      "utf8",
+    );
+
+    await waitFor(() => {
+      expect(
+        events.some(
+          (event) => event.type === "activityStatus" && event.activityStatus === "committing",
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("tracks hook status updates from the pi sync sidecar without a session-file change", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);

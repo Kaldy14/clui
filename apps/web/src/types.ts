@@ -16,6 +16,7 @@ import type {
   TerminalStatus,
   TitleSource,
   ClaudeHookStatus,
+  AgentActivityStatus,
   CodingHarness,
 } from "@clui/contracts";
 
@@ -137,6 +138,7 @@ export interface Thread {
   titleSource: TitleSource;
   bookmarked: boolean;
   hookStatus: ClaudeHookStatus | null;
+  activityStatus?: AgentActivityStatus | null;
 }
 
 export interface ThreadSession {

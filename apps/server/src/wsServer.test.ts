@@ -23,6 +23,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
+  type AgentActivityStatus,
   type ClaudeHookStatus,
   type ClaudeSessionEvent,
   type KeybindingsConfig,
@@ -240,6 +241,7 @@ const defaultPiSessionManager: PiSessionManagerShape = {
   getSessionStatus: () => Effect.succeed("new" as const),
   getSessionFile: () => Effect.succeed(null),
   getSessionHookStatus: () => Effect.succeed(null),
+  getSessionActivityStatus: () => Effect.succeed(null),
   reconcileActiveSessions: () => Effect.void,
   setMaxActiveSessions: () => Effect.void,
   hibernateAll: () => Effect.void,
@@ -2165,10 +2167,13 @@ describe("WebSocket Server", () => {
   function makeObservablePiSession() {
     const listeners = new Set<(event: PiSessionEvent) => void>();
     const hookStatusByThreadId = new Map<string, ClaudeHookStatus | null>();
+    const activityStatusByThreadId = new Map<string, AgentActivityStatus | null>();
     const shape: PiSessionManagerShape = {
       ...defaultPiSessionManager,
       getSessionHookStatus: (threadId) =>
         Effect.succeed(hookStatusByThreadId.get(threadId) ?? null),
+      getSessionActivityStatus: (threadId) =>
+        Effect.succeed(activityStatusByThreadId.get(threadId) ?? null),
       subscribe: (listener) =>
         Effect.sync(() => {
           listeners.add(listener);
@@ -2179,6 +2184,9 @@ describe("WebSocket Server", () => {
       shape,
       setHookStatus: (threadId: string, hookStatus: ClaudeHookStatus | null) => {
         hookStatusByThreadId.set(threadId, hookStatus);
+      },
+      setActivityStatus: (threadId: string, activityStatus: AgentActivityStatus | null) => {
+        activityStatusByThreadId.set(threadId, activityStatus);
       },
       emit: (event: PiSessionEvent) => {
         for (const listener of listeners) listener(event);
@@ -2285,7 +2293,7 @@ describe("WebSocket Server", () => {
       });
     });
 
-    it("hydrates current pi hookStatus into snapshots for clients that missed the live event", async () => {
+    it("hydrates current pi hook and activity statuses into snapshots for clients that missed the live event", async () => {
       const workspaceRoot = makeTempDir("clui-ws-pi-hook-snapshot-");
       const piSession = makeObservablePiSession();
       server = await createTestServer({
@@ -2308,6 +2316,7 @@ describe("WebSocket Server", () => {
       });
 
       piSession.setHookStatus("thread-1", "working");
+      piSession.setActivityStatus("thread-1", "committing");
       piSession.emit({
         type: "started",
         threadId: "thread-1",
@@ -2321,6 +2330,7 @@ describe("WebSocket Server", () => {
         const thread = snapshot.threads.find((entry) => entry.id === "thread-1");
         expect(thread?.terminalStatus).toBe("active");
         expect(thread?.hookStatus).toBe("working");
+        expect(thread?.activityStatus).toBe("committing");
       });
     });
 

@@ -463,6 +463,11 @@ function EventRouter() {
         sessionState.handleTurnStart(event.threadId);
         useStore.getState().bumpLastInteractedAt(ThreadId.makeUnsafe(event.threadId));
       }
+      if (event.type === "activityStatus") {
+        useStore
+          .getState()
+          .setActivityStatus(ThreadId.makeUnsafe(event.threadId), event.activityStatus);
+      }
       if (event.type === "hookStatus") {
         const result = sessionState.handleHookStatus(event.threadId, event.hookStatus);
 
@@ -536,6 +541,11 @@ function EventRouter() {
         piOutputActivityFallback.handleDormant(event.threadId);
         sessionState.handleDormant(event.threadId, event.type);
       }
+      if (event.type === "activityStatus") {
+        useStore
+          .getState()
+          .setActivityStatus(ThreadId.makeUnsafe(event.threadId), event.activityStatus);
+      }
       if (event.type === "hookStatus") {
         // Pi status comes from the server-side runtime extension / JSONL watcher,
         // with visible PTY output as a fallback while bytes are still arriving.
@@ -589,16 +599,20 @@ function EventRouter() {
         latestSequence = 0;
         sessionState.clearAll();
         piOutputActivityFallback.clearAll();
-        // Clear stale hookStatus values preserved in the Zustand store —
+        // Clear stale hookStatus/activity values preserved in the Zustand store —
         // the state machine's internal tracking (timers, turnInProgress,
-        // grace periods) was just wiped, so orphaned hookStatus values
-        // would cause permanently wrong badges.
+        // grace periods) was just wiped, so orphaned statuses would cause
+        // permanently wrong badges.
         useStore.setState((state) => {
-          const needsUpdate = state.threads.some((t) => t.hookStatus !== null);
+          const needsUpdate = state.threads.some(
+            (t) => t.hookStatus !== null || (t.activityStatus ?? null) !== null,
+          );
           if (!needsUpdate) return state;
           return {
             threads: state.threads.map((t) =>
-              t.hookStatus !== null ? { ...t, hookStatus: null } : t,
+              t.hookStatus !== null || (t.activityStatus ?? null) !== null
+                ? { ...t, hookStatus: null, activityStatus: null }
+                : t,
             ),
           };
         });
