@@ -10,7 +10,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 **Root cause:** Active attach treated raw scrollback history as the source of truth. That made correctness depend on replaying large stateful byte streams, while a live TUI really needs a fresh repaint after the browser has subscribed and fitted the terminal.
 
-**Fix:** Changed active attach to wait for a visible output-subscription ack and first fit, reset the local xterm into the active TUI screen, force a real PTY repaint with a one-row resize nudge, then release only buffered fresh repaint/live output after a short settle. Full scrollback fetch remains for dormant/read-only views only. Added retry/visibility handling for subscription readiness, repaint helper tests, and terminal replay coverage for active alternate-screen reset.
+**Fix:** Changed active attach to wait for a visible output-subscription ack and first fit, reset the local xterm without synthesizing alternate-screen mode, force a real PTY repaint with a one-row resize nudge, then release only buffered fresh repaint/live output after a short settle. Full scrollback fetch remains for dormant/read-only views only. Added retry/visibility handling for subscription readiness, repaint helper tests, and terminal replay coverage for active repaint reset that preserves normal wheel scrolling.
 
 **Affected files:**
 - `apps/web/src/components/ThreadTerminalView.tsx`

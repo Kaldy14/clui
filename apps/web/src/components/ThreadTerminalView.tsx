@@ -1164,7 +1164,8 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       gateOpened = true;
 
       // Reset the local xterm to discard any stale cached screen. The PTY is
-      // the source of truth for the active TUI, and it will repaint shortly.
+      // the source of truth and will repaint shortly; do not synthesize
+      // alternate screen here because that makes wheel events become arrows.
       writeTerminalActiveRepaintReset(queuedTerminalWriter, harness);
       // The cached offset may belong to an older server-side session. We keep
       // the stored value until fresh output arrives, then accept that first

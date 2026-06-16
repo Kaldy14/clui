@@ -69,7 +69,7 @@ describe("terminal replay input modes", () => {
     }
   });
 
-  it("prepares active repaint replay in the alternate screen", async () => {
+  it("prepares active repaint replay without synthesizing alternate screen", async () => {
     const terminal = new Terminal({ allowProposedApi: true });
     try {
       expect(terminal.buffer.active.type).toBe("normal");
@@ -77,7 +77,7 @@ describe("terminal replay input modes", () => {
       writeTerminalActiveRepaintReset(terminal, "pi");
       await flushWrites(terminal);
 
-      expect(terminal.buffer.active.type).toBe("alternate");
+      expect(terminal.buffer.active.type).toBe("normal");
       expect(terminal.modes.bracketedPasteMode).toBe(true);
     } finally {
       terminal.dispose();
