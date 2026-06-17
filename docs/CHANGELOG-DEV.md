@@ -4,6 +4,88 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-17 — Package-manager test and lint activity mapping
+
+**Problem:** Commands such as `pnpm --dir apps/core-hub run test`, `pnpm --dir apps/core-hub run lint`, `eslint`, and `vitest` were not all classified into the most specific activity badges.
+
+**Root cause:** The deterministic bash classifier only recognized package-manager scripts with no intervening flags, and lint commands reused the generic `Checking` activity.
+
+**Fix:** Added a `linting` activity status and label, recognized package-manager flags before `run`, mapped lint/eslint/oxlint/biome lint to `Linting`, and kept vitest/test commands mapped to `Testing`.
+
+**Affected files:**
+- `packages/contracts/src/claude-terminal.ts`
+- `packages/shared/src/agentActivity.ts`
+- `packages/shared/src/agentActivity.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-17 — Markdown code fence markers hidden in thread terminal output
+
+**Problem:** Markdown code blocks rendered in the xterm thread UI showed the literal ` ``` ` fence lines, which added visual noise without improving readability.
+
+**Root cause:** Clui forwards harness PTY output directly to xterm.js. The harnesses emit markdown code blocks as plain text, including the opening and closing fence lines, and there was no output-side filter to strip those delimiters before they reached the terminal surface.
+
+**Fix:** Added a small, stateful `terminalOutputMarkdown` filter that tracks whether it is inside a markdown code block and drops fence lines while preserving the fenced content. The filter is applied to live output events and dormant scrollback snapshots before they are written to xterm. It only buffers short prefixes that could still become fence lines, so normal live prompts are not delayed. Added unit coverage for backtick/tilde fences, language tags, ANSI SGR escapes, cursor-control safety, CRLF, nested fences, and streaming chunk boundaries.
+
+**Affected files:**
+- `apps/web/src/lib/terminalOutputMarkdown.ts` (new)
+- `apps/web/src/lib/terminalOutputMarkdown.test.ts` (new)
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-17 — Non-commit git activity shows Gitting
+
+**Problem:** Git commands like `git status`, `git diff`, or `gh pr view` were classified as review activity instead of showing a git-specific badge.
+
+**Root cause:** The deterministic bash classifier only had special cases for commit/push and then mapped read-only git/gh commands to `reviewing`.
+
+**Fix:** Added `gitting` activity status and label. Commit still maps to `Committing`, push/PR create still maps to `Pushing`, and other git/gh commands map to `Gitting`.
+
+**Affected files:**
+- `packages/contracts/src/claude-terminal.ts`
+- `packages/shared/src/agentActivity.ts`
+- `packages/shared/src/agentActivity.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-16 — Pi subagent activity labels cover more agent types
+
+**Problem:** Only scout subagents received an agent-style label; other pi agents such as planner, reviewer, researcher, worker, frontend-designer, and context-builder could still fall back to generic `Working` or miss their specific role.
+
+**Root cause:** Activity classification only recognized scout-specific text and did not read subagent `agent` metadata from pi tool inputs.
+
+**Fix:** Added agent-oriented activity statuses for designing, delegating, and context building; mapped known pi agent names to role labels; parsed agent names from subagent/bash text and pi sync metadata; and preserved generic `Working` fallback for unknown commands.
+
+**Affected files:**
+- `packages/contracts/src/claude-terminal.ts`
+- `packages/shared/src/agentActivity.ts`
+- `packages/shared/src/agentActivity.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-16 — Subagent scout activity no longer shows generic Running
+
+**Problem:** Subagent scout work could appear as the generic `Running` badge, which was less useful than an agent-type activity label.
+
+**Root cause:** Unknown tools and unmatched bash commands used `running` as the activity fallback, and the classifier did not recognize scout/subagent scout patterns.
+
+**Fix:** Removed generic `running` activity fallback, added `scouting`, and classified scout prompts, subagent tools, and `subagent scout` bash commands as `Scouting`; unmatched work now falls back to the existing lifecycle `Working` badge.
+
+**Affected files:**
+- `packages/contracts/src/claude-terminal.ts`
+- `packages/shared/src/agentActivity.ts`
+- `packages/shared/src/agentActivity.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-16 — Sidebar working badges show deterministic activity
 
 **Problem:** Sidebar and toolbar badges only showed generic `Working` while an agent was actively planning, editing, testing, committing, or running other recognizable work.

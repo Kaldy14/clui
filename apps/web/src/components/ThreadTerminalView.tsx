@@ -22,6 +22,10 @@ import {
   type PiStickyInputMirror,
 } from "../lib/piStickyInputMirror";
 import { appendCompactedTerminalOutput } from "../lib/terminalOutputCompaction";
+import {
+  createMarkdownCodeFenceFilter,
+  stripMarkdownCodeFences,
+} from "../lib/terminalOutputMarkdown";
 import { requestTerminalRepaint } from "../lib/terminalPtyRepaint";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
@@ -723,7 +727,7 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
       if (!fitDone || !pendingData || disposed) return;
       const { scrollback, offset } = pendingData;
       pendingData = null;
-      if (scrollback) entry.terminal.write(scrollback);
+      if (scrollback) entry.terminal.write(stripMarkdownCodeFences(scrollback));
       if (offset != null) entry.lastServerOffset = offset;
     };
 
@@ -846,6 +850,13 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
   const searchAddonRef = useRef<claudeCache.CachedTerminal["searchAddon"] | null>(null);
   const stickyPiInputMirrorRef = useRef<PiStickyInputMirror | null>(null);
   const stickyPiInputMirrorWheelRemainderRef = useRef(0);
+  const fenceFilterRef = useRef(createMarkdownCodeFenceFilter());
+
+  // Reset the markdown fence filter whenever the thread/harness changes so we
+  // do not carry a stale "inside code block" state across sessions.
+  useEffect(() => {
+    fenceFilterRef.current = createMarkdownCodeFenceFilter();
+  }, [threadId, harness]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -1078,6 +1089,13 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     let queuedOutputCompacted = false;
     let outputWriteRafId: number | null = null;
 
+    const recordOutputOffset = (offset: number | null) => {
+      if (offset != null && (repaintOffsetBaselineInvalid || offset > entry.lastServerOffset)) {
+        entry.lastServerOffset = offset;
+        repaintOffsetBaselineInvalid = false;
+      }
+    };
+
     const flushQueuedOutputWrite = () => {
       if (outputWriteRafId !== null) {
         cancelAnimationFrame(outputWriteRafId);
@@ -1097,10 +1115,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         scheduleTerminalPaintRefresh();
         if (wasCompacted) scheduleCatchUpRedraw();
       });
-      if (offset != null && (repaintOffsetBaselineInvalid || offset > entry.lastServerOffset)) {
-        entry.lastServerOffset = offset;
-        repaintOffsetBaselineInvalid = false;
-      }
+      recordOutputOffset(offset);
     };
 
     const scheduleOutputWriteFlush = () => {
@@ -1113,7 +1128,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     };
 
     const enqueueOutputWrite = (data: string, offset: number) => {
-      if (!data) return;
+      if (!data) {
+        recordOutputOffset(offset);
+        return;
+      }
       const next = appendCompactedTerminalOutput(queuedOutputData, data);
       queuedOutputData = next.data;
       queuedOutputCompacted = queuedOutputCompacted || next.compacted;
@@ -1125,7 +1143,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (event.threadId !== threadId) return;
       switch (event.type) {
         case "output":
-          enqueueOutputWrite(event.data, event.offset);
+          enqueueOutputWrite(fenceFilterRef.current.process(event.data), event.offset);
           break;
         case "error":
           flushQueuedOutputWrite();
@@ -1148,7 +1166,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         eventBuffer.push(event);
         return;
       }
-      const next = appendCompactedTerminalOutput(preReadyOutputData, event.data);
+      const next = appendCompactedTerminalOutput(
+        preReadyOutputData,
+        fenceFilterRef.current.process(event.data),
+      );
       preReadyOutputData = next.data;
       preReadyOutputCompacted = preReadyOutputCompacted || next.compacted;
       preReadyOutputMaxOffset = Math.max(preReadyOutputMaxOffset ?? event.offset, event.offset);
@@ -1209,10 +1230,11 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
             scheduleTerminalPaintRefresh();
             if (wasCompacted) scheduleCatchUpRedraw();
           });
-          if (repaintOffsetBaselineInvalid || offset > entry.lastServerOffset) {
-            entry.lastServerOffset = offset;
-            repaintOffsetBaselineInvalid = false;
-          }
+          recordOutputOffset(offset);
+        } else {
+          recordOutputOffset(preReadyOutputMaxOffset);
+          preReadyOutputMaxOffset = null;
+          preReadyOutputCompacted = false;
         }
 
         for (const event of eventBuffer) {
@@ -1574,6 +1596,8 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     });
 
     return () => {
+      const pendingMarkdownOutput = fenceFilterRef.current.flush();
+      if (pendingMarkdownOutput) terminalWriteQueue.enqueue(pendingMarkdownOutput);
       disposed = true;
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);

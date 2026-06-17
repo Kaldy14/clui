@@ -122,6 +122,7 @@ interface PiSessionSyncPayload {
   readonly toolName?: string;
   readonly toolInputCommand?: string;
   readonly toolInputDescription?: string;
+  readonly toolInputAgent?: string;
   readonly activityStatus?: AgentActivityStatus | null;
 }
 
@@ -246,6 +247,9 @@ function writePayload(ctx, reason, hookStatus, metadata) {
   if (metadata && typeof metadata.toolInputDescription === "string" && metadata.toolInputDescription.length > 0) {
     payload.toolInputDescription = metadata.toolInputDescription;
   }
+  if (metadata && typeof metadata.toolInputAgent === "string" && metadata.toolInputAgent.length > 0) {
+    payload.toolInputAgent = metadata.toolInputAgent;
+  }
   const target = path.join(syncDir, threadId + ".json");
   const tmp = target + ".tmp";
   writeFileSync(tmp, JSON.stringify(payload));
@@ -258,6 +262,7 @@ function buildToolMetadata(event) {
     toolName: typeof event?.toolName === "string" ? event.toolName : undefined,
     toolInputCommand: typeof input?.command === "string" ? input.command : undefined,
     toolInputDescription: typeof input?.description === "string" ? input.description : undefined,
+    toolInputAgent: typeof input?.agent === "string" ? input.agent : undefined,
   };
 }
 
@@ -1138,14 +1143,16 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       const toolName = nonEmptyString(parsed.toolName);
       const toolInputCommand = nonEmptyString(parsed.toolInputCommand);
       const toolInputDescription = nonEmptyString(parsed.toolInputDescription);
+      const toolInputAgent = nonEmptyString(parsed.toolInputAgent);
       const activityStatus = explicitActivityStatus !== undefined
         ? explicitActivityStatus
-        : reason || toolName || toolInputCommand || toolInputDescription
+        : reason || toolName || toolInputCommand || toolInputDescription || toolInputAgent
           ? classifyAgentActivityFromPiReason({
               reason,
               toolName,
               command: toolInputCommand,
               description: toolInputDescription,
+              agentName: toolInputAgent,
             })
           : undefined;
       payload = {
@@ -1158,6 +1165,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         ...(toolName ? { toolName } : {}),
         ...(toolInputCommand ? { toolInputCommand } : {}),
         ...(toolInputDescription ? { toolInputDescription } : {}),
+        ...(toolInputAgent ? { toolInputAgent } : {}),
         ...(activityStatus !== undefined ? { activityStatus } : {}),
       };
     } catch (error) {

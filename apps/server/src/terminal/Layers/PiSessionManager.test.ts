@@ -539,6 +539,27 @@ describe("PiSessionManagerRuntime", () => {
         ),
       ).toBe(true);
     });
+
+    await writeFile(
+      path.join(stateDir, "pi-session-sync", "thread-1.json"),
+      JSON.stringify({
+        threadId: "thread-1",
+        sessionFile: null,
+        timestamp: new Date().toISOString(),
+        reason: "tool_call:subagent",
+        toolName: "subagent",
+        toolInputAgent: "reviewer",
+      }),
+      "utf8",
+    );
+
+    await waitFor(() => {
+      expect(
+        events.some(
+          (event) => event.type === "activityStatus" && event.activityStatus === "reviewing",
+        ),
+      ).toBe(true);
+    });
   });
 
   it("tracks hook status updates from the pi sync sidecar without a session-file change", async () => {

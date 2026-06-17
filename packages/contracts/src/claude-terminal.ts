@@ -17,17 +17,22 @@ export const AgentActivityStatus = Schema.Literals([
   "reading",
   "searching",
   "researching",
+  "scouting",
+  "designing",
+  "delegating",
+  "contextBuilding",
   "coding",
   "debugging",
   "testing",
+  "linting",
   "checking",
   "building",
   "installing",
   "committing",
   "pushing",
+  "gitting",
   "reviewing",
   "translating",
-  "running",
 ]);
 export type AgentActivityStatus = typeof AgentActivityStatus.Type;
 
