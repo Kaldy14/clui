@@ -28,6 +28,7 @@ import {
 } from "../lib/terminalOutputMarkdown";
 import { requestTerminalRepaint } from "../lib/terminalPtyRepaint";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
+import { THREAD_SELECTED_EVENT, isThreadSelectedEventFor } from "../lib/threadSelectionEvent";
 import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
 import { restoreTerminalInputModesForHarness } from "../lib/terminalReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
@@ -697,6 +698,15 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
     const el = containerRef.current;
     if (!el) return;
 
+    const onThreadSelected = (event: Event) => {
+      if (!isThreadSelectedEventFor(event, threadId)) return;
+      const target = claudeCache.get(threadId);
+      if (!target?.container?.isConnected) return;
+      target.fitAddon.fit();
+      target.terminal.refresh(0, Math.max(0, target.terminal.rows - 1));
+    };
+    window.addEventListener(THREAD_SELECTED_EVENT, onThreadSelected);
+
     // If there's a cached terminal from a previous active session, reuse it
     const cached = claudeCache.get(threadId);
     if (cached) {
@@ -705,6 +715,7 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
       // Fit after layout so the read-only scrollback renders at correct dimensions
       const rafId = requestAnimationFrame(() => cached.fitAddon.fit());
       return () => {
+        window.removeEventListener(THREAD_SELECTED_EVENT, onThreadSelected);
         cancelAnimationFrame(rafId);
         claudeCache.detach(threadId);
       };
@@ -714,7 +725,11 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
     const entry = claudeCache.attach(threadId, el);
     entry.terminal.options.disableStdin = true;
     const api = readNativeApi();
-    if (!api) return;
+    if (!api) {
+      return () => {
+        window.removeEventListener(THREAD_SELECTED_EVENT, onThreadSelected);
+      };
+    }
 
     let disposed = false;
     // Gate scrollback write on fit — same race as ActiveTerminalView:
@@ -746,6 +761,7 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
 
     return () => {
       disposed = true;
+      window.removeEventListener(THREAD_SELECTED_EVENT, onThreadSelected);
       cancelAnimationFrame(rafId);
       claudeCache.detach(threadId);
       // Dispose dormant terminals on unmount — they're cheap to recreate
@@ -889,6 +905,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     let repaintGateRetryRafId: number | null = null;
     let repaintSettleTimeoutId: number | null = null;
     let cancelInitialPtyRepaint: (() => void) | null = null;
+    let cancelThreadSelectionPtyRepaint: (() => void) | null = null;
     let repaintOffsetBaselineInvalid = false;
 
     const entry = claudeCache.attach(threadId, el);
@@ -1010,6 +1027,13 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       scheduleTerminalVisualSettle();
     };
 
+    const readFittedTerminalSize = () => {
+      if (!disposed && entry.container?.isConnected) {
+        fitAddon.fit();
+      }
+      return { cols: terminal.cols, rows: terminal.rows };
+    };
+
     let initialPtyRepaintRequested = false;
     const requestInitialTerminalPtyRepaint = (): boolean => {
       if (initialPtyRepaintRequested) return true;
@@ -1021,17 +1045,26 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         threadId,
         cols: terminal.cols,
         rows: terminal.rows,
-        readRestoreSize: () => {
-          if (!disposed && entry.container?.isConnected) {
-            fitAddon.fit();
-          }
-          return { cols: terminal.cols, rows: terminal.rows };
-        },
+        readRestoreSize: readFittedTerminalSize,
       });
       if (!repaint.scheduled) return false;
       cancelInitialPtyRepaint = repaint.cancel;
       initialPtyRepaintRequested = true;
       return true;
+    };
+
+    const requestThreadSelectionPtyRepaint = () => {
+      if (!terminalReady || disposed || !entry.container?.isConnected) return;
+      cancelThreadSelectionPtyRepaint?.();
+      const repaint = requestTerminalRepaint({
+        api: activeApi,
+        harness,
+        threadId,
+        cols: terminal.cols,
+        rows: terminal.rows,
+        readRestoreSize: readFittedTerminalSize,
+      });
+      cancelThreadSelectionPtyRepaint = repaint.scheduled ? repaint.cancel : null;
     };
 
     let terminalPaintRefreshRafId: number | null = null;
@@ -1414,14 +1447,26 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       scheduleStickyPiInputMirrorRefresh();
     });
 
-    // Watch for window resize — just re-fit, xterm.js preserves scroll
-    // position natively via isUserScrolling during dimension changes.
-    const onWindowResize = () => {
+    // Watch for window resize — re-fit and repaint locally; xterm.js preserves
+    // scroll position natively via isUserScrolling during dimension changes.
+    const refitTerminal = () => {
       fitAddon.fit();
+      terminal.refresh(0, Math.max(0, terminal.rows - 1));
       openTerminalGate();
       scheduleStickyPiInputMirrorRefresh();
     };
+    const onWindowResize = refitTerminal;
     window.addEventListener("resize", onWindowResize);
+
+    // Re-fit, repaint locally, and nudge the PTY whenever the user explicitly
+    // selects this thread from the sidebar. This mirrors the manual
+    // window-resize recovery path for stale or stuck terminal frames.
+    const onThreadSelected = (event: Event) => {
+      if (!isThreadSelectedEventFor(event, threadId)) return;
+      refitTerminal();
+      requestThreadSelectionPtyRepaint();
+    };
+    window.addEventListener(THREAD_SELECTED_EVENT, onThreadSelected);
 
     // Keep the visible terminal fresh in the server-side LRU. Looking at a
     // quiet thread is still active use, even if it is not producing output.
@@ -1610,6 +1655,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (visualSettleTimeoutId !== null) clearTimeout(visualSettleTimeoutId);
       if (repaintSettleTimeoutId !== null) clearTimeout(repaintSettleTimeoutId);
       cancelInitialPtyRepaint?.();
+      cancelThreadSelectionPtyRepaint?.();
       terminalWriteQueue.dispose();
       queuedOutputData = "";
       queuedOutputMaxOffset = null;
@@ -1625,6 +1671,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       el.removeEventListener("wheel", onAltBufferWheel, { capture: true });
       el.removeEventListener("wheel", onWheelClearIndicator);
       window.removeEventListener("resize", onWindowResize);
+      window.removeEventListener(THREAD_SELECTED_EVENT, onThreadSelected);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       resizeObserver.disconnect();
       themeObserver.disconnect();

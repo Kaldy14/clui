@@ -60,6 +60,7 @@ import { derivePendingApprovals, derivePendingUserInputs } from "../session-logi
 import { getGlobalSessionEventState } from "../lib/sessionEventState";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { dispatchThreadArchiveUpdate } from "../lib/threadArchive";
+import { dispatchThreadSelectedEvent } from "../lib/threadSelectionEvent";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -1486,11 +1487,18 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
         to: "/$threadId",
         params: { threadId },
       });
+      // If the user re-selected the already-visible thread, the route does not
+      // remount and the terminal would not recover on its own. Trigger the same
+      // fit/repaint path that a window resize uses to clear stale frames.
+      if (routeThreadId === threadId) {
+        dispatchThreadSelectedEvent(threadId);
+      }
     },
     [
       clearSelection,
       navigate,
       rangeSelectTo,
+      routeThreadId,
       selectedThreadIds.size,
       setSelectionAnchor,
       toggleThreadSelection,
@@ -2341,6 +2349,9 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                                     to: "/$threadId",
                                                     params: { threadId: thread.id },
                                                   });
+                                                  if (routeThreadId === thread.id) {
+                                                    dispatchThreadSelectedEvent(thread.id);
+                                                  }
                                                 }}
                                                 onContextMenu={(event) => {
                                                   event.preventDefault();

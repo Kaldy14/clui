@@ -186,6 +186,7 @@ export function generateDiffReviewQueryOptions(input: {
 export function workingTreeDiffQueryOptions(input: {
   threadId: ThreadId | null;
   enabled?: boolean;
+  refetchIntervalMs?: number | false;
 }) {
   return queryOptions({
     queryKey: providerQueryKeys.workingTreeDiff(input.threadId),
@@ -197,7 +198,10 @@ export function workingTreeDiffQueryOptions(input: {
       return await api.orchestration.getWorkingTreeDiff({ threadId: input.threadId });
     },
     enabled: (input.enabled ?? true) && !!input.threadId,
-    staleTime: 30_000, // Refetch after 30s since working tree changes frequently
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchInterval: input.refetchIntervalMs ?? false,
     gcTime: 60_000, // free diff data 60s after the component unmounts
     retry: 2,
   });

@@ -784,10 +784,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       enabled: isGitRepo && hasTurns,
     }),
   );
+  const shouldShowWorkingTreeDiff = !hasTurns || showWorkingTree;
+  const shouldLiveRefreshWorkingTreeDiff =
+    shouldShowWorkingTreeDiff && activeThread?.terminalStatus === "active";
   const workingTreeDiffQuery = useQuery(
     workingTreeDiffQueryOptions({
       threadId: activeThreadId,
-      enabled: isGitRepo && (!hasTurns || showWorkingTree),
+      enabled: isGitRepo && shouldShowWorkingTreeDiff,
+      refetchIntervalMs: shouldLiveRefreshWorkingTreeDiff ? 5_000 : false,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -1320,6 +1324,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       },
     });
   };
+  const selectWorkingTree = () => {
+    setShowWorkingTree(true);
+    if (!activeThreadId) return;
+    void queryClient.invalidateQueries({
+      queryKey: providerQueryKeys.workingTreeDiff(activeThreadId),
+    });
+  };
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
     if (!element) {
@@ -1486,9 +1497,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <button
             type="button"
             className="shrink-0 rounded-md"
-            onClick={() => {
-              setShowWorkingTree(true);
-            }}
+            onClick={selectWorkingTree}
             data-turn-chip-selected={showWorkingTree}
           >
             <div

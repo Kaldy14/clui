@@ -18,6 +18,55 @@ import {
 } from "../Services/CheckpointDiffQuery.ts";
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
+const WORKING_TREE_DIFF_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const GET_WORKING_TREE_DIFF_OPERATION = "CheckpointDiffQuery.getWorkingTreeDiff";
+
+function runGitForWorkingTreeDiff(cwd: string, args: readonly string[]) {
+  return Effect.tryPromise({
+    try: () =>
+      new Promise<string>((resolve, reject) => {
+        execFile(
+          "git",
+          [...args],
+          { cwd, maxBuffer: WORKING_TREE_DIFF_MAX_BUFFER_BYTES },
+          (error, stdout) => {
+            if (error && !stdout) {
+              reject(error);
+            } else {
+              resolve(stdout);
+            }
+          },
+        );
+      }),
+    catch: (error) =>
+      new CheckpointInvariantError({
+        operation: GET_WORKING_TREE_DIFF_OPERATION,
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+  });
+}
+
+const normalizeDiffPart = (part: string) => part.trimEnd();
+
+const combineDiffParts = (parts: readonly string[]) => {
+  const diff = parts
+    .map(normalizeDiffPart)
+    .filter((part) => part.length > 0)
+    .join("\n");
+  return diff.length > 0 ? `${diff}\n` : "";
+};
+
+const makeUntrackedFileDiff = (cwd: string, filePath: string) =>
+  runGitForWorkingTreeDiff(cwd, [
+    "diff",
+    "--no-index",
+    "--patch",
+    "--minimal",
+    "--no-color",
+    "--",
+    "/dev/null",
+    filePath,
+  ]);
 
 const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -168,7 +217,7 @@ const make = Effect.gen(function* () {
       const thread = snapshot.threads.find((entry) => entry.id === input.threadId);
       if (!thread) {
         return yield* new CheckpointInvariantError({
-          operation: "CheckpointDiffQuery.getWorkingTreeDiff",
+          operation: GET_WORKING_TREE_DIFF_OPERATION,
           detail: `Thread '${input.threadId}' not found.`,
         });
       }
@@ -179,7 +228,7 @@ const make = Effect.gen(function* () {
       });
       if (!workspaceCwd) {
         return yield* new CheckpointInvariantError({
-          operation: "CheckpointDiffQuery.getWorkingTreeDiff",
+          operation: GET_WORKING_TREE_DIFF_OPERATION,
           detail: `Workspace path missing for thread '${input.threadId}'.`,
         });
       }
@@ -193,29 +242,28 @@ const make = Effect.gen(function* () {
         return result;
       }
 
-      // git diff HEAD shows all uncommitted changes (staged + unstaged)
-      const diff = yield* Effect.tryPromise({
-        try: () =>
-          new Promise<string>((resolve, reject) => {
-            execFile(
-              "git",
-              ["diff", "HEAD", "--patch", "--minimal", "--no-color"],
-              { cwd: workspaceCwd, maxBuffer: 10 * 1024 * 1024 },
-              (error, stdout) => {
-                if (error && !stdout) {
-                  reject(error);
-                } else {
-                  resolve(stdout);
-                }
-              },
-            );
-          }),
-        catch: (error) =>
-          new CheckpointInvariantError({
-            operation: "CheckpointDiffQuery.getWorkingTreeDiff",
-            detail: error instanceof Error ? error.message : String(error),
-          }),
-      });
+      const trackedDiff = yield* runGitForWorkingTreeDiff(workspaceCwd, [
+        "diff",
+        "HEAD",
+        "--patch",
+        "--minimal",
+        "--no-color",
+      ]);
+      const untrackedFilesOutput = yield* runGitForWorkingTreeDiff(workspaceCwd, [
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+      ]);
+      const untrackedFiles = untrackedFilesOutput
+        .split("\0")
+        .filter((filePath) => filePath.length > 0);
+      const untrackedDiffs = yield* Effect.forEach(
+        untrackedFiles,
+        (filePath) => makeUntrackedFileDiff(workspaceCwd, filePath),
+        { concurrency: 4 },
+      );
+      const diff = combineDiffParts([trackedDiff, ...untrackedDiffs]);
 
       const result: OrchestrationGetWorkingTreeDiffResult = {
         threadId: input.threadId,

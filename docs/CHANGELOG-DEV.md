@@ -4,6 +4,40 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-18 — Sidebar thread click triggers terminal refit/repaint recovery
+
+**Problem:** A thread's terminal could look stale or stuck until the user manually resized the window; clicking the thread in the sidebar did not always clear the broken frame.
+
+**Root cause:** The active terminal's resize recovery path (`fitAddon.fit()`, an xterm repaint, and a PTY SIGWINCH when dimensions change) only ran on window resize, container resize, or full route remount. Re-selecting an already-visible thread from the sidebar does not remount the route, so the terminal stayed in its broken state.
+
+**Fix:** Added a typed `clui:thread-selected` browser event. `ActiveTerminalView` now listens for it, refits and refreshes xterm, and requests the same PTY repaint nudge used to recover stale TUI frames. `DormantTerminalView` also listens and refits/refreshes its read-only scrollback. The sidebar dispatches the event when the user plain-clicks or keyboard-activates the already-selected thread. For clicks that change threads, route remount continues to run the existing initial fit/repaint path.
+
+**Affected files:**
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/lib/threadSelectionEvent.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-18 — Worktree diff panel refresh and untracked files
+
+**Problem:** Worktree thread diff panels could keep showing “No changes detected” while an active terminal had created or modified files.
+
+**Root cause:** The working-tree diff query could cache an early empty result without live refresh, and the server-side `git diff HEAD` command did not include untracked files.
+
+**Fix:** Working-tree diff queries now refetch on mount/focus, poll while the selected thread terminal is active, refresh when the Working tree chip is clicked, and append patch output for untracked files without mutating the git index.
+
+**Affected files:**
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
+- `apps/web/src/lib/providerReactQuery.ts`
+- `apps/web/src/lib/providerReactQuery.test.ts`
+- `apps/web/src/components/DiffPanel.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-17 — Package-manager test and lint activity mapping
 
 **Problem:** Commands such as `pnpm --dir apps/core-hub run test`, `pnpm --dir apps/core-hub run lint`, `eslint`, and `vitest` were not all classified into the most specific activity badges.

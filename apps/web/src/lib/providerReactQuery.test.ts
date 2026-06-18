@@ -1,19 +1,25 @@
 import { ThreadId, type NativeApi } from "@clui/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkpointDiffQueryOptions, providerQueryKeys } from "./providerReactQuery";
+import {
+  checkpointDiffQueryOptions,
+  providerQueryKeys,
+  workingTreeDiffQueryOptions,
+} from "./providerReactQuery";
 import * as nativeApi from "../nativeApi";
 
 const threadId = ThreadId.makeUnsafe("thread-id");
 
 function mockNativeApi(input: {
-  getTurnDiff: ReturnType<typeof vi.fn>;
-  getFullThreadDiff: ReturnType<typeof vi.fn>;
+  getTurnDiff?: ReturnType<typeof vi.fn>;
+  getFullThreadDiff?: ReturnType<typeof vi.fn>;
+  getWorkingTreeDiff?: ReturnType<typeof vi.fn>;
 }) {
   vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
     orchestration: {
-      getTurnDiff: input.getTurnDiff,
-      getFullThreadDiff: input.getFullThreadDiff,
+      getTurnDiff: input.getTurnDiff ?? vi.fn(),
+      getFullThreadDiff: input.getFullThreadDiff ?? vi.fn(),
+      getWorkingTreeDiff: input.getWorkingTreeDiff ?? vi.fn(),
     },
   } as unknown as NativeApi);
 }
@@ -157,5 +163,30 @@ describe("checkpointDiffQueryOptions", () => {
     expect(typeof checkpointDelay).toBe("number");
     expect(typeof genericDelay).toBe("number");
     expect((checkpointDelay ?? 0) > (genericDelay ?? 0)).toBe(true);
+  });
+});
+
+describe("workingTreeDiffQueryOptions", () => {
+  it("forwards working tree diff requests to the provider API", async () => {
+    const getWorkingTreeDiff = vi.fn().mockResolvedValue({ diff: "patch" });
+    mockNativeApi({ getWorkingTreeDiff });
+
+    const options = workingTreeDiffQueryOptions({ threadId });
+    const queryClient = new QueryClient();
+    await queryClient.fetchQuery(options);
+
+    expect(getWorkingTreeDiff).toHaveBeenCalledWith({ threadId });
+  });
+
+  it("always refetches working tree diffs on mount and supports live polling", () => {
+    const options = workingTreeDiffQueryOptions({
+      threadId,
+      refetchIntervalMs: 5_000,
+    });
+
+    expect(options.staleTime).toBe(0);
+    expect(options.refetchOnMount).toBe("always");
+    expect(options.refetchOnWindowFocus).toBe("always");
+    expect(options.refetchInterval).toBe(5_000);
   });
 });

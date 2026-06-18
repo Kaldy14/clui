@@ -6,6 +6,11 @@ import {
   TurnId,
   type OrchestrationReadModel,
 } from "@clui/contracts";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -90,6 +95,34 @@ function makeSnapshot(input: {
   };
 }
 
+function makeCheckpointStore(overrides: Partial<CheckpointStoreShape> = {}): CheckpointStoreShape {
+  return {
+    isGitRepository: () => Effect.succeed(true),
+    captureCheckpoint: () => Effect.void,
+    hasCheckpointRef: () => Effect.succeed(true),
+    restoreCheckpoint: () => Effect.succeed(true),
+    diffCheckpoints: () => Effect.succeed(""),
+    deleteCheckpointRefs: () => Effect.void,
+    ...overrides,
+  };
+}
+
+function makeLayer(snapshot: OrchestrationReadModel, checkpointStore: CheckpointStoreShape) {
+  return CheckpointDiffQueryLive.pipe(
+    Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+    Layer.provideMerge(
+      Layer.succeed(ProjectionSnapshotQuery, {
+        getSnapshot: () => Effect.succeed(snapshot),
+        getSessionMetrics: () => Effect.die("not implemented"),
+      }),
+    ),
+  );
+}
+
+function git(cwd: string, args: readonly string[]) {
+  execFileSync("git", [...args], { cwd, stdio: "ignore" });
+}
+
 describe("CheckpointDiffQueryLive", () => {
   it("computes diffs using canonical turn-0 checkpoint refs", async () => {
     const projectId = ProjectId.makeUnsafe("project-1");
@@ -164,6 +197,58 @@ describe("CheckpointDiffQueryLive", () => {
       toTurnCount: 1,
       diff: "diff patch",
     });
+  });
+
+  it("includes untracked files in working tree diffs", async () => {
+    const projectId = ProjectId.makeUnsafe("project-working-tree");
+    const threadId = ThreadId.makeUnsafe("thread-working-tree");
+    const cwd = await mkdtemp(join(tmpdir(), "clui-working-tree-diff-"));
+
+    try {
+      git(cwd, ["init"]);
+      await writeFile(join(cwd, "tracked.txt"), "before\n");
+      git(cwd, ["add", "tracked.txt"]);
+      git(cwd, [
+        "-c",
+        "user.name=Clui Test",
+        "-c",
+        "user.email=clui@example.invalid",
+        "commit",
+        "-m",
+        "initial",
+      ]);
+
+      await writeFile(join(cwd, "tracked.txt"), "after\n");
+      await mkdir(join(cwd, "new-dir"));
+      await writeFile(join(cwd, "new-dir", "created.txt"), "created\n");
+
+      const snapshot = makeSnapshot({
+        projectId,
+        threadId,
+        workspaceRoot: "/tmp/unused-project-root",
+        worktreePath: cwd,
+        checkpointTurnCount: 1,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+      });
+      const layer = makeLayer(snapshot, makeCheckpointStore());
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const query = yield* CheckpointDiffQuery;
+          return yield* query.getWorkingTreeDiff({ threadId });
+        }).pipe(Effect.provide(layer)),
+      );
+
+      expect(result.threadId).toBe(threadId);
+      expect(result.diff).toContain("diff --git a/tracked.txt b/tracked.txt");
+      expect(result.diff).toContain("-before");
+      expect(result.diff).toContain("+after");
+      expect(result.diff).toContain("diff --git a/new-dir/created.txt b/new-dir/created.txt");
+      expect(result.diff).toContain("new file mode");
+      expect(result.diff).toContain("+created");
+    } finally {
+      await rm(cwd, { force: true, recursive: true });
+    }
   });
 
   it("fails when the thread is missing from the snapshot", async () => {
