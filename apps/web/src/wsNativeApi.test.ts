@@ -375,10 +375,14 @@ describe("wsNativeApi", () => {
     requestMock.mockResolvedValueOnce({ ok: true });
     await api.orchestration.generateDiffReview({ threadId, scope: { type: "branch" } });
 
-    expect(requestMock).toHaveBeenLastCalledWith(ORCHESTRATION_WS_METHODS.generateDiffReview, {
-      threadId,
-      scope: { type: "branch" },
-    });
+    expect(requestMock).toHaveBeenLastCalledWith(
+      ORCHESTRATION_WS_METHODS.generateDiffReview,
+      {
+        threadId,
+        scope: { type: "branch" },
+      },
+      { timeoutMs: 630_000 },
+    );
 
     requestMock.mockResolvedValueOnce({ answer: "Read the auth guard first." });
     await api.orchestration.askDiffReview({
@@ -389,13 +393,17 @@ describe("wsNativeApi", () => {
       contextPatch: "@@ -1 +1 @@\n-allow\n+deny",
     });
 
-    expect(requestMock).toHaveBeenLastCalledWith(ORCHESTRATION_WS_METHODS.askDiffReview, {
-      threadId,
-      filePath: "src/auth.ts",
-      lineNumber: 42,
-      prompt: "Explain the selected guard.",
-      contextPatch: "@@ -1 +1 @@\n-allow\n+deny",
-    });
+    expect(requestMock).toHaveBeenLastCalledWith(
+      ORCHESTRATION_WS_METHODS.askDiffReview,
+      {
+        threadId,
+        filePath: "src/auth.ts",
+        lineNumber: 42,
+        prompt: "Explain the selected guard.",
+        contextPatch: "@@ -1 +1 @@\n-allow\n+deny",
+      },
+      { timeoutMs: 630_000 },
+    );
   });
 
   it("forwards temporary image writes to server websocket method", async () => {

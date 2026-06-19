@@ -89,9 +89,13 @@ const DIFF_TREE_STYLE = {
   "--trees-font-family-override": "inherit",
   "--trees-font-size-override": "12px",
   "--trees-font-weight-semibold-override": 500,
-  "--trees-item-padding-x-override": "4px",
-  "--trees-item-margin-x-override": "4px",
-  "--trees-level-gap-override": "14px",
+  "--trees-item-padding-x-override": "2px",
+  "--trees-item-margin-x-override": "2px",
+  "--trees-item-row-gap-override": "3px",
+  "--trees-level-gap-override": "4px",
+  "--trees-icon-width-override": "14px",
+  "--trees-padding-inline-override": "4px",
+  "--trees-git-lane-width-override": "10px",
   "--trees-status-added-override": "var(--success-foreground)",
   "--trees-status-deleted-override": "var(--destructive-foreground)",
   "--trees-status-modified-override": "var(--warning-foreground)",
@@ -103,12 +107,41 @@ const DIFF_TREE_STYLE = {
 } satisfies TreeHostStyle;
 
 const DIFF_TREE_UNSAFE_CSS = `
+  [data-file-tree-virtualized-scroll='true'] {
+    overflow-x: hidden;
+  }
+
   [data-type='item'] {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
     --trees-bg-alpha-light: 6%;
     --trees-bg-alpha-dark: 8%;
   }
 
+  [data-item-section='spacing'] {
+    flex: 0 0 auto;
+    padding-left: 1px;
+  }
+
+  [data-item-section='spacing-item'] {
+    box-sizing: border-box;
+    flex: 0 0 4px;
+    width: 4px;
+    margin-right: 1px;
+    opacity: 0.45;
+  }
+
+  [data-item-section='spacing-item'] + [data-item-section='spacing-item'] {
+    margin-left: 0;
+  }
+
+  :host(:hover) [data-item-section='spacing-item'] {
+    opacity: 0.7;
+  }
+
   [data-item-section='decoration'] {
+    max-width: 68px;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
   }
@@ -335,7 +368,7 @@ export default function DiffFileTree({
     composition: {
       contextMenu: {
         buttonVisibility: "when-needed",
-        triggerMode: "both",
+        triggerMode: "right-click",
       },
     },
     density: "compact",

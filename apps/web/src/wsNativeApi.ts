@@ -20,6 +20,7 @@ import { WsTransport } from "./wsTransport";
 
 /** Static resolved promise reused by fire-and-forget calls to satisfy the Promise<void> contract. */
 const RESOLVED_VOID: Promise<void> = Promise.resolve();
+const DIFF_REVIEW_REQUEST_TIMEOUT_MS = 10 * 60_000 + 30_000;
 
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
@@ -218,9 +219,13 @@ export function createWsNativeApi(): NativeApi {
       getWorkingTreeDiff: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getWorkingTreeDiff, input),
       generateDiffReview: (input) =>
-        transport.request(ORCHESTRATION_WS_METHODS.generateDiffReview, input),
+        transport.request(ORCHESTRATION_WS_METHODS.generateDiffReview, input, {
+          timeoutMs: DIFF_REVIEW_REQUEST_TIMEOUT_MS,
+        }),
       askDiffReview: (input) =>
-        transport.request(ORCHESTRATION_WS_METHODS.askDiffReview, input),
+        transport.request(ORCHESTRATION_WS_METHODS.askDiffReview, input, {
+          timeoutMs: DIFF_REVIEW_REQUEST_TIMEOUT_MS,
+        }),
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       getSessionMetrics: (input) =>

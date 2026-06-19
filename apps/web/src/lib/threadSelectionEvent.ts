@@ -12,6 +12,11 @@ export function dispatchThreadSelectedEvent(threadId: ThreadId): void {
   );
 }
 
+export function dispatchThreadSelectedEventAfterRouteChange(threadId: ThreadId): void {
+  window.requestAnimationFrame(() => dispatchThreadSelectedEvent(threadId));
+  window.setTimeout(() => dispatchThreadSelectedEvent(threadId), 120);
+}
+
 export function isThreadSelectedEventFor(event: Event, threadId: ThreadId): boolean {
   const detail = (event as CustomEvent<ThreadSelectedEventDetail>).detail;
   return detail?.threadId === threadId;

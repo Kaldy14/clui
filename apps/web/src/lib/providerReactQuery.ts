@@ -129,7 +129,7 @@ export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
   });
 }
 
-const DIFF_REVIEW_CLIENT_TIMEOUT_MS = 90_000;
+const DIFF_REVIEW_CLIENT_TIMEOUT_MS = 10 * 60_000 + 45_000;
 
 function withClientTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {

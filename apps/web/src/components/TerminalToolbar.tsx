@@ -32,6 +32,7 @@ import {
 
 import { parseDiffRouteSearch, stripAiReviewSearchParams, stripDiffSearchParams } from "../diffRouteSearch";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../keybindings";
+import { selectLatestDiffReviewRunForThread, useAiDiffReviewStore } from "../lib/aiDiffReviewStore";
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { submitThreadPrompt } from "../lib/threadInput";
@@ -624,6 +625,11 @@ export default function TerminalToolbar({
     [keybindings],
   );
   const aiReviewOpen = diffSearch.diffAiReview === "1";
+  const latestAiReviewRun = useAiDiffReviewStore((state) =>
+    selectLatestDiffReviewRunForThread(state, threadId),
+  );
+  const aiReviewRunning = latestAiReviewRun?.status === "running";
+  const aiReviewUnread = !!latestAiReviewRun?.unread && !aiReviewRunning;
 
   const onToggleDiff = useCallback(() => {
     void navigate({
@@ -638,22 +644,39 @@ export default function TerminalToolbar({
     });
   }, [navigate, threadId, diffOpen, aiReviewOpen]);
 
-  const onOpenAiReview = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      replace: true,
-      search: (previous: Record<string, unknown>) => {
-        const rest = stripAiReviewSearchParams(previous);
-        return {
-          ...rest,
-          diff: "1" as const,
-          diffAiReview: "1" as const,
-          diffAiReviewRun: String(Date.now()),
-        };
-      },
-    });
-  }, [navigate, threadId]);
+  const onToggleAiReview = useCallback(
+    (pressed: boolean) => {
+      if (!pressed && aiReviewOpen) {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId },
+          replace: true,
+          search: (previous: Record<string, unknown>) => {
+            const rest = stripAiReviewSearchParams(previous);
+            return { ...rest, diff: "1" as const };
+          },
+        });
+        return;
+      }
+
+      const shouldStartReview = !latestAiReviewRun;
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        replace: true,
+        search: (previous: Record<string, unknown>) => {
+          const rest = stripAiReviewSearchParams(previous);
+          return {
+            ...rest,
+            diff: "1" as const,
+            diffAiReview: "1" as const,
+            ...(shouldStartReview ? { diffAiReviewRun: String(Date.now()) } : {}),
+          };
+        },
+      });
+    },
+    [aiReviewOpen, latestAiReviewRun, navigate, threadId],
+  );
 
   // ── YOLO mode ──
   const yoloMode = useTerminalStateStore(
@@ -819,19 +842,37 @@ export default function TerminalToolbar({
               <TooltipTrigger
                 render={
                   <Toggle
-                    className="shrink-0"
+                    className="relative shrink-0"
                     pressed={aiReviewOpen}
-                    onPressedChange={onOpenAiReview}
-                    aria-label="Open AI Review workbench"
+                    onPressedChange={onToggleAiReview}
+                    aria-label={
+                      aiReviewRunning
+                        ? "AI Review running"
+                        : aiReviewUnread
+                          ? "AI Review ready"
+                          : "Open AI Review workbench"
+                    }
                     variant="outline"
                     size="xs"
                   >
-                    <SparklesIcon className="size-3" />
+                    <SparklesIcon className={`size-3${aiReviewRunning ? " animate-pulse" : ""}`} />
+                    {aiReviewRunning ? (
+                      <span
+                        className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-blue-500"
+                        aria-hidden="true"
+                      />
+                    ) : aiReviewUnread ? (
+                      <span
+                        className={`absolute -right-0.5 -top-0.5 size-1.5 rounded-full ${latestAiReviewRun?.status === "error" ? "bg-red-500" : "bg-emerald-500"}`}
+                        aria-hidden="true"
+                      />
+                    ) : null}
                   </Toggle>
                 }
               />
               <TooltipPopup side="bottom">
                 AI Review{aiReviewShortcutLabel ? ` (${aiReviewShortcutLabel})` : ""}
+                {aiReviewRunning ? " · running" : aiReviewUnread ? " · ready" : ""}
               </TooltipPopup>
             </Tooltip>
           </>

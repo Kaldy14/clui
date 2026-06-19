@@ -45,7 +45,6 @@ import {
 import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
 import {
   checkpointDiffQueryOptions,
-  generateDiffReview,
   providerQueryKeys,
   workingTreeDiffQueryOptions,
 } from "~/lib/providerReactQuery";
@@ -60,6 +59,12 @@ import {
 } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import {
+  diffReviewProgressStage,
+  diffReviewRunKey,
+  formatDiffReviewElapsed,
+  useAiDiffReviewStore,
+} from "../lib/aiDiffReviewStore";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -94,6 +99,18 @@ function writeDiffPref(key: string, value: unknown) {
 }
 const isDiffRenderMode = (v: unknown): v is DiffRenderMode => v === "stacked" || v === "split";
 const isBoolean = (v: unknown): v is boolean => typeof v === "boolean";
+
+const DIFF_CSS_COMMON = `
+:host {
+  --diffs-font-size: 12px;
+  --diffs-line-height: 17px;
+}
+
+[data-overflow='wrap'] [data-line],
+[data-overflow='wrap'] [data-annotation-content] {
+  overflow-wrap: anywhere;
+}
+`;
 
 const DIFF_CSS_LIGHT = `
 [data-diffs-header],
@@ -440,6 +457,8 @@ function DiffAiReviewWorkbenchSummary({
   scope,
   review,
   error,
+  startedAt,
+  now,
   stackItems,
   stackAnswer,
   stackPending,
@@ -453,6 +472,8 @@ function DiffAiReviewWorkbenchSummary({
   scope: OrchestrationDiffReviewScope;
   review: OrchestrationGenerateDiffReviewResult | null;
   error: string | null;
+  startedAt: number | null;
+  now: number;
   stackItems: readonly DiffHighlightRange[];
   stackAnswer: string | null;
   stackPending: boolean;
@@ -462,6 +483,14 @@ function DiffAiReviewWorkbenchSummary({
   onClearStack: () => void;
 }) {
   if (!active) return null;
+
+  const progress =
+    status === "generating" && startedAt !== null
+      ? {
+          elapsed: formatDiffReviewElapsed(now - startedAt),
+          stage: diffReviewProgressStage(now - startedAt),
+        }
+      : null;
 
   return (
     <section className="shrink-0 border-b border-border/60 bg-blue-500/[0.035] px-3 py-3">
@@ -502,9 +531,15 @@ function DiffAiReviewWorkbenchSummary({
           </div>
         </div>
 
-        {status === "generating" && (
+        {progress && (
           <div className="mt-3 rounded-lg border border-blue-500/20 bg-blue-500/[0.06] p-2 text-[12px] text-blue-700 dark:text-blue-200">
-            Pi is ranking the current diff scope. This is bounded; failures and timeouts appear here.
+            <div className="flex items-center justify-between gap-2">
+              <span>{progress.stage}</span>
+              <span className="font-mono text-[11px]">{progress.elapsed}</span>
+            </div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-blue-500/15">
+              <div className="h-full w-1/2 animate-pulse rounded-full bg-blue-500/60" />
+            </div>
           </div>
         )}
 
@@ -837,8 +872,19 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [conversationCheckpointTurnCount, selectedCheckpointRange, selectedTurn, showWorkingTree]);
   const aiReviewActive = diffSearch.diffAiReview === "1";
   const aiReviewRunToken = diffSearch.diffAiReviewRun ?? null;
-  const [aiReviewResult, setAiReviewResult] = useState<OrchestrationGenerateDiffReviewResult | null>(null);
-  const [aiReviewError, setAiReviewError] = useState<string | null>(null);
+  const aiReviewRunKey = useMemo(
+    () => diffReviewRunKey({ threadId: activeThreadId, scope: currentSelectedReviewScope }),
+    [activeThreadId, currentSelectedReviewScope],
+  );
+  const aiReviewRun = useAiDiffReviewStore((state) =>
+    aiReviewRunKey ? state.runsByKey[aiReviewRunKey] ?? null : null,
+  );
+  const startAiReviewRun = useAiDiffReviewStore((state) => state.startRun);
+  const markAiReviewRunSeen = useAiDiffReviewStore((state) => state.markRunSeen);
+  const aiReviewResult = aiReviewRun?.result ?? null;
+  const aiReviewError =
+    aiReviewRun?.status === "error" ? aiReviewRun.error ?? "AI review failed." : null;
+  const [aiReviewNow, setAiReviewNow] = useState(() => Date.now());
   const [aiStackItems, setAiStackItems] = useState<DiffHighlightRange[]>([]);
   const [aiStackAnswer, setAiStackAnswer] = useState<string | null>(null);
   const [quickAskSelection, setQuickAskSelection] = useState<DiffQuickAskSelection | null>(null);
@@ -848,6 +894,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const renderablePatch = useMemo(
     () => getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`),
     [resolvedTheme, selectedPatch],
+  );
+  const diffUnsafeCSS = useMemo(
+    () => `${DIFF_CSS_COMMON}\n${resolvedTheme === "dark" ? DIFF_CSS_DARK : DIFF_CSS_LIGHT}`,
+    [resolvedTheme],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -861,25 +911,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     );
   }, [renderablePatch]);
 
-  const aiReviewQueryKey = useMemo(
-    () => providerQueryKeys.diffReview(activeThreadId, currentSelectedReviewScope),
-    [activeThreadId, currentSelectedReviewScope],
-  );
-  const aiReviewMutation = useMutation({
-    mutationFn: async () => generateDiffReview({ threadId: activeThreadId, scope: currentSelectedReviewScope }),
-    onMutate: () => {
-      setAiReviewError(null);
-      setAiStackAnswer(null);
-    },
-    onSuccess: (result) => {
-      queryClient.setQueryData(aiReviewQueryKey, result);
-      setAiReviewResult(result);
-      setAiReviewError(null);
-    },
-    onError: (error) => {
-      setAiReviewError(asDiffReviewErrorMessage(error));
-    },
-  });
+  const startCurrentAiReview = useCallback(() => {
+    setAiStackAnswer(null);
+    void startAiReviewRun({ threadId: activeThreadId, scope: currentSelectedReviewScope }).catch(
+      () => undefined,
+    );
+  }, [activeThreadId, currentSelectedReviewScope, startAiReviewRun]);
+
   const aiStackMutation = useMutation({
     mutationFn: async (items: DiffHighlightRange[]) => {
       const api = readNativeApi();
@@ -914,19 +952,28 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   });
 
   useEffect(() => {
-    const cached = queryClient.getQueryData<OrchestrationGenerateDiffReviewResult>(aiReviewQueryKey);
-    setAiReviewResult(cached ?? null);
-    setAiReviewError(null);
-  }, [aiReviewQueryKey, queryClient]);
-
-  useEffect(() => {
     if (!aiReviewActive || !aiReviewRunToken || !activeThreadId) return;
-    aiReviewMutation.mutate();
+    setAiStackAnswer(null);
+    void startAiReviewRun({ threadId: activeThreadId, scope: currentSelectedReviewScope }).catch(
+      () => undefined,
+    );
     // The run token is only changed by the explicit AI Review button/shortcut.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeThreadId, aiReviewActive, aiReviewRunToken]);
+  }, [activeThreadId, aiReviewActive, aiReviewRunToken, startAiReviewRun]);
 
-  const aiReviewStatus: AiReviewWorkbenchStatus = aiReviewMutation.isPending
+  useEffect(() => {
+    if (!aiReviewActive || !aiReviewRunKey || !aiReviewRun?.unread) return;
+    markAiReviewRunSeen(aiReviewRunKey);
+  }, [aiReviewActive, aiReviewRun?.unread, aiReviewRunKey, markAiReviewRunSeen]);
+
+  useEffect(() => {
+    if (aiReviewRun?.status !== "running") return;
+    setAiReviewNow(Date.now());
+    const intervalId = window.setInterval(() => setAiReviewNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [aiReviewRun?.key, aiReviewRun?.status]);
+
+  const aiReviewStatus: AiReviewWorkbenchStatus = aiReviewRun?.status === "running"
     ? "generating"
     : aiReviewError
       ? "error"
@@ -1738,10 +1785,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             scope={currentSelectedReviewScope}
             review={aiReviewResult}
             error={aiReviewError}
+            startedAt={aiReviewRun?.startedAt ?? null}
+            now={aiReviewNow}
             stackItems={aiStackItems}
             stackAnswer={aiStackAnswer}
             stackPending={aiStackMutation.isPending}
-            onGenerate={() => aiReviewMutation.mutate()}
+            onGenerate={startCurrentAiReview}
             onClose={closeAiReview}
             onSubmitStack={() => aiStackMutation.mutate(aiStackItems)}
             onClearStack={() => {
@@ -2011,11 +2060,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                             options={{
                               diffStyle: diffRenderMode === "split" ? "split" : "unified",
                               lineDiffType: "word",
+                              overflow: "wrap",
                               theme: resolveDiffThemeName(resolvedTheme),
                               themeType: resolvedTheme as DiffThemeType,
                               disableFileHeader: true,
                               expandUnchanged,
-                              unsafeCSS: resolvedTheme === "dark" ? DIFF_CSS_DARK : DIFF_CSS_LIGHT,
+                              unsafeCSS: diffUnsafeCSS,
                             }}
                           />
                         </div>
@@ -2028,7 +2078,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               <div className="h-full overflow-auto p-2">
                 <div className="space-y-2">
                   <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
-                  <pre className="max-h-[72vh] overflow-auto rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
+                  <pre className="max-h-[72vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
                     {renderablePatch.text}
                   </pre>
                 </div>

@@ -9,6 +9,10 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
+interface RequestOptions {
+  readonly timeoutMs?: number;
+}
+
 const REQUEST_TIMEOUT_MS = 120_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
 const decodeWsResponseFromJson = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponse));
@@ -48,7 +52,11 @@ export class WsTransport {
     this.connect();
   }
 
-  async request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  async request<T = unknown>(
+    method: string,
+    params?: unknown,
+    options?: RequestOptions,
+  ): Promise<T> {
     if (typeof method !== "string" || method.length === 0) {
       throw new Error("Request method is required");
     }
@@ -60,7 +68,7 @@ export class WsTransport {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Request timed out: ${method}`));
-      }, REQUEST_TIMEOUT_MS);
+      }, options?.timeoutMs ?? REQUEST_TIMEOUT_MS);
 
       this.pending.set(id, {
         resolve: resolve as (result: unknown) => void,

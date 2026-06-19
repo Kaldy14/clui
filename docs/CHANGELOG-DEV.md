@@ -4,15 +4,68 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-18 — Diff renderer uses smaller wrapped lines
+
+**Problem:** The right-side diff renderer used large code text and forced horizontal scrolling for long lines.
+
+**Root cause:** The @pierre/diffs renderer was left on its default 13px/20px metrics and `overflow: "scroll"` behavior.
+
+**Fix:** Added Clui diff CSS variables for a 12px rendered diff font with tighter line height, enabled wrapped diff overflow, forced long tokens to wrap inside rendered lines, and wrapped the raw patch fallback.
+
+**Affected files:**
+
+- `apps/web/src/components/DiffPanel.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-18 — AI Review background progress and longer timeout
+
+**Problem:** AI Review could look stuck while Pi was generating, closing the workbench hid the only progress indicator, and the 90s timeout was too short for larger diffs.
+
+**Root cause:** Review generation state lived inside `DiffPanel` as a local mutation, the toolbar had no run status to display, and the client/server/WebSocket timeouts were capped near 90–120 seconds.
+
+**Fix:** Added a global AI Review run store, kept review jobs alive outside the workbench, showed elapsed progress in the workbench, added running/ready/error dots to the toolbar icon, reopened existing results without regenerating, and raised AI Review timeouts to about 10 minutes.
+
+**Affected files:**
+
+- `apps/server/src/diffReview/Layers/DiffReview.ts`
+- `apps/web/src/components/DiffPanel.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/lib/aiDiffReviewStore.ts`
+- `apps/web/src/lib/providerReactQuery.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/wsNativeApi.test.ts`
+- `apps/web/src/wsTransport.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-18 — Diff file tree indentation fits deep folders
+
+**Problem:** The diff view file sidebar became unusable for deeper folder structures because indentation pushed filenames and status badges off-screen.
+
+**Root cause:** The diff file tree overrode @pierre/trees spacing with a large per-level gap and kept the context-menu action lane reserved, so each nesting level consumed too much horizontal room in the narrow sidebar.
+
+**Fix:** Tightened the diff tree host spacing, compressed shadow-DOM indentation guide widths, reduced outer/icon/git lane width, capped decoration width, and switched the context menu to right-click only so the hidden action button no longer reserves a lane.
+
+**Affected files:**
+
+- `apps/web/src/components/DiffFileTree.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-18 — Sidebar thread click triggers terminal refit/repaint recovery
 
 **Problem:** A thread's terminal could look stale or stuck until the user manually resized the window; clicking the thread in the sidebar did not always clear the broken frame.
 
-**Root cause:** The active terminal's resize recovery path (`fitAddon.fit()`, an xterm repaint, and a PTY SIGWINCH when dimensions change) only ran on window resize, container resize, or full route remount. Re-selecting an already-visible thread from the sidebar does not remount the route, so the terminal stayed in its broken state.
+**Root cause:** The active terminal's resize recovery path (`fitAddon.fit()`, an xterm repaint, and a PTY SIGWINCH when dimensions change) only ran on window resize, container resize, or a single initial route attach. When a cached terminal was reparented before layout/WebGL/PTY repaint had settled, that one-shot attach pass could leave stale content or a black surface until a later manual resize forced another pass.
 
-**Fix:** Added a typed `clui:thread-selected` browser event. `ActiveTerminalView` now listens for it, refits and refreshes xterm, and requests the same PTY repaint nudge used to recover stale TUI frames. `DormantTerminalView` also listens and refits/refreshes its read-only scrollback. The sidebar dispatches the event when the user plain-clicks or keyboard-activates the already-selected thread. For clicks that change threads, route remount continues to run the existing initial fit/repaint path.
+**Fix:** Added a typed `clui:thread-selected` browser event and a short terminal recovery sequence that runs after a thread becomes visible. `ActiveTerminalView` now refits/refreshes xterm across the next frames, re-opens the repaint gate if needed, and requests the same PTY repaint nudge once the terminal is ready. `DormantTerminalView` uses the same delayed refit/refresh sequence for read-only scrollback. Sidebar clicks/keyboard activation now dispatch immediately for the current route and again after navigation for thread switches.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/lib/threadSelectionEvent.ts`
@@ -29,6 +82,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Working-tree diff queries now refetch on mount/focus, poll while the selected thread terminal is active, refresh when the Working tree chip is clicked, and append patch output for untracked files without mutating the git index.
 
 **Affected files:**
+
 - `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.ts`
 - `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
 - `apps/web/src/lib/providerReactQuery.ts`
@@ -47,6 +101,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a `linting` activity status and label, recognized package-manager flags before `run`, mapped lint/eslint/oxlint/biome lint to `Linting`, and kept vitest/test commands mapped to `Testing`.
 
 **Affected files:**
+
 - `packages/contracts/src/claude-terminal.ts`
 - `packages/shared/src/agentActivity.ts`
 - `packages/shared/src/agentActivity.test.ts`
@@ -63,6 +118,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a small, stateful `terminalOutputMarkdown` filter that tracks whether it is inside a markdown code block and drops fence lines while preserving the fenced content. The filter is applied to live output events and dormant scrollback snapshots before they are written to xterm. It only buffers short prefixes that could still become fence lines, so normal live prompts are not delayed. Added unit coverage for backtick/tilde fences, language tags, ANSI SGR escapes, cursor-control safety, CRLF, nested fences, and streaming chunk boundaries.
 
 **Affected files:**
+
 - `apps/web/src/lib/terminalOutputMarkdown.ts` (new)
 - `apps/web/src/lib/terminalOutputMarkdown.test.ts` (new)
 - `apps/web/src/components/ThreadTerminalView.tsx`
@@ -79,6 +135,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added `gitting` activity status and label. Commit still maps to `Committing`, push/PR create still maps to `Pushing`, and other git/gh commands map to `Gitting`.
 
 **Affected files:**
+
 - `packages/contracts/src/claude-terminal.ts`
 - `packages/shared/src/agentActivity.ts`
 - `packages/shared/src/agentActivity.test.ts`
@@ -95,6 +152,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added agent-oriented activity statuses for designing, delegating, and context building; mapped known pi agent names to role labels; parsed agent names from subagent/bash text and pi sync metadata; and preserved generic `Working` fallback for unknown commands.
 
 **Affected files:**
+
 - `packages/contracts/src/claude-terminal.ts`
 - `packages/shared/src/agentActivity.ts`
 - `packages/shared/src/agentActivity.test.ts`
@@ -113,6 +171,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Removed generic `running` activity fallback, added `scouting`, and classified scout prompts, subagent tools, and `subagent scout` bash commands as `Scouting`; unmatched work now falls back to the existing lifecycle `Working` badge.
 
 **Affected files:**
+
 - `packages/contracts/src/claude-terminal.ts`
 - `packages/shared/src/agentActivity.ts`
 - `packages/shared/src/agentActivity.test.ts`
@@ -129,6 +188,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a transient `activityStatus` event and deterministic classifier for prompts, Claude Code tool hooks, and pi runtime/tool metadata. The web store keeps lifecycle status authoritative, shows activity labels only for working/running states, clears stale activity on completion/errors/input waits, and hydrates live pi activity on reconnect.
 
 **Affected files:**
+
 - `packages/contracts/src/claude-terminal.ts`
 - `packages/contracts/src/pi-terminal.ts`
 - `packages/contracts/src/orchestration.ts`
@@ -167,6 +227,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added persisted `titleGenerationProvider` server setting (`claudeCode` or `codex`), surfaced Claude/Codex PATH availability in Settings, added a refreshable title-generation provider selector, and routed title generation through the selected primary provider with fallback to the other provider.
 
 **Affected files:**
+
 - `packages/contracts/src/server.ts`
 - `apps/server/src/wsServer.ts`
 - `apps/server/src/wsServer.test.ts`
@@ -186,6 +247,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Changed active attach to wait for a visible output-subscription ack and first fit, preserve the cached xterm buffer/scroll state, force a real PTY repaint with a one-row resize nudge that is held briefly before restore, then release only buffered fresh repaint/live output after a short settle. Full scrollback fetch remains for dormant/read-only views only. Added retry/visibility handling for subscription readiness, invalid initial fit retries, and repaint helper tests.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/lib/harnessOutputSubscriptions.ts`
 - `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
@@ -206,6 +268,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Ran `bun lint`, `bun typecheck`, and `bun run dist:desktop:dmg:arm64`. The build completed and produced updated arm64 DMG/ZIP artifacts under ignored `release/` output.
 
 **Affected files:**
+
 - `release/Clui-0.0.28-arm64.dmg`
 - `release/Clui-0.0.28-arm64.zip`
 - `release/Clui-0.0.28-arm64.dmg.blockmap`
@@ -224,6 +287,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Suppressed completed status pills when the completion marker has already been visited, and changed the pi output fallback to restore read completed states to idle instead of `completed`.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.logic.ts`
 - `apps/web/src/components/Sidebar.logic.test.ts`
 - `apps/web/src/lib/threadStatus.ts`
@@ -244,6 +308,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added an optional `fastMode` field to the `pi.start` contract, forwarded it through the WebSocket server into `CLUI_PI_FAST_MODE`, and extended Clui's injected pi runtime extension to conditionally inject `service_tier: "priority"` for eligible OpenAI Codex OAuth GPT-5.4/5.5 requests. In the web UI, added a "Fast mode" toggle that appears only for pi harnesses, persists per project cwd, stores the value per thread, and is reused on resume/restart.
 
 **Affected files:**
+
 - `packages/contracts/src/pi-terminal.ts`
 - `apps/server/src/terminal/Services/PiSession.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
@@ -269,6 +334,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Ran `bun lint`, `bun typecheck`, then `bun run dist:desktop:dmg:arm64`. The build completed and produced updated arm64 DMG/ZIP artifacts under `release/`.
 
 **Affected files:**
+
 - `release/Clui-0.0.28-arm64.dmg`
 - `release/Clui-0.0.28-arm64.zip`
 - `release/Clui-0.0.28-arm64.dmg.blockmap`
@@ -287,6 +353,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Disabled remote dedupe only for the new-thread picker, deferred checkout until session start so selected refs stay distinct, persisted env mode + selected branch by project cwd, and made worktree creation honor the exact selected base (`main` vs `origin/main`).
 
 **Affected files:**
+
 - `apps/server/src/git/Layers/GitCore.ts`
 - `apps/server/src/git/Layers/GitCore.test.ts`
 - `apps/web/src/components/BranchToolbar.logic.ts`
@@ -308,6 +375,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Moved pi status-line detection into shared code and used it on both server and web so spinner status lines emit a real hook status before output is filtered by focus.
 
 **Affected files:**
+
 - `packages/shared/src/piTerminalStatus.ts`
 - `packages/shared/package.json`
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
@@ -326,6 +394,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Removed the sidebar status dot from thread rows and drag previews, extracted the status label renderer, and moved the worktree indicator before the status label.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -340,6 +409,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Revalidated with `bun lint` and `bun typecheck`, then built the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
 
 **Affected files:**
+
 - `release/Clui-0.0.28-arm64.dmg`
 - `release/Clui-0.0.28-arm64.zip`
 - `release/Clui-0.0.28-arm64.dmg.blockmap`
@@ -357,6 +427,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Active terminal focus now requests a full scrollback snapshot, using the existing reset-and-replay path to rebuild the terminal state before live output is released. Added focused replay coverage for the no-`sinceOffset` path.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/lib/terminalScrollbackReplay.test.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -372,6 +443,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a reusable worktree tree icon and rendered it before worktree-backed thread titles in the top bar, sidebar rows, and sidebar drag previews.
 
 **Affected files:**
+
 - `apps/web/src/components/WorktreeIndicator.tsx`
 - `apps/web/src/components/TerminalToolbar.tsx`
 - `apps/web/src/components/Sidebar.tsx`
@@ -388,6 +460,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Re-enabled button-event mouse reporting for normal dialog scroll mode, send alternate-screen plus mouse-capture as one startup sequence, and keep `Ctrl+O` copy mode disabling mouse capture for native text selection.
 
 **Affected files:**
+
 - `~/.pi/agent/extensions/decision-gate.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -402,6 +475,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Removed drag mouse reporting, split alternate-screen and mouse-capture modes, added `Ctrl+O` copy mode to temporarily disable mouse capture while the dialog stays visible, and added `Ctrl+Y` OSC 52 clipboard copy for the full decision transcript.
 
 **Affected files:**
+
 - `~/.pi/agent/extensions/decision-gate.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -416,6 +490,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Enable alternate-screen mouse mode for the decision dialog, force a render after enabling it, disable the modes on close, and parse both SGR and legacy X10 wheel sequences.
 
 **Affected files:**
+
 - `~/.pi/agent/extensions/decision-gate.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -430,6 +505,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Clamp modal scrolling to the rendered chat height and switch side-agent calls to `streamSimple()` so thinking deltas, tool-call events, and text deltas can render live inside the dialog. Tool-call execution remains disabled for the side agent.
 
 **Affected files:**
+
 - `~/.pi/agent/extensions/decision-gate.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -444,6 +520,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Auto-submit the generated handoff without showing a summary editor, render assistant text normally, tint user messages, remove the `Message` label, capture mouse wheel scrolling inside the modal, and call `completeSimple()` with the current pi thinking level.
 
 **Affected files:**
+
 - `~/.pi/agent/extensions/decision-gate.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -458,6 +535,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a global `decision_gate` pi extension with a large modal side conversation, structured final handoff, `/decision` manual launch, `/decisions` session-local history, and session-scoped persistence through tool details/custom entries.
 
 **Affected files:**
+
 - `~/.pi/agent/extensions/decision-gate.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -472,6 +550,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Narrowed the fallback to only infer `Working` from pi's carriage-return `Working...` status line, not arbitrary visible terminal redraws. Added tests for working-status detection and idle redraw rejection.
 
 **Affected files:**
+
 - `apps/web/src/lib/piOutputActivityFallback.ts`
 - `apps/web/src/lib/piOutputActivityFallback.test.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -487,6 +566,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** `registerHarnessOutputSubscription` now returns a `ready` promise that resolves after the server applies the subscription, and `ActiveTerminalView` waits for it before issuing the catch-up scrollback request. Added a regression test for the subscription-ack ordering.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/lib/harnessOutputSubscriptions.ts`
 - `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
@@ -503,6 +583,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Send newly added harness output subscriptions synchronously before the terminal catch-up scrollback request can run, while still batching cleanup/unsubscribe updates. Added a regression test for the ordering.
 
 **Affected files:**
+
 - `apps/web/src/lib/harnessOutputSubscriptions.ts`
 - `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -518,6 +599,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added optional `hookStatus` to orchestration thread snapshots, exposed live pi hook status from `PiSessionManager`, hydrates pi snapshot rows with that status on `orchestration.getSnapshot`, and taught the web store to apply explicit snapshot terminal/hook-status values.
 
 **Affected files:**
+
 - `packages/contracts/src/orchestration.ts`
 - `apps/server/src/terminal/Services/PiSession.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
@@ -538,6 +620,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added an `initialPrompt` field to `pi.start`, writes that prompt to a private temp file, and lets the generated pi runtime extension submit it via `pi.sendUserMessage()` after `session_start`. The web launch path now uses that startup submission for pi instead of immediate PTY input, keeps the prompt focused after harness changes, and avoids treating Enter on harness controls as a launch shortcut.
 
 **Affected files:**
+
 - `packages/contracts/src/pi-terminal.ts`
 - `apps/server/src/terminal/Services/PiSession.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
@@ -558,6 +641,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped Clui workspace package versions to `0.0.28`, ran focused status tests plus `bun lint` and `bun typecheck`, then generated the macOS arm64 DMG/ZIP artifacts.
 
 **Affected files/artifacts:**
+
 - `apps/desktop/package.json`
 - `apps/server/package.json`
 - `apps/web/package.json`
@@ -581,6 +665,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added JSONL fallback mapping for user-input tool calls to `needsInput` and tool results to `working`, kept `Working...` PTY matching as a carriage-return status-line fallback only, trimmed stale/overlapping scrollback before replay, and scheduled a throttled terminal refresh after queued output writes.
 
 **Affected files:**
+
 - `apps/server/src/PiSessionJsonlHook.ts`
 - `apps/server/src/PiSessionJsonlHook.test.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
@@ -602,6 +687,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added shared high-contrast selection colors for dark and light terminal themes, including selected-text foreground and inactive selection backgrounds.
 
 **Affected files:**
+
 - `apps/web/src/lib/terminalTheme.ts`
 - `docs/CHANGELOG-DEV.md`
 
@@ -616,6 +702,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Stored first-prompt drafts per thread in `terminalStateStore`, cleared them only after successful launch, added a server RPC that persists pasted image data to Clui attachment storage and returns an absolute file path, and inserted that path into the first-prompt textarea on paste.
 
 **Affected files:**
+
 - `AGENTS.md`
 - `apps/server/src/wsServer.ts`
 - `apps/server/src/wsServer.test.ts`
@@ -642,6 +729,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Widened the prompt area with a viewport-safe max width, increased its rows, focused it per new thread, changed pi submissions to CSI-u Enter/Shift+Enter, taught the pi prompt buffer to detect CSI-u submit keys, and documented the rule in `AGENTS.md`.
 
 **Affected files:**
+
 - `AGENTS.md`
 - `apps/server/src/piWritePromptBuffer.ts`
 - `apps/server/src/piWritePromptBuffer.test.ts`
@@ -661,6 +749,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Ran `bun lint`, `bun typecheck`, and `bun run dist:desktop:dmg:arm64`, producing refreshed `0.0.27` macOS arm64 DMG/ZIP artifacts.
 
 **Affected files/artifacts:**
+
 - `release/Clui-0.0.27-arm64.dmg` (`ae6ee232482b5b2a76ba36c808fb0a9174f4b8b5098946a97ddd115d31f91906`)
 - `release/Clui-0.0.27-arm64.dmg.blockmap` (`6f706dcc27b0e6330dc1ece23fff7087198ad9c598161830d9053f1c0bb9638d`)
 - `release/Clui-0.0.27-arm64.zip` (`9dbfdd9b7e69ed0e8b4d91b1c9f3d91e1a5e6d2c663598b77a8096ca8f12035c`)
@@ -679,6 +768,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Ran `bun lint`, `bun typecheck`, and `bun run dist:desktop:dmg:arm64`, producing refreshed `0.0.27` macOS arm64 DMG/ZIP artifacts.
 
 **Affected files/artifacts:**
+
 - `release/Clui-0.0.27-arm64.dmg` (`69090e6f85a76747c070fa4ee89860b2d6f7d28db17ee3273ae10d80f0f54105`)
 - `release/Clui-0.0.27-arm64.dmg.blockmap` (`647e114bd06b7776f68ea720ff5007bc4f8ccd91ae1ce43543c5a1e5d601a07b`)
 - `release/Clui-0.0.27-arm64.zip` (`4f9fa55b570143dbb045c0cb970fc21a8bfc5bb05363478dff5ec421dd327c11`)
@@ -697,6 +787,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added server-side pi output detection for animated braille working spinner lines and emit a `hookStatus: "working"` event before the output chunk reaches clients, with tests to avoid ordinary text false positives.
 
 **Affected files:**
+
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -712,6 +803,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added compact loading UI for the sidebar and chat index until the first server snapshot hydrates, and kept `No projects yet` gated to the real post-hydration empty state.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/routes/_chat.index.tsx`
 - `docs/CHANGELOG-DEV.md`
@@ -727,6 +819,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Rebuilt the current `0.0.27` macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64` and verified hashes.
 
 **Affected files/artifacts:**
+
 - `release/Clui-0.0.27-arm64.dmg` (`718577dee398424c527956861639b8da4997694df27291378e3647c8c0a290bc`)
 - `release/Clui-0.0.27-arm64.dmg.blockmap`
 - `release/Clui-0.0.27-arm64.zip` (`0946b6d1d782362ddd1b35d2ab1787688c0d010df47fd87a046fe5f209baab50`)
@@ -745,6 +838,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a debounced post-attach visual settle that refits and refreshes xterm after initial replay/output writes, and refreshes the terminal after deferred WebGL renderer load.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/lib/claudeTerminalCache.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -760,6 +854,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped package versions to `0.0.27`, pinned `@pierre/diffs` to `1.1.0-beta.19`, refreshed `bun.lock`, and rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
 
 **Affected files/artifacts:**
+
 - `apps/server/package.json`
 - `apps/desktop/package.json`
 - `apps/web/package.json`
@@ -783,6 +878,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Removed scrollback from terminal status commands/events, made hibernate RPCs return no payload, kept projection scrollback snapshots null, added a migration to redact existing scrollback blobs and clear stored snapshots, and added thread visibility/order indexes.
 
 **Affected files:**
+
 - `packages/contracts/src/orchestration.ts`
 - `apps/server/src/wsServer.ts`
 - `apps/server/src/orchestration/decider.ts`
@@ -807,6 +903,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Changed full projection snapshots to hydrate `scrollbackSnapshot: null` without reading the database blob, kept dedicated `getScrollback` calls as the scrollback transfer path, added a sequential terminal write queue, and routed active terminal replay/output writes through it.
 
 **Affected files:**
+
 - `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
 - `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
 - `apps/web/src/components/ThreadTerminalView.tsx`
@@ -825,6 +922,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a per-WebSocket harness output subscription method, filtered Claude/pi `output` pushes server-side by subscribed thread, kept lifecycle/status events broadcast globally, and registered visible active terminal views as the only output subscribers.
 
 **Affected files:**
+
 - `packages/contracts/src/server.ts`
 - `packages/contracts/src/ws.ts`
 - `packages/contracts/src/ipc.ts`
@@ -846,6 +944,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added bounded terminal catch-up compaction, paused live xterm flush scheduling while hidden, kept only the latest compacted hidden output, compacted large scrollback/delta replay, and forced a resize after lossy catch-up so TUIs redraw the current screen.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `apps/web/src/lib/terminalOutputCompaction.ts`
 - `apps/web/src/lib/terminalOutputCompaction.test.ts`
@@ -902,6 +1001,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped release package versions to `0.0.26`, refreshed `bun.lock`, and rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
 
 **Affected files/artifacts:**
+
 - `apps/server/package.json`
 - `apps/desktop/package.json`
 - `apps/web/package.json`
@@ -925,6 +1025,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a narrow projection lookup for a thread's worktree path, switched session cwd validation to that lookup, deferred WebGL loading until after the first terminal paint, and batched active terminal output writes per animation frame.
 
 **Affected files:**
+
 - `apps/server/src/persistence/Services/ProjectionThreads.ts`
 - `apps/server/src/persistence/Layers/ProjectionThreads.ts`
 - `apps/server/src/wsServer.ts`
@@ -945,6 +1046,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped release package versions to `0.0.25`, refreshed `bun.lock`, and rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`.
 
 **Affected files/artifacts:**
+
 - `apps/server/package.json`
 - `apps/desktop/package.json`
 - `apps/web/package.json`
@@ -968,6 +1070,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added `planreview` to the Pi user-input tool allowlist so `plan_review` emits `hookStatus: "needsInput"` until it resolves, and added a regression assertion for the generated runtime extension.
 
 **Affected files:**
+
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
 - `docs/CHANGELOG-DEV.md`
@@ -983,6 +1086,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped release package versions to `0.0.24`, updated `bun.lock`, rebuilt the macOS arm64 DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`, and revalidated with `bun lint` and `bun typecheck`.
 
 **Affected files/artifacts:**
+
 - `apps/server/package.json`
 - `apps/desktop/package.json`
 - `apps/web/package.json`
@@ -1006,6 +1110,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added purge support for hibernating non-excluded active sessions before purging dormant entries, preserved hibernated sessions and their scrollback during the same purge call, fixed scrollback cleanup with non-empty excludes, stopped counting PTY output as LRU interaction, and added route/manager/sidebar regression tests.
 
 **Affected files:**
+
 - `packages/contracts/src/server.ts`
 - `apps/server/src/wsServer.ts`
 - `apps/server/src/wsServer.test.ts`
@@ -1031,6 +1136,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Rebuilt the macOS arm64 desktop DMG/ZIP artifacts with `bun run dist:desktop:dmg:arm64`, then revalidated the workspace with `bun lint` and `bun typecheck`.
 
 **Affected files/artifacts:**
+
 - `release/Clui-0.0.23-arm64.dmg`
 - `release/Clui-0.0.23-arm64.dmg.blockmap`
 - `release/Clui-0.0.23-arm64.zip`
@@ -1049,6 +1155,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Batched alternate-buffer wheel deltas with `requestAnimationFrame`, accumulated signed fractional scroll lines, coalesced opposite directions before sending, and capped each frame to a bounded number of arrow-key steps while carrying remaining queued steps forward.
 
 **Affected files:**
+
 - `apps/web/src/components/ThreadTerminalView.tsx`
 - `docs/CHANGELOG-DEV.md`
 
@@ -1097,6 +1204,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Bumped release package versions to `0.0.23`, refreshed `bun.lock`, built the macOS arm64 desktop artifacts via `bun run dist:desktop:dmg:arm64`, and revalidated the workspace with `bun lint` and `bun typecheck`.
 
 **Affected files:**
+
 - `apps/server/package.json`
 - `apps/desktop/package.json`
 - `apps/web/package.json`
@@ -1119,6 +1227,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a shared session-process registry for active pi/Claude harness PIDs, injected its path into Clui-managed pi sessions, and extended the pi runtime extension to block bash tool calls that target other Clui-managed session PIDs or broad pi/Claude/Clui kill patterns. Server resize now refreshes session recency, and the active terminal view sends a quiet periodic resize heartbeat while visible so viewed threads remain fresh.
 
 **Affected files:**
+
 - `apps/server/src/terminal/sessionProcessRegistry.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.ts`
 - `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
@@ -1300,6 +1409,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added optional harness metadata to stacked Git action requests and text-generation inputs, passed the active thread harness from the toolbar, introduced a pi CLI print-mode text generator for commit/PR/branch JSON output, and routed harness-aware Git text generation to pi or Claude accordingly without touching the active terminal session.
 
 **Affected files:**
+
 - `packages/contracts/src/git.ts`
 - `apps/web/src/components/GitActionsControl.tsx`
 - `apps/web/src/components/TerminalToolbar.tsx`
@@ -1323,6 +1433,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a shared clipboard utility and a “Copy error” action to git action failure toasts. Reused the Codex text-generation implementation as a fallback for every Claude-backed text generation operation and normalized Claude JSON error payloads into concise messages before fallback/error reporting.
 
 **Affected files:**
+
 - `apps/web/src/components/GitActionsControl.tsx`
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/lib/clipboard.ts`
@@ -1341,6 +1452,7 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Fix:** Added a quiet session usage badge next to the sidebar “Projects” label, backed by shared sidebar logic that counts active sessions by harness. Clicking the badge opens a compact explanation with Claude Code and pi counts against the per-harness cap plus a purge button for inactive sessions.
 
 **Affected files:**
+
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/components/Sidebar.logic.ts`
 - `apps/web/src/components/Sidebar.logic.test.ts`

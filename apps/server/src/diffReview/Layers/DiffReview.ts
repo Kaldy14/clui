@@ -20,7 +20,7 @@ import {
 } from "../DiffCollector.ts";
 import { DiffReview, DiffReviewError, type DiffReviewShape } from "../Services/DiffReview.ts";
 
-const TIMEOUT_MS = 90_000;
+const TIMEOUT_MS = 10 * 60_000;
 const MAX_PROMPT_DIFF_CHARS = 120_000;
 const MAX_CHAT_PATCH_CHARS = 80_000;
 const MAX_PI_STDOUT_CHARS = 1_000_000;
