@@ -4,6 +4,25 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-20 — Version 0.0.29 workspace build
+
+**Problem:** The app needed a patch version bump and fresh build after the Pi HTML parity updates.
+
+**Root cause:** Workspace package versions still pointed at `0.0.28`.
+
+**Fix:** Bumped the Clui workspace app/contract packages to `0.0.29` and rebuilt the monorepo.
+
+**Affected files:**
+
+- `apps/desktop/package.json`
+- `apps/server/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-20 — Pi HTML preserves draft cursor positions
 
 **Problem:** Pi HTML restored unsent draft text after thread switches, but the text cursor/selection reset instead of returning to where the user left it.
