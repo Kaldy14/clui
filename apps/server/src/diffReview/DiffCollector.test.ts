@@ -6,7 +6,7 @@ import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildDiffReviewPromptContext, collectBranchDiff } from "./DiffCollector.ts";
+import { buildDiffReviewPromptContext, collectBranchDiff, rankDiffReviewFiles } from "./DiffCollector.ts";
 
 const repos: string[] = [];
 
@@ -155,5 +155,31 @@ describe("DiffCollector", () => {
     expect(promptContext.coveredFileCount).toBeLessThan(8);
     expect(promptContext.summarizedFileCount).toBeGreaterThan(0);
     expect(promptContext.promptDiff).toContain("Summarized low-signal files");
+  });
+
+  it("returns deterministic file priorities for fallback review maps", () => {
+    const diff = [
+      "diff --git a/docs/readme.md b/docs/readme.md",
+      "index 1111111..2222222 100644",
+      "--- a/docs/readme.md",
+      "+++ b/docs/readme.md",
+      "@@ -1 +1 @@",
+      "-old docs",
+      "+new docs",
+      "diff --git a/apps/server/src/auth/session.ts b/apps/server/src/auth/session.ts",
+      "index 3333333..4444444 100644",
+      "--- a/apps/server/src/auth/session.ts",
+      "+++ b/apps/server/src/auth/session.ts",
+      "@@ -10,2 +10,3 @@",
+      "-old token",
+      "+new token permission",
+      "+audit migration",
+    ].join("\n");
+
+    const priorities = rankDiffReviewFiles(diff);
+
+    expect(priorities[0]?.filePath).toBe("apps/server/src/auth/session.ts");
+    expect(priorities[0]?.riskScore).toBeGreaterThan(priorities[1]?.riskScore ?? 0);
+    expect(priorities[0]?.hunkHeaders).toContain("@@ -10,2 +10,3 @@");
   });
 });

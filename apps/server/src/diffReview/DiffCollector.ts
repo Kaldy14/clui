@@ -42,13 +42,19 @@ export interface DiffReviewPromptContext {
   readonly summarizedFileCount: number;
 }
 
-interface DiffReviewFileSummary {
+export interface DiffReviewFilePriority {
   readonly filePath: string;
   readonly additions: number;
   readonly deletions: number;
   readonly changeType: string;
   readonly riskScore: number;
   readonly hunkHeaders: ReadonlyArray<string>;
+}
+
+interface ParsedDiffReviewFiles {
+  readonly files: ReadonlyArray<FileDiffMetadata>;
+  readonly sections: ReadonlyArray<string>;
+  readonly summaries: ReadonlyArray<DiffReviewFilePriority>;
 }
 
 interface DiffReviewChunk {
@@ -255,12 +261,12 @@ function scoreChangeType(type: FileDiffMetadata["type"]): number {
   }
 }
 
-function summarizeFile(fileDiff: FileDiffMetadata, section: string): DiffReviewFileSummary {
+function summarizeFile(fileDiff: FileDiffMetadata, section: string): DiffReviewFilePriority {
   const stats = getFileStats(fileDiff);
   const filePath = resolveFileDiffPath(fileDiff);
   const hunkHeaders = fileDiff.hunks
-    .map((hunk) => hunk.hunkSpecs ?? null)
-    .filter((value): value is string => value !== null && value.trim().length > 0);
+    .map((hunk) => hunk.hunkSpecs?.trim() ?? null)
+    .filter((value): value is string => value !== null && value.length > 0);
   const churnScore = Math.min(30, Math.ceil((stats.additions + stats.deletions) / 20));
   const riskScore =
     scorePathRisk(filePath) +
@@ -309,7 +315,7 @@ function hunkStatsFromPatch(patchText: string): { additions: number; deletions: 
 function buildChunks(
   fileDiff: FileDiffMetadata,
   section: string,
-  summary: DiffReviewFileSummary,
+  summary: DiffReviewFilePriority,
 ): DiffReviewChunk[] {
   const hunkPatches = splitSectionIntoHunkPatches(section);
   return hunkPatches.map((hunkPatch, index) => {
@@ -340,7 +346,7 @@ function fallbackPromptContext(diffPatch: string, maxChars: number): DiffReviewP
   };
 }
 
-function renderSummary(summary: DiffReviewFileSummary): string {
+function renderSummary(summary: DiffReviewFilePriority): string {
   const hunkList = summary.hunkHeaders.length > 0 ? summary.hunkHeaders.join("; ") : "(none)";
   return `- ${summary.filePath} [${summary.changeType}] +${summary.additions}/-${summary.deletions}, risk ${summary.riskScore}, hunks: ${hunkList}`;
 }
@@ -352,6 +358,67 @@ function sortByRiskThenPath<T extends { readonly riskScore: number; readonly fil
   });
 }
 
+function parseDiffReviewFiles(normalizedDiff: string): ParsedDiffReviewFiles | null {
+  try {
+    const parsedPatches = parsePatchFiles(normalizedDiff);
+    const files = parsedPatches.flatMap((patch) => patch.files);
+    if (files.length === 0) return null;
+
+    const sections = splitPatchIntoFileSections(normalizedDiff);
+    const summaries = files.map((fileDiff, index) =>
+      summarizeFile(
+        fileDiff,
+        sections[index] ?? sections.find((section) => section.includes(resolveFileDiffPath(fileDiff))) ?? "",
+      ),
+    );
+    return { files, sections, summaries };
+  } catch {
+    return null;
+  }
+}
+
+function fallbackFilePathFromSection(section: string, index: number): string {
+  const gitHeader = /^diff --git\s+a\/(.*?)\s+b\/(.*?)$/mu.exec(section);
+  const fileHeader = /^\+\+\+\s+(?:b\/)?(.+)$/mu.exec(section);
+  const raw = gitHeader?.[2] ?? gitHeader?.[1] ?? fileHeader?.[1] ?? `change-${index + 1}`;
+  return normalizeReviewPath(raw);
+}
+
+function normalizeReviewPath(filePath: string): string {
+  const trimmed = filePath.trim();
+  if (trimmed === "/dev/null") return "deleted-file";
+  return trimmed.startsWith("a/") || trimmed.startsWith("b/") ? trimmed.slice(2) : trimmed;
+}
+
+function fallbackPriorityFromSection(section: string, index: number): DiffReviewFilePriority {
+  const filePath = fallbackFilePathFromSection(section, index);
+  const stats = hunkStatsFromPatch(section);
+  const hunkHeaders = Array.from(section.matchAll(/^@@ .*$/gmu)).map((match) => match[0]);
+  const churnScore = Math.min(30, Math.ceil((stats.additions + stats.deletions) / 20));
+  return {
+    filePath,
+    additions: stats.additions,
+    deletions: stats.deletions,
+    changeType: "modified",
+    riskScore:
+      scorePathRisk(filePath) +
+      scorePatchRisk(section) +
+      churnScore +
+      Math.min(20, stats.deletions),
+    hunkHeaders,
+  };
+}
+
+export function rankDiffReviewFiles(diffPatch: string, limit = 12): DiffReviewFilePriority[] {
+  const normalized = diffPatch.trim();
+  if (normalized.length === 0) return [];
+
+  const parsed = parseDiffReviewFiles(normalized);
+  if (parsed) return sortByRiskThenPath([...parsed.summaries]).slice(0, limit);
+
+  return sortByRiskThenPath(splitPatchIntoFileSections(normalized).map(fallbackPriorityFromSection)).slice(0, limit);
+}
+
 export function buildDiffReviewPromptContext(
   diffPatch: string,
   maxChars: number,
@@ -361,21 +428,17 @@ export function buildDiffReviewPromptContext(
     return { promptDiff: "No changes", totalFileCount: 0, coveredFileCount: 0, summarizedFileCount: 0 };
   }
 
-  try {
-    const parsedPatches = parsePatchFiles(normalized);
-    const files = parsedPatches.flatMap((patch) => patch.files);
-    if (files.length === 0) return fallbackPromptContext(normalized, maxChars);
+  const parsed = parseDiffReviewFiles(normalized);
+  if (!parsed) return fallbackPromptContext(normalized, maxChars);
 
-    const sections = splitPatchIntoFileSections(normalized);
-    const summaries = files.map((fileDiff, index) =>
-      summarizeFile(fileDiff, sections[index] ?? sections.find((section) => section.includes(resolveFileDiffPath(fileDiff))) ?? ""),
-    );
+  try {
+    const { files, sections, summaries } = parsed;
     const chunks = files.flatMap((fileDiff, index) => {
       const section = sections[index] ?? sections.find((candidate) => candidate.includes(resolveFileDiffPath(fileDiff))) ?? "";
       return buildChunks(fileDiff, section, summaries[index]!);
     });
 
-    const sortedSummaries = sortByRiskThenPath(summaries);
+    const sortedSummaries = sortByRiskThenPath([...summaries]);
     const sortedChunks = sortByRiskThenPath(chunks);
     const summaryBlock = [
       "Changed files, pre-ranked by review risk:",

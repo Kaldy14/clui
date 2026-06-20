@@ -4,6 +4,24 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-20 — AI review falls back when Pi JSON is malformed
+
+**Problem:** AI Review workbench generation could fail with “pi returned invalid structured output” even though the diff itself was available.
+
+**Root cause:** Diff review generation trusted Pi to return the exact nested JSON schema. A valid JSON response with missing or malformed review fields failed schema decoding and surfaced as a hard workbench error.
+
+**Fix:** Added deterministic diff-risk ranking from the diff collector and use it as a fallback when Pi returns invalid JSON or invalid structured review output. The fallback preserves file ranking, risk labels, hunk anchors, and retry guidance instead of failing the workbench.
+
+**Affected files:**
+
+- `apps/server/src/diffReview/DiffCollector.ts`
+- `apps/server/src/diffReview/Layers/DiffReview.ts`
+- `apps/server/src/diffReview/DiffCollector.test.ts`
+- `apps/server/src/diffReview/DiffReview.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-18 — Diff renderer uses smaller wrapped lines
 
 **Problem:** The right-side diff renderer used large code text and forced horizontal scrolling for long lines.

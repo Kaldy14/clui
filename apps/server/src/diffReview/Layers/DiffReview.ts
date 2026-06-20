@@ -15,8 +15,11 @@ import {
   buildDiffReviewPromptContext,
   collectBranchDiff,
   collectLocalDiff,
+  rankDiffReviewFiles,
   summarizeUnifiedDiff,
   type CollectedDiffContext,
+  type DiffReviewFilePriority,
+  type DiffReviewPromptContext,
 } from "../DiffCollector.ts";
 import { DiffReview, DiffReviewError, type DiffReviewShape } from "../Services/DiffReview.ts";
 
@@ -54,6 +57,7 @@ const GeneratedReview = Schema.Struct({
 
 type GeneratedChange = typeof GeneratedChange.Type;
 type GeneratedAnchor = typeof GeneratedAnchor.Type;
+type GeneratedReview = typeof GeneratedReview.Type;
 
 const GeneratedAnswer = Schema.Struct({
   answer: Schema.String,
@@ -189,6 +193,179 @@ function emptyReviewResult(input: {
     keyChanges: [],
     testFocus: [],
     followUps: [],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function shouldUseDeterministicReviewFallback(error: DiffReviewError): boolean {
+  if (error.operation !== "DiffReview.generateDiffReview") return false;
+  return error.detail.includes("invalid JSON output") || error.detail.includes("invalid structured output");
+}
+
+function significanceForRisk(riskScore: number): OrchestrationDiffReviewChange["significance"] {
+  if (riskScore >= 55) return "high";
+  if (riskScore >= 25) return "medium";
+  return "low";
+}
+
+function isTestFile(filePath: string): boolean {
+  return /(^|\/)(__tests__|tests?|specs?)(\/|$)|\.(test|spec)\.[jt]sx?$/iu.test(filePath);
+}
+
+function isDocumentationFile(filePath: string): boolean {
+  return /\.(md|mdx|txt)$/iu.test(filePath);
+}
+
+function parseHunkHeaderRange(hunkHeader: string): {
+  readonly oldStartLine: number | null;
+  readonly oldEndLine: number | null;
+  readonly newStartLine: number | null;
+  readonly newEndLine: number | null;
+} {
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u.exec(hunkHeader.trim());
+  if (!match) {
+    return { oldStartLine: null, oldEndLine: null, newStartLine: null, newEndLine: null };
+  }
+
+  const oldStart = Number(match[1]);
+  const oldCount = Number(match[2] ?? "1");
+  const newStart = Number(match[3]);
+  const newCount = Number(match[4] ?? "1");
+  const endLine = (start: number, count: number): number | null => {
+    if (!Number.isFinite(start) || !Number.isFinite(count)) return null;
+    return count <= 0 ? start : start + count - 1;
+  };
+
+  return {
+    oldStartLine: normalizeLine(oldStart),
+    oldEndLine: normalizeLine(endLine(oldStart, oldCount)),
+    newStartLine: normalizeLine(newStart),
+    newEndLine: normalizeLine(endLine(newStart, newCount)),
+  };
+}
+
+function deterministicAnchors(file: DiffReviewFilePriority): OrchestrationDiffReviewAnchor[] {
+  const filePath = normalizeReviewFilePath(file.filePath) || "unknown";
+  const hunkHeaders = file.hunkHeaders.map((value) => value.trim()).filter((value) => value.length > 0);
+  if (hunkHeaders.length === 0) {
+    return [
+      {
+        filePath,
+        oldStartLine: null,
+        oldEndLine: null,
+        newStartLine: null,
+        newEndLine: null,
+        hunkHeader: null,
+      },
+    ];
+  }
+
+  return hunkHeaders.slice(0, 4).map((hunkHeader) => ({
+    filePath,
+    ...parseHunkHeaderRange(hunkHeader),
+    hunkHeader,
+  }));
+}
+
+function deterministicRiskReasons(file: DiffReviewFilePriority): string[] {
+  const lowerPath = file.filePath.toLowerCase();
+  const reasons: string[] = [];
+
+  if (/(^|\/)(auth|security|permission|permissions|session|token|oauth)(\/|\.|$)/u.test(lowerPath)) {
+    reasons.push("Auth, permission, or session path changed.");
+  }
+  if (/(^|\/)(migrations?|schema|db|database|sql)(\/|\.|$)/u.test(lowerPath)) {
+    reasons.push("Data/schema path changed.");
+  }
+  if (/(^|\/)(contracts?|api|routes?|server)(\/|\.|$)/u.test(lowerPath)) {
+    reasons.push("Server, route, API, or contract path changed.");
+  }
+  if (/(^|\/)(package\.json|bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|package-lock\.json)$/u.test(lowerPath)) {
+    reasons.push("Dependency or lockfile changed.");
+  }
+  if (file.changeType === "new" || file.changeType === "deleted") {
+    reasons.push(`${file.changeType === "new" ? "New" : "Deleted"} file.`);
+  }
+  if (file.deletions > 50) reasons.push("Large deletion set.");
+  if (file.additions + file.deletions > 250) reasons.push("High-churn file.");
+
+  if (reasons.length === 0) reasons.push("Changed behavior or review surface in this file.");
+  return reasons.slice(0, 5);
+}
+
+function deterministicReviewFocus(file: DiffReviewFilePriority): string[] {
+  const focus: string[] = [];
+  const hunkCount = file.hunkHeaders.length;
+  if (hunkCount > 0) {
+    focus.push(`Read ${hunkCount === 1 ? "1 changed hunk" : `${hunkCount} changed hunks`}.`);
+  } else {
+    focus.push("Read the changed file section.");
+  }
+
+  if (isTestFile(file.filePath)) {
+    focus.push("Check that assertions match the changed behavior.");
+  } else if (!isDocumentationFile(file.filePath)) {
+    focus.push("Check callers, state, and error paths touched by the change.");
+  }
+  if (file.additions + file.deletions > 250) focus.push("Skim structure first, then inspect risky hunks.");
+
+  return focus.slice(0, 4);
+}
+
+function deterministicChange(file: DiffReviewFilePriority, index: number): OrchestrationDiffReviewChange {
+  const filePath = normalizeReviewFilePath(file.filePath) || "unknown";
+  const significance = significanceForRisk(file.riskScore);
+  const title = `${significance === "high" ? "High-risk" : "Review"} changes in ${filePath}`;
+  return {
+    id: `${index + 1}-${slugFragment(filePath)}-${slugFragment(title)}`,
+    rank: index + 1,
+    significance,
+    filePath,
+    title,
+    summary: `${file.changeType} file change with +${file.additions}/-${file.deletions}.`,
+    whyItMatters: deterministicRiskReasons(file)[0] ?? "Changed review surface.",
+    reviewFocus: deterministicReviewFocus(file),
+    risks: deterministicRiskReasons(file),
+    anchors: deterministicAnchors(file),
+  };
+}
+
+function deterministicOverview(files: ReadonlyArray<DiffReviewFilePriority>): string {
+  if (files.length === 0) {
+    return "Pi output could not be decoded. Showing deterministic diff summary.";
+  }
+  const topFiles = files.slice(0, 3).map((file) => file.filePath).join(", ");
+  return `Pi output could not be decoded. Showing deterministic diff-risk ranking; start with ${topFiles}.`;
+}
+
+function deterministicTestFocus(files: ReadonlyArray<DiffReviewFilePriority>): string[] {
+  const runtimeFiles = files.filter((file) => !isTestFile(file.filePath) && !isDocumentationFile(file.filePath));
+  if (runtimeFiles.length === 0) return [];
+  return [`Verify changed behavior in ${runtimeFiles.slice(0, 3).map((file) => file.filePath).join(", ")}.`];
+}
+
+function deterministicReviewResult(input: {
+  readonly threadId: ThreadId;
+  readonly scope: OrchestrationDiffReviewScope;
+  readonly context: CollectedDiffContext;
+  readonly promptContext: DiffReviewPromptContext;
+}): OrchestrationGenerateDiffReviewResult {
+  const rankedFiles = rankDiffReviewFiles(input.context.diffPatch, 12);
+  return {
+    threadId: input.threadId,
+    scope: input.scope,
+    sourceLabel: input.context.sourceLabel,
+    baseBranch: input.context.baseBranch,
+    headBranch: input.context.headBranch,
+    defaultBranchSafety: input.context.defaultBranchSafety,
+    diffStat: input.context.diffStat || summarizeUnifiedDiff(input.context.diffPatch),
+    totalFileCount: input.promptContext.totalFileCount,
+    coveredFileCount: input.promptContext.coveredFileCount,
+    summarizedFileCount: input.promptContext.summarizedFileCount,
+    overview: deterministicOverview(rankedFiles),
+    keyChanges: rankedFiles.map(deterministicChange),
+    testFocus: deterministicTestFocus(rankedFiles),
+    followUps: ["Retry AI review for model-written analysis."],
     generatedAt: new Date().toISOString(),
   };
 }
@@ -452,14 +629,36 @@ export const DiffReviewLive = Layer.effect(
           "</review_input>",
         ].join("\n");
 
-        const generated = yield* runPiJson({
+        const generatedOutcome = yield* runPiJson({
           operation: "DiffReview.generateDiffReview",
           systemPrompt,
           userPrompt,
           outputSchema: GeneratedReview,
           cwd: context.cwd,
-        });
+        }).pipe(
+          Effect.map(
+            (review): { readonly type: "generated"; readonly review: GeneratedReview } => ({
+              type: "generated",
+              review,
+            }),
+          ),
+          Effect.catch((error) =>
+            shouldUseDeterministicReviewFallback(error)
+              ? Effect.succeed({ type: "deterministic" as const })
+              : Effect.fail(error),
+          ),
+        );
 
+        if (generatedOutcome.type === "deterministic") {
+          return deterministicReviewResult({
+            threadId: input.threadId,
+            scope: input.scope,
+            context,
+            promptContext,
+          });
+        }
+
+        const generated = generatedOutcome.review;
         const result: OrchestrationGenerateDiffReviewResult = {
           threadId: input.threadId,
           scope: input.scope,
