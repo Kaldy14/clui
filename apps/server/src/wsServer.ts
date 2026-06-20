@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import { readFile } from "node:fs/promises";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -41,6 +42,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Ref,
   Schema,
@@ -98,6 +100,7 @@ import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThr
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { MacosSleepPreventer } from "./macosSleepPreventer";
 import { AUTO_ARCHIVE_SWEEP_INTERVAL_MS, findAutoArchivableThreads } from "./autoArchiveThreads";
+import { parsePiTranscriptBuffer } from "./piTranscript";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -140,6 +143,32 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
       "\r\n" +
       message,
   );
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function latestCacheHitRateFromPiTranscriptBuffer(buffer: Buffer): number | undefined {
+  const lines = buffer.toString("utf8").split("\n");
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]?.trim();
+    if (!line?.startsWith("{")) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    if (!isRecordValue(parsed) || parsed.type !== "message" || !isRecordValue(parsed.message)) continue;
+    if (parsed.message.role !== "assistant" || !isRecordValue(parsed.message.usage)) continue;
+    const input = typeof parsed.message.usage.input === "number" ? parsed.message.usage.input : 0;
+    const cacheRead = typeof parsed.message.usage.cacheRead === "number" ? parsed.message.usage.cacheRead : 0;
+    const cacheWrite = typeof parsed.message.usage.cacheWrite === "number" ? parsed.message.usage.cacheWrite : 0;
+    const promptTokens = input + cacheRead + cacheWrite;
+    return promptTokens > 0 ? (cacheRead / promptTokens) * 100 : undefined;
+  }
+  return undefined;
 }
 
 function websocketRawToString(raw: unknown): string | null {
@@ -1149,6 +1178,75 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       });
     });
 
+  const resolvePiTranscriptSessionFile = (threadId: string) =>
+    Effect.gen(function* () {
+      const activeSessionFile = yield* piSessionManager.getSessionFile(threadId);
+      if (activeSessionFile) return activeSessionFile;
+
+      const row = yield* projectionThreadRepository.getById({
+        threadId: ThreadId.makeUnsafe(threadId),
+      });
+      if (Option.isNone(row)) return null;
+      return row.value.piSessionFile;
+    });
+
+  const readPiTranscript = (threadId: string, sinceOffset?: number) =>
+    Effect.gen(function* () {
+      const sessionFile = yield* resolvePiTranscriptSessionFile(threadId);
+      const pendingExtensionUiRequest = yield* piSessionManager.getPendingExtensionUiRequest(threadId);
+      const extensionUiState = yield* piSessionManager.getExtensionUiState(threadId);
+      const activeUsageStats = yield* piSessionManager
+        .getSessionUsageStats(threadId)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!sessionFile) {
+        return {
+          threadId,
+          sessionFile: null,
+          items: [],
+          offset: 0,
+          reset: false,
+          pendingExtensionUiRequest,
+          extensionUiState,
+          usageStats: activeUsageStats,
+        };
+      }
+
+      const buffer = yield* Effect.tryPromise({
+        try: async () => {
+          try {
+            return await readFile(sessionFile);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+              return Buffer.alloc(0);
+            }
+            throw error;
+          }
+        },
+        catch: (cause) =>
+          new RouteRequestError({
+            message: cause instanceof Error ? cause.message : "Failed to read pi transcript.",
+          }),
+      });
+      const result = parsePiTranscriptBuffer(buffer, sinceOffset);
+      const latestCacheHitRate = latestCacheHitRateFromPiTranscriptBuffer(buffer);
+      const usageStats = activeUsageStats
+        ? {
+            ...activeUsageStats,
+            ...(latestCacheHitRate !== undefined ? { latestCacheHitRate } : {}),
+          }
+        : null;
+      return {
+        threadId,
+        sessionFile,
+        items: result.items,
+        offset: result.offset,
+        reset: result.reset,
+        pendingExtensionUiRequest,
+        extensionUiState,
+        usageStats,
+      };
+    });
+
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
@@ -1758,6 +1856,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           resumeSessionFile,
           initialPrompt,
           fastMode,
+          htmlMode,
         } = stripRequestTag(request.body);
 
         const resolvedCwd = yield* resolveHarnessSessionCwd(requestedCwd, threadId);
@@ -1771,6 +1870,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ...(resumeSessionFile !== undefined ? { resumeSessionFile } : {}),
           ...(initialPrompt !== undefined ? { initialPrompt } : {}),
           ...(fastMode !== undefined ? { fastMode } : {}),
+          ...(htmlMode !== undefined ? { htmlMode } : {}),
         });
         if (initialPrompt && initialPrompt.trim().length > 0) {
           dispatchAutoTitleIfNeeded(threadId, initialPrompt);
@@ -1792,6 +1892,39 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           offset: result.offset,
           reset: result.reset,
         };
+      }
+
+      case WS_METHODS.piGetTranscript: {
+        const body = stripRequestTag(request.body);
+        return yield* readPiTranscript(body.threadId, body.sinceOffset);
+      }
+
+      case WS_METHODS.piPrompt: {
+        const { threadId, message, streamingBehavior } = stripRequestTag(request.body);
+        yield* piSessionManager.promptSession(threadId, message, streamingBehavior);
+        dispatchAutoTitleIfNeeded(threadId, message);
+        return;
+      }
+
+      case WS_METHODS.piAbort: {
+        const { threadId } = stripRequestTag(request.body);
+        return yield* piSessionManager.abortSession(threadId);
+      }
+
+      case WS_METHODS.piRespondExtensionUi: {
+        const { threadId, id, value, confirmed, cancelled } = stripRequestTag(request.body);
+        return yield* piSessionManager.respondExtensionUi(threadId, {
+          id,
+          ...(value !== undefined ? { value } : {}),
+          ...(confirmed !== undefined ? { confirmed } : {}),
+          ...(cancelled !== undefined ? { cancelled } : {}),
+        });
+      }
+
+      case WS_METHODS.piGetCommands: {
+        const { threadId } = stripRequestTag(request.body);
+        const commands = yield* piSessionManager.getCommands(threadId);
+        return { commands };
       }
 
       case WS_METHODS.piWrite: {

@@ -18,6 +18,7 @@ export const PiStartInput = Schema.Struct({
   resumeSessionFile: Schema.optional(TrimmedNonEmptyString),
   initialPrompt: Schema.optional(Schema.String),
   fastMode: Schema.optional(Schema.Boolean),
+  htmlMode: Schema.optional(Schema.Boolean),
 });
 export type PiStartInput = Schema.Codec.Encoded<typeof PiStartInput>;
 
@@ -31,6 +32,141 @@ export const PiGetScrollbackInput = Schema.Struct({
   sinceOffset: Schema.optional(Schema.Number),
 });
 export type PiGetScrollbackInput = Schema.Codec.Encoded<typeof PiGetScrollbackInput>;
+
+export const PiGetTranscriptInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+  sinceOffset: Schema.optional(Schema.Number),
+});
+export type PiGetTranscriptInput = Schema.Codec.Encoded<typeof PiGetTranscriptInput>;
+
+export const PiTranscriptPart = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thinking"),
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("toolCall"),
+    name: Schema.String,
+    input: Schema.Unknown,
+    id: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("image"),
+    mimeType: Schema.NullOr(Schema.String),
+  }),
+]);
+export type PiTranscriptPart = typeof PiTranscriptPart.Type;
+
+export const PiTranscriptItem = Schema.Struct({
+  id: Schema.String,
+  role: Schema.Literals([
+    "user",
+    "assistant",
+    "toolResult",
+    "bashExecution",
+    "custom",
+    "summary",
+    "system",
+  ] as const),
+  text: Schema.String,
+  parts: Schema.Array(PiTranscriptPart),
+  createdAt: Schema.NullOr(Schema.String),
+  toolName: Schema.optional(Schema.String),
+  toolCallId: Schema.optional(Schema.String),
+  isError: Schema.optional(Schema.Boolean),
+});
+export type PiTranscriptItem = typeof PiTranscriptItem.Type;
+
+export const PiExtensionUiWidget = Schema.Struct({
+  key: Schema.String,
+  lines: Schema.Array(Schema.String),
+  placement: Schema.Literals(["aboveEditor", "belowEditor"] as const),
+});
+export type PiExtensionUiWidget = typeof PiExtensionUiWidget.Type;
+
+export const PiExtensionUiState = Schema.Struct({
+  statuses: Schema.Record(Schema.String, Schema.String),
+  widgets: Schema.Array(PiExtensionUiWidget),
+});
+export type PiExtensionUiState = typeof PiExtensionUiState.Type;
+
+export const PiSessionTokenUsage = Schema.Struct({
+  input: Schema.Number,
+  output: Schema.Number,
+  cacheRead: Schema.Number,
+  cacheWrite: Schema.Number,
+  total: Schema.Number,
+});
+export type PiSessionTokenUsage = typeof PiSessionTokenUsage.Type;
+
+export const PiSessionContextUsage = Schema.Struct({
+  tokens: Schema.NullOr(Schema.Number),
+  contextWindow: Schema.Number,
+  percent: Schema.NullOr(Schema.Number),
+});
+export type PiSessionContextUsage = typeof PiSessionContextUsage.Type;
+
+export const PiSessionUsageStats = Schema.Struct({
+  tokens: PiSessionTokenUsage,
+  cost: Schema.Number,
+  contextUsage: Schema.NullOr(PiSessionContextUsage),
+  latestCacheHitRate: Schema.optional(Schema.Number),
+});
+export type PiSessionUsageStats = typeof PiSessionUsageStats.Type;
+
+export const PiGetTranscriptResult = Schema.Struct({
+  threadId: Schema.String,
+  sessionFile: Schema.NullOr(Schema.String),
+  items: Schema.Array(PiTranscriptItem),
+  offset: Schema.Number,
+  reset: Schema.Boolean,
+  pendingExtensionUiRequest: Schema.NullOr(Schema.Unknown),
+  extensionUiState: PiExtensionUiState,
+  usageStats: Schema.NullOr(PiSessionUsageStats),
+});
+export type PiGetTranscriptResult = typeof PiGetTranscriptResult.Type;
+
+export const PiPromptInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+  message: Schema.String,
+  streamingBehavior: Schema.optional(Schema.Literals(["steer", "followUp"] as const)),
+});
+export type PiPromptInput = Schema.Codec.Encoded<typeof PiPromptInput>;
+
+export const PiAbortInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+});
+export type PiAbortInput = Schema.Codec.Encoded<typeof PiAbortInput>;
+
+export const PiExtensionUiResponseInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+  id: TrimmedNonEmptyString,
+  value: Schema.optional(Schema.String),
+  confirmed: Schema.optional(Schema.Boolean),
+  cancelled: Schema.optional(Schema.Boolean),
+});
+export type PiExtensionUiResponseInput = Schema.Codec.Encoded<typeof PiExtensionUiResponseInput>;
+
+export const PiGetCommandsInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+});
+export type PiGetCommandsInput = Schema.Codec.Encoded<typeof PiGetCommandsInput>;
+
+export const PiCommandSuggestion = Schema.Struct({
+  name: Schema.String,
+  description: Schema.optional(Schema.String),
+  source: Schema.optional(Schema.String),
+});
+export type PiCommandSuggestion = typeof PiCommandSuggestion.Type;
+
+export const PiGetCommandsResult = Schema.Struct({
+  commands: Schema.Array(PiCommandSuggestion),
+});
+export type PiGetCommandsResult = typeof PiGetCommandsResult.Type;
 
 export const PiWriteInput = Schema.Struct({
   threadId: TrimmedNonEmptyString,
@@ -97,6 +233,12 @@ const PiSessionFileEvent = Schema.Struct({
   sessionFile: Schema.NullOr(Schema.String),
 });
 
+const PiRpcEvent = Schema.Struct({
+  ...PiSessionEventBase.fields,
+  type: Schema.Literal("rpcEvent"),
+  event: Schema.Unknown,
+});
+
 export const PiSessionEvent = Schema.Union([
   PiOutputEvent,
   PiStartedEvent,
@@ -106,5 +248,6 @@ export const PiSessionEvent = Schema.Union([
   PiHookStatusEvent,
   PiActivityStatusEvent,
   PiSessionFileEvent,
+  PiRpcEvent,
 ]);
 export type PiSessionEvent = typeof PiSessionEvent.Type;

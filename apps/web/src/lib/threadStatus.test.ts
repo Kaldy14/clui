@@ -11,6 +11,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     title: "Thread",
     model: "gpt-5-codex",
     harness: "pi",
+    piRenderMode: "terminal",
     runtimeMode: "full-access",
     interactionMode: "default",
     session: {

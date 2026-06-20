@@ -87,6 +87,13 @@ import type {
   PiWriteInput,
   PiResizeInput,
   PiGetScrollbackInput,
+  PiGetTranscriptInput,
+  PiGetTranscriptResult,
+  PiPromptInput,
+  PiAbortInput,
+  PiExtensionUiResponseInput,
+  PiGetCommandsInput,
+  PiGetCommandsResult,
   PiSessionEvent,
 } from "./pi-terminal";
 import { EditorId } from "./editor";
@@ -262,6 +269,11 @@ export interface NativeApi {
     getScrollback: (
       input: PiGetScrollbackInput,
     ) => Promise<{ threadId: string; scrollback: string | null; offset: number; reset?: boolean }>;
+    getTranscript: (input: PiGetTranscriptInput) => Promise<PiGetTranscriptResult>;
+    prompt: (input: PiPromptInput) => Promise<void>;
+    abort: (input: PiAbortInput) => Promise<void>;
+    respondExtensionUi: (input: PiExtensionUiResponseInput) => Promise<void>;
+    getCommands: (input: PiGetCommandsInput) => Promise<PiGetCommandsResult>;
     onSessionEvent: (callback: (event: PiSessionEvent) => void) => () => void;
   };
 }

@@ -4,6 +4,113 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-20 — Pi HTML preserves draft cursor positions
+
+**Problem:** Pi HTML restored unsent draft text after thread switches, but the text cursor/selection reset instead of returning to where the user left it.
+
+**Root cause:** Draft persistence only stored text/state values, not text control selection ranges.
+
+**Fix:** Persist and restore selection start/end/direction for the normal composer plus text-entry fields inside questionnaire, plan-review, and generic extension prompts. Clear saved selections when drafts are submitted or dismissed.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-20 — Pi HTML preserves drafts and focuses extension prompts
+
+**Problem:** Pi HTML still showed the normal composer while questionnaire/plan-review prompts were active, extension prompts could require a click before arrow-key use, and unsubmitted input disappeared after switching threads.
+
+**Root cause:** Composer and extension prompt state lived only in mounted React component state, and the active prompt did not replace the composer the way terminal Pi does.
+
+**Fix:** Hide the normal composer while an interactive extension prompt is active, keep the footer status line visible, auto-focus prompt controls on mount/return, and persist per-thread composer drafts plus per-request questionnaire/plan-review/generic prompt draft state in session storage.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-20 — Pi HTML shows usage stats and keeps composer focus
+
+**Problem:** Pi HTML footer showed extension quota status but not Pi's token/cost/context usage, and typing could go nowhere after focus moved to the transcript or surrounding thread chrome.
+
+**Root cause:** HTML mode did not request Pi RPC session stats and only focused the composer on mount. It also had no keyboard ownership rules to distinguish the Pi composer from xterm terminals and dialogs.
+
+**Fix:** Added typed Pi session usage stats to transcript responses, fetched `get_session_stats` from active RPC sessions, formatted token/cost/context summaries next to the Codex quota status, and focused the composer on thread mount/non-interactive thread clicks while ignoring editable fields, dialogs, xterm terminals, and other controls.
+
+**Affected files:**
+
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-20 — Pi HTML separates extension prompts from status widgets
+
+**Problem:** Pi HTML questionnaire/plan-review prompts could be replaced by blank or unrelated extension UI events, and HTML mode did not show footer statuses or async subagent widgets from global Pi extensions.
+
+**Root cause:** Every `extension_ui_request` was treated as a blocking prompt, so fire-and-forget `setStatus`/`setWidget` events overwrote the pending dialog state instead of being tracked separately.
+
+**Fix:** Persist only dialog methods as pending prompts, track extension status/widget state on the server, return it with `pi.getTranscript`, update it live in the HTML view, render ANSI-colored footer statuses and widget lines, and added a Pi session manager regression test for status/widget separation.
+
+**Affected files:**
+
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-20 — Attachment path helpers gain direct tests
+
+**Problem:** Attachment path normalization and resolution helpers did not have a focused test file covering accepted and rejected relative paths, and empty relative paths normalized to `.` instead of being rejected.
+
+**Root cause:** Coverage lived around higher-level attachment behavior, and `path.normalize("")` returns `.`, which bypassed the existing empty-string guard.
+
+**Fix:** Reject `.` from normalized attachment paths and added Vitest coverage for leading separator normalization, backslash conversion, empty/traversal/null-byte rejection, and attachment-root resolution.
+
+**Affected files:**
+
+- `apps/server/src/attachmentPaths.ts`
+- `apps/server/src/attachmentPaths.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-20 — Pi HTML handles live tool prompts and edit previews
+
+**Problem:** Pi HTML mode could lose questionnaire/plan-review prompts after navigation or hot reload, and code-edit tool results did not match terminal mode previews.
+
+**Root cause:** Pending extension UI requests only lived in the mounted HTML component, and parsed transcript tool results rendered separately from their initiating tool calls. Write/edit RPC results also exposed generic success text instead of terminal-style content/diff previews.
+
+**Fix:** Persisted the active extension UI request in the Pi session manager and returned it with `pi.getTranscript`, restored pending prompts in the HTML view, merged transcript tool results back into their tool blocks, and rendered write content plus edit old/new previews with terminal colors.
+
+**Affected files:**
+
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `packages/contracts/src/pi-terminal.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-20 — AI review falls back when Pi JSON is malformed
 
 **Problem:** AI Review workbench generation could fail with “pi returned invalid structured output” even though the diff itself was available.
@@ -18,6 +125,185 @@ Session-by-session log of changes, fixes, and decisions made during development.
 - `apps/server/src/diffReview/Layers/DiffReview.ts`
 - `apps/server/src/diffReview/DiffCollector.test.ts`
 - `apps/server/src/diffReview/DiffReview.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-20 — Pi HTML transcript matches terminal blocks
+
+**Problem:** Pi HTML mode rendered user prompts as plain blue text, read tool results as full raw file contents, tool paths with the wrong color/path shape, and the composer as a web input bar with placeholder/send button instead of the terminal prompt area.
+
+**Root cause:** The HTML transcript flattened every Pi message part into one `<pre>`, did not model Pi's collapsed tool renderer, and used xterm palette slots instead of Pi TUI theme colors for message/tool blocks.
+
+**Fix:** Added Pi TUI color mapping, terminal-style user and tool blocks, collapsed successful read/edit/list/search tool results by default, home-shortened tool paths, minimal fenced-code rendering, and a terminal-like composer with prompt divider lines. Preserved tool call IDs in the shared transcript part schema/parser for future result merging.
+
+**Affected files:**
+
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/piTranscript.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-20 — Pi HTML RPC tools match terminal tool controls
+
+**Problem:** Pi HTML/RPC tool prompts were still degraded versus terminal mode: questionnaire lacked `n` notes, multi-question tabs, submit review, and custom-answer edit behavior; plan review lacked per-line notes and Enter approve/revise behavior. HTML transcript/composer/prompt colors also differed from xterm.
+
+**Root cause:** The RPC fallbacks used generic `select`/`input`/`editor` dialogs, which cannot preserve the custom TUI state machines. The HTML renderer also hard-coded Tailwind black/white/amber colors and a different line height instead of using the shared terminal theme.
+
+**Fix:** Encoded questionnaire and plan_review RPC requests as structured Clui payloads and rendered dedicated terminal-style React state machines for tabs, notes, custom answers, submit review, line notes, Enter/Esc behavior, and wheel/arrow movement. Switched Pi HTML transcript, composer, suggestions, and prompts to xterm theme colors and shared terminal line height.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `apps/web/src/lib/terminalSurfaceTheme.ts`
+- `docs/CHANGELOG-DEV.md`
+- `/Users/richie/.pi/agent/extensions/questionnaire/index.ts`
+- `/Users/richie/.pi/agent/extensions/plan-review.ts`
+
+---
+
+## 2026-06-20 — Repair migration ID collision for Pi render mode
+
+**Problem:** `bun dev` ran migrations successfully, then the server crashed with `SQLiteError: no such column: pi_render_mode` when loading projection threads.
+
+**Root cause:** Some local databases already had migration IDs `27` and `28` recorded from an older Cowork branch. Effect's migrator skips migrations whose ID is not greater than the latest recorded ID, so the current `028_ProjectionThreadsPiRenderMode` migration was skipped even though the column was missing.
+
+**Fix:** Added migration `029_ProjectionThreadsCollisionRepair` to rerun the idempotent scrollback-redaction and Pi render mode migrations under a fresh ID, plus a migration test that reproduces the colliding local database state.
+
+**Affected files:**
+
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations/029_ProjectionThreadsCollisionRepair.ts`
+- `apps/server/src/persistence/Migrations.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-19 — Pi HTML mode persists and RPC prompts own keyboard focus
+
+**Problem:** Pi threads started in HTML mode could reopen as terminal-mode threads, and HTML/RPC tool prompts did not behave like terminal prompts: arrow keys could scroll the transcript instead of moving the prompt selection.
+
+**Root cause:** `piRenderMode` lived only in browser-local terminal state and was not part of Clui's persisted thread read model. The RPC extension prompt renderer used unfocused HTML buttons instead of a focused terminal-style selector that captures navigation keys.
+
+**Fix:** Added persisted `piRenderMode` metadata to orchestration contracts, events, projection storage, snapshot mapping, and the web thread store. New-thread render-mode changes now dispatch `thread.meta.update`, old local HTML selections bootstrap into persisted metadata, and active/dormant routing uses the persisted mode. Replaced RPC prompt button lists with a focused terminal-like selector/editor that handles Up/Down/Left/Right/Tab/Enter/Escape and stops arrow-key bubbling to the transcript.
+
+**Affected files:**
+
+- `packages/contracts/src/orchestration.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/server/src/persistence/Services/ProjectionThreads.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations/028_ProjectionThreadsPiRenderMode.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-19 — Pi HTML mode supports RPC UI prompts and cleaner tools
+
+**Problem:** Pi HTML/RPC mode did not answer interactive extension prompts, and tool calls rendered as raw JSON blobs such as `questionnaire { ... }` and `bash { ... }`.
+
+**Root cause:** Clui ignored Pi RPC `extension_ui_request` events and had no response path back to Pi. The transcript renderer also printed generic tool inputs directly instead of using terminal-style summaries. Pi's global `questionnaire` and `plan_review` extensions used TUI-only `custom()` components outside TUI mode.
+
+**Fix:** Added `pi.respondExtensionUi`, forwarded RPC UI requests to an inline terminal-style prompt, formatted common tool calls as concise terminal lines, and added RPC fallbacks to the Pi `questionnaire` and `plan_review` extensions.
+
+**Affected files:**
+
+- `packages/contracts/src/pi-terminal.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/ipc.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+- `/Users/richie/.pi/agent/extensions/questionnaire/index.ts`
+- `/Users/richie/.pi/agent/extensions/plan-review.ts`
+
+---
+
+## 2026-06-19 — Pi HTML transcript streams RPC deltas
+
+**Problem:** Pi HTML mode only refreshed persisted JSONL transcript entries, so assistant text and tool output could appear late instead of streaming while Pi was working.
+
+**Root cause:** The server discarded Pi RPC `message_update` and `tool_execution_update` payloads after using them only as generic activity signals; the web renderer only tailed the session file.
+
+**Fix:** Added a typed Pi `rpcEvent` push, forwarded renderable RPC stream events, merged live assistant/tool rows into the HTML transcript until persisted JSONL catches up, carried `toolCallId` through persisted tool results for de-duplication, and stripped terminal control sequences before HTML rendering.
+
+**Affected files:**
+
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/piTranscript.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-19 — Pi HTML transcript removes block styling
+
+**Problem:** Pi HTML transcript rows looked like padded text blocks instead of terminal output.
+
+**Root cause:** Each transcript item rendered inside a wrapper with horizontal/vertical padding, separator borders, and loose line height.
+
+**Fix:** Removed transcript row wrappers, borders, padding, and placeholder padding; tightened transcript line height to match terminal-style rendering.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-19 — Pi HTML composer baseline tightened
+
+**Problem:** The Pi HTML input row looked vertically off, with the `›` prompt sitting too high and excess empty space below single-line input.
+
+**Root cause:** The composer mixed a textarea `min-height`, loose line height, container padding, and a hardcoded top offset on the prompt glyph.
+
+**Fix:** Replaced the hardcoded prompt offset with centered single-line flex alignment, explicit textarea line-height sizing, tighter vertical padding, and a smaller send button baseline.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-19 — Pi HTML mode uses headless RPC and terminal-style HTML
+
+**Problem:** Pi HTML mode needed a separate HTML transcript without duplicating or cropping the Pi TUI, while keeping command autocomplete in a terminal-style input.
+
+**Root cause:** Pi threads were originally driven only through an interactive PTY, and the first HTML prototype incorrectly embedded a fixed-height xterm strip, which resized Pi's whole TUI. Older persisted terminal-state objects also lacked `piRenderMode`, which could trigger unstable Zustand selector snapshots.
+
+**Fix:** Added a headless `pi --mode rpc` path for HTML Pi sessions, prompt/abort/command RPCs, a full-width terminal-style HTML transcript with no role labels/cards/timestamps, and a React mono composer with slash-command autocomplete backed by Pi RPC. Restored stable terminal-state selector identity and defaulted `piRenderMode` at primitive selector call sites.
+
+**Affected files:**
+
+- `packages/contracts/src/pi-terminal.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/ipc.ts`
+- `apps/server/src/piTranscript.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/terminalStateStore.ts`
+- `apps/web/src/terminalStateStore.test.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
 - `docs/CHANGELOG-DEV.md`
 
 ---

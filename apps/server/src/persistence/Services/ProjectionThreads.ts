@@ -9,6 +9,7 @@
 import {
   CodingHarness,
   IsoDateTime,
+  PiRenderMode,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -28,6 +29,7 @@ export const ProjectionThread = Schema.Struct({
   title: Schema.String,
   model: Schema.String,
   harness: CodingHarness,
+  piRenderMode: PiRenderMode,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),

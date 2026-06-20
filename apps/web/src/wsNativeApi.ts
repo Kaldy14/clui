@@ -277,6 +277,11 @@ export function createWsNativeApi(): NativeApi {
         return RESOLVED_VOID;
       },
       getScrollback: (input) => transport.request(WS_METHODS.piGetScrollback, input),
+      getTranscript: (input) => transport.request(WS_METHODS.piGetTranscript, input),
+      prompt: (input) => transport.request(WS_METHODS.piPrompt, input),
+      abort: (input) => transport.request(WS_METHODS.piAbort, input),
+      respondExtensionUi: (input) => transport.request(WS_METHODS.piRespondExtensionUi, input),
+      getCommands: (input) => transport.request(WS_METHODS.piGetCommands, input),
       onSessionEvent: (callback) =>
         transport.subscribe(WS_CHANNELS.piSessionEvent, (data) => {
           const payload = decodeAndWarnOnFailure(PiSessionEvent, data);

@@ -29,6 +29,7 @@ function makeThread(index: number, overrides: Partial<Thread> = {}): Thread {
     title: `Thread ${index}`,
     model: "gpt-5-codex",
     harness: "claudeCode",
+    piRenderMode: "terminal",
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,

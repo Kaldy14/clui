@@ -237,6 +237,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           title: "Thread 1",
           model: "gpt-5-codex",
           harness: "claudeCode",
+          piRenderMode: "terminal",
           interactionMode: "default",
           runtimeMode: "full-access",
           branch: null,

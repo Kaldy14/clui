@@ -27,6 +27,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     title: "Thread",
     model: "gpt-5-codex",
     harness: "claudeCode",
+    piRenderMode: "terminal",
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
@@ -80,6 +81,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     title: "Thread",
     model: "gpt-5.3-codex",
     harness: "claudeCode",
+    piRenderMode: "terminal",
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
     branch: null,
@@ -307,6 +309,20 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.threads[0]?.model).toBe("claude-opus-4-6");
+  });
+
+  it("restores persisted Pi HTML render mode from the read model", () => {
+    const initialState = makeState(makeThread({ harness: "pi", piRenderMode: "terminal" }));
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        harness: "pi",
+        piRenderMode: "html",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.piRenderMode).toBe("html");
   });
 
   it("falls back to the codex default for unknown models without an active session", () => {

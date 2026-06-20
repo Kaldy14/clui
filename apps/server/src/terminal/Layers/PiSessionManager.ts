@@ -1,10 +1,18 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { AgentActivityStatus, ClaudeHookStatus, PiSessionEvent, TerminalStatus } from "@clui/contracts";
+import type {
+  AgentActivityStatus,
+  ClaudeHookStatus,
+  PiExtensionUiState,
+  PiSessionEvent,
+  PiSessionUsageStats,
+  TerminalStatus,
+} from "@clui/contracts";
 import { AGENT_ACTIVITY_LABELS, classifyAgentActivityFromPiReason } from "@clui/shared/agentActivity";
 import { hasPiWorkingStatusOutput, stripPiTerminalControls } from "@clui/shared/piTerminalStatus";
 import { Effect, Layer } from "effect";
@@ -126,9 +134,28 @@ interface PiSessionSyncPayload {
   readonly activityStatus?: AgentActivityStatus | null;
 }
 
+interface RpcPendingRequest {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+}
+
+type ExtensionWidgetPlacement = "aboveEditor" | "belowEditor";
+
+type MutableExtensionUiState = {
+  statuses: Map<string, string>;
+  widgets: Map<string, { key: string; lines: string[]; placement: ExtensionWidgetPlacement }>;
+};
+
 interface PiSessionEntry extends PiSessionState {
   scrollbackBuffer: ScrollbackRingBuffer;
+  mode: "terminal" | "rpc";
   process: PtyProcess | null;
+  rpcProcess: ChildProcessWithoutNullStreams | null;
+  rpcLineCarry: string;
+  rpcRequestSeq: number;
+  rpcPendingRequests: Map<string, RpcPendingRequest>;
+  pendingExtensionUiRequest: Record<string, unknown> | null;
+  extensionUiState: MutableExtensionUiState;
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hookStatus: ClaudeHookStatus | null;
@@ -469,6 +496,80 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createEmptyExtensionUiState(): MutableExtensionUiState {
+  return { statuses: new Map(), widgets: new Map() };
+}
+
+function snapshotExtensionUiState(state: MutableExtensionUiState): PiExtensionUiState {
+  return {
+    statuses: Object.fromEntries(state.statuses),
+    widgets: [...state.widgets.values()].map((widget) => ({
+      key: widget.key,
+      lines: [...widget.lines],
+      placement: widget.placement,
+    })),
+  };
+}
+
+function isExtensionDialogMethod(method: unknown): method is "select" | "confirm" | "input" | "editor" {
+  return method === "select" || method === "confirm" || method === "input" || method === "editor";
+}
+
+function extensionWidgetPlacement(value: unknown): ExtensionWidgetPlacement {
+  return value === "belowEditor" ? "belowEditor" : "aboveEditor";
+}
+
+function normalizeStringArray(value: unknown): string[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) return [];
+  return value.filter((line): line is string => typeof line === "string");
+}
+
+function normalizeStringValue(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeNullableNumber(value: unknown): number | null {
+  return value === null || value === undefined ? null : finiteNumber(value);
+}
+
+function normalizeSessionUsageStats(data: unknown): PiSessionUsageStats | null {
+  if (!isRecord(data) || !isRecord(data.tokens)) return null;
+  const input = finiteNumber(data.tokens.input);
+  const output = finiteNumber(data.tokens.output);
+  const cacheRead = finiteNumber(data.tokens.cacheRead);
+  const cacheWrite = finiteNumber(data.tokens.cacheWrite);
+  const total = finiteNumber(data.tokens.total) ?? (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0);
+  const cost = finiteNumber(data.cost) ?? 0;
+  if (input === null || output === null || cacheRead === null || cacheWrite === null) return null;
+
+  let contextUsage: PiSessionUsageStats["contextUsage"] = null;
+  if (isRecord(data.contextUsage)) {
+    const contextWindow = finiteNumber(data.contextUsage.contextWindow);
+    if (contextWindow !== null) {
+      contextUsage = {
+        tokens: normalizeNullableNumber(data.contextUsage.tokens),
+        contextWindow,
+        percent: normalizeNullableNumber(data.contextUsage.percent),
+      };
+    }
+  }
+
+  return {
+    tokens: { input, output, cacheRead, cacheWrite, total },
+    cost,
+    contextUsage,
+  };
+}
+
 function normalizeInitialPrompt(prompt: string | undefined): string | null {
   if (prompt === undefined) return null;
   const withoutTrailingSubmitChars = prompt.replace(/[\r\n]+$/u, "");
@@ -521,12 +622,13 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     resumeSessionFile?: string;
     initialPrompt?: string;
     fastMode?: boolean;
+    htmlMode?: boolean;
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
       await this.ensureRuntimeFiles();
 
       const existing = this.sessions.get(input.threadId);
-      if (existing?.process) {
+      if (existing?.process || existing?.rpcProcess) {
         this.stopProcess(existing);
       }
 
@@ -537,7 +639,14 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         cols: input.cols,
         rows: input.rows,
         status: "active" as TerminalStatus,
+        mode: input.htmlMode === true ? "rpc" : "terminal",
         process: null,
+        rpcProcess: null,
+        rpcLineCarry: "",
+        rpcRequestSeq: 0,
+        rpcPendingRequests: new Map(),
+        pendingExtensionUiRequest: null,
+        extensionUiState: createEmptyExtensionUiState(),
         unsubscribeData: null,
         unsubscribeExit: null,
         hookStatus: null,
@@ -553,6 +662,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
       entry.cols = input.cols;
       entry.rows = input.rows;
+      entry.mode = input.htmlMode === true ? "rpc" : "terminal";
       entry.status = "active";
       entry.lastInteractedAt = Date.now();
       if (existing) {
@@ -576,9 +686,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       if (resolvedSessionFile) {
         args.push("--session", resolvedSessionFile);
       }
-      const initialPromptFile = await this.createInitialPromptFile(
-        normalizeInitialPrompt(input.initialPrompt),
-      );
+      const normalizedInitialPrompt = normalizeInitialPrompt(input.initialPrompt);
+      const initialPromptFile =
+        entry.mode === "terminal" ? await this.createInitialPromptFile(normalizedInitialPrompt) : null;
 
       try {
         await assertValidCwd(input.cwd);
@@ -597,52 +707,27 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV] = this.processRegistryDir;
         spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV] = String(process.pid);
 
-        const ptyProcess = await Effect.runPromise(
-          this.ptyAdapter.spawn({
-            shell: "pi",
+        if (entry.mode === "rpc") {
+          await this.startRpcProcess(entry, {
+            args,
+            cwd: input.cwd,
+            env: spawnEnv,
+            initialPrompt: normalizedInitialPrompt,
+            resumed: resolvedSessionFile != null,
+            sessionDir,
+          });
+        } else {
+          await this.startTerminalProcess(entry, {
             args,
             cwd: input.cwd,
             cols: input.cols,
             rows: input.rows,
             env: spawnEnv,
-          }),
-        );
-
-        entry.process = ptyProcess;
-        if (initialPromptFile) {
-          const cleanupTimer = setTimeout(() => {
-            void rm(initialPromptFile, { force: true });
-          }, INITIAL_PROMPT_FILE_CLEANUP_MS);
-          cleanupTimer.unref?.();
+            initialPromptFile,
+            resumed: resolvedSessionFile != null,
+            sessionDir,
+          });
         }
-        this.registerProcess(entry, ptyProcess);
-        const registerProcessTimer = setTimeout(() => {
-          this.registerProcess(entry, ptyProcess);
-        }, 100);
-        registerProcessTimer.unref?.();
-
-        entry.unsubscribeData = ptyProcess.onData((data) => {
-          this.onProcessData(entry, data);
-        });
-        const expectedProcess = ptyProcess;
-        entry.unsubscribeExit = ptyProcess.onExit((event) => {
-          if (entry.process !== expectedProcess) return;
-          this.onProcessExit(entry, event);
-        });
-
-        this.logger.info("pi session started", {
-          threadId: input.threadId,
-          pid: ptyProcess.pid,
-          resumed: resolvedSessionFile != null,
-          sessionDir,
-          activeSessionFile: resolvedSessionFile,
-        });
-
-        this.emitEvent({
-          type: "started",
-          threadId: input.threadId,
-          createdAt: new Date().toISOString(),
-        });
 
         const refreshTimer = setTimeout(() => {
           void this.runWithThreadLock(input.threadId, async () => {
@@ -660,7 +745,12 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         }
         this.unregisterProcess(entry);
         entry.status = "new";
+        this.rejectRpcPendingRequests(entry, new Error("Failed to start pi session"));
         entry.process = null;
+        entry.rpcProcess = null;
+        entry.rpcLineCarry = "";
+        entry.pendingExtensionUiRequest = null;
+        entry.extensionUiState = createEmptyExtensionUiState();
         this.stopSessionSyncWatcher(entry);
         const message = error instanceof Error ? error.message : "Failed to start pi session";
         this.logger.error("failed to start pi session", {
@@ -711,10 +801,85 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     return { scrollback: entry.scrollbackBuffer.materialize(), offset, reset: false };
   }
 
+  async promptSession(
+    threadId: string,
+    message: string,
+    streamingBehavior?: "steer" | "followUp",
+  ): Promise<void> {
+    const entry = this.sessions.get(threadId);
+    if (!entry || entry.mode !== "rpc" || !entry.rpcProcess || entry.status !== "active") {
+      throw new Error(`No active html pi session for thread: ${threadId}`);
+    }
+
+    await this.sendRpcCommand(entry, {
+      type: "prompt",
+      message,
+      ...(streamingBehavior ? { streamingBehavior } : {}),
+    });
+    entry.lastInteractedAt = Date.now();
+  }
+
+  async abortSession(threadId: string): Promise<void> {
+    const entry = this.sessions.get(threadId);
+    if (!entry || entry.mode !== "rpc" || !entry.rpcProcess || entry.status !== "active") {
+      throw new Error(`No active html pi session for thread: ${threadId}`);
+    }
+    await this.sendRpcCommand(entry, { type: "abort" });
+    entry.lastInteractedAt = Date.now();
+  }
+
+  async respondExtensionUi(
+    threadId: string,
+    response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean },
+  ): Promise<void> {
+    const entry = this.sessions.get(threadId);
+    if (!entry || entry.mode !== "rpc" || !entry.rpcProcess || entry.status !== "active") {
+      throw new Error(`No active html pi session for thread: ${threadId}`);
+    }
+    if (entry.pendingExtensionUiRequest?.id === response.id) {
+      entry.pendingExtensionUiRequest = null;
+    }
+    this.sendRpcNotification(entry, { type: "extension_ui_response", ...response });
+    entry.lastInteractedAt = Date.now();
+  }
+
+  async getCommands(
+    threadId: string,
+  ): Promise<ReadonlyArray<{ name: string; description?: string; source?: string }>> {
+    const entry = this.sessions.get(threadId);
+    if (!entry || entry.mode !== "rpc" || !entry.rpcProcess || entry.status !== "active") {
+      return [];
+    }
+    const response = await this.sendRpcCommand(entry, { type: "get_commands" });
+    if (!isRecord(response)) return [];
+    const data = response.data;
+    if (!isRecord(data) || !Array.isArray(data.commands)) return [];
+    return data.commands.flatMap((candidate) => {
+      if (!isRecord(candidate) || typeof candidate.name !== "string") return [];
+      return [
+        {
+          name: candidate.name,
+          ...(typeof candidate.description === "string" ? { description: candidate.description } : {}),
+          ...(typeof candidate.source === "string" ? { source: candidate.source } : {}),
+        },
+      ];
+    });
+  }
+
+  async getSessionUsageStats(threadId: string): Promise<PiSessionUsageStats | null> {
+    const entry = this.sessions.get(threadId);
+    if (!entry || entry.mode !== "rpc" || !entry.rpcProcess || entry.status !== "active") {
+      return null;
+    }
+    const response = await this.sendRpcCommand(entry, { type: "get_session_stats" });
+    if (!isRecord(response) || response.success === false) return null;
+    return normalizeSessionUsageStats(response.data);
+  }
+
   writeToSession(threadId: string, data: string): void {
     const entry = this.sessions.get(threadId);
     if (!entry || !entry.process || entry.status !== "active") {
-      throw new Error(`No active session for thread: ${threadId}`);
+      throw new Error(`No active terminal pi session for thread: ${threadId}`);
     }
 
     entry.process.write(data);
@@ -736,13 +901,13 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   resizeSession(threadId: string, cols: number, rows: number): void {
     const entry = this.sessions.get(threadId);
-    if (!entry || !entry.process || entry.status !== "active") {
+    if (!entry || entry.status !== "active" || (!entry.process && !entry.rpcProcess)) {
       throw new Error(`No active session for thread: ${threadId}`);
     }
     entry.cols = cols;
     entry.rows = rows;
     entry.lastInteractedAt = Date.now();
-    entry.process.resize(cols, rows);
+    entry.process?.resize(cols, rows);
   }
 
   getSessionStatus(threadId: string): TerminalStatus {
@@ -765,9 +930,19 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     return entry?.activityStatus ?? null;
   }
 
+  getPendingExtensionUiRequest(threadId: string): Record<string, unknown> | null {
+    const entry = this.sessions.get(threadId);
+    return entry?.pendingExtensionUiRequest ?? null;
+  }
+
+  getExtensionUiState(threadId: string): PiExtensionUiState {
+    const entry = this.sessions.get(threadId);
+    return snapshotExtensionUiState(entry?.extensionUiState ?? createEmptyExtensionUiState());
+  }
+
   async reconcileActiveSessions(maxActive: number): Promise<void> {
     const activeSessions = [...this.sessions.values()].filter(
-      (entry) => entry.status === "active" && entry.process !== null,
+      (entry) => entry.status === "active" && (entry.process !== null || entry.rpcProcess !== null),
     );
     if (activeSessions.length <= maxActive) return;
     const sorted = activeSessions.toSorted((a, b) => a.lastInteractedAt - b.lastInteractedAt);
@@ -784,7 +959,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   async hibernateAll(): Promise<void> {
     const activeSessions = [...this.sessions.values()].filter(
-      (entry) => entry.status === "active" && entry.process !== null,
+      (entry) => entry.status === "active" && (entry.process !== null || entry.rpcProcess !== null),
     );
     const TIMEOUT_MS = 5_000;
     const results = await Promise.race([
@@ -792,7 +967,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       new Promise<PromiseSettledResult<string>[]>((resolve) =>
         setTimeout(() => {
           for (const entry of activeSessions) {
-            if (entry.process) this.stopProcess(entry);
+            if (entry.process || entry.rpcProcess) this.stopProcess(entry);
           }
           resolve(
             activeSessions.map(() => ({
@@ -818,7 +993,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         (entry) =>
           !excludeThreadIds.has(entry.threadId) &&
           entry.status === "active" &&
-          entry.process !== null,
+          (entry.process !== null || entry.rpcProcess !== null),
       )
       .toSorted((left, right) => left.lastInteractedAt - right.lastInteractedAt)
       .map((entry) => entry.threadId);
@@ -894,6 +1069,139 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     const filePath = path.join(this.initialPromptDir, `${randomUUID()}.txt`);
     await writeFile(filePath, prompt, { encoding: "utf8", mode: 0o600 });
     return filePath;
+  }
+
+  private async startTerminalProcess(
+    entry: PiSessionEntry,
+    input: {
+      args: string[];
+      cwd: string;
+      cols: number;
+      rows: number;
+      env: NodeJS.ProcessEnv;
+      initialPromptFile: string | null;
+      resumed: boolean;
+      sessionDir: string;
+    },
+  ): Promise<void> {
+    const ptyProcess = await Effect.runPromise(
+      this.ptyAdapter.spawn({
+        shell: "pi",
+        args: input.args,
+        cwd: input.cwd,
+        cols: input.cols,
+        rows: input.rows,
+        env: input.env,
+      }),
+    );
+
+    entry.process = ptyProcess;
+    if (input.initialPromptFile) {
+      const cleanupTimer = setTimeout(() => {
+        void rm(input.initialPromptFile!, { force: true });
+      }, INITIAL_PROMPT_FILE_CLEANUP_MS);
+      cleanupTimer.unref?.();
+    }
+    this.registerProcess(entry, ptyProcess);
+    const registerProcessTimer = setTimeout(() => {
+      this.registerProcess(entry, ptyProcess);
+    }, 100);
+    registerProcessTimer.unref?.();
+
+    entry.unsubscribeData = ptyProcess.onData((data) => {
+      this.onProcessData(entry, data);
+    });
+    const expectedProcess = ptyProcess;
+    entry.unsubscribeExit = ptyProcess.onExit((event) => {
+      if (entry.process !== expectedProcess) return;
+      this.onProcessExit(entry, event);
+    });
+
+    this.logger.info("pi terminal session started", {
+      threadId: entry.threadId,
+      pid: ptyProcess.pid,
+      resumed: input.resumed,
+      sessionDir: input.sessionDir,
+      activeSessionFile: entry.activeSessionFile,
+    });
+
+    this.emitEvent({
+      type: "started",
+      threadId: entry.threadId,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  private async startRpcProcess(
+    entry: PiSessionEntry,
+    input: {
+      args: string[];
+      cwd: string;
+      env: NodeJS.ProcessEnv;
+      initialPrompt: string | null;
+      resumed: boolean;
+      sessionDir: string;
+    },
+  ): Promise<void> {
+    const args = ["--mode", "rpc", ...input.args];
+    const child = spawn("pi", args, {
+      cwd: input.cwd,
+      env: input.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    entry.rpcProcess = child;
+    entry.rpcLineCarry = "";
+    entry.pendingExtensionUiRequest = null;
+    entry.extensionUiState = createEmptyExtensionUiState();
+    entry.rpcPendingRequests.clear();
+    this.registerRpcProcess(entry, child);
+    const registerProcessTimer = setTimeout(() => {
+      this.registerRpcProcess(entry, child);
+    }, 100);
+    registerProcessTimer.unref?.();
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (entry.rpcProcess !== child) return;
+      this.onRpcStdout(entry, chunk);
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      if (entry.rpcProcess !== child) return;
+      this.onRpcStderr(entry, chunk);
+    });
+    child.on("exit", (exitCode, signal) => {
+      if (entry.rpcProcess !== child) return;
+      this.onRpcProcessExit(entry, { exitCode: exitCode ?? 0, signal: null });
+    });
+    child.on("error", (error) => {
+      if (entry.rpcProcess !== child) return;
+      this.emitEvent({
+        type: "error",
+        threadId: entry.threadId,
+        createdAt: new Date().toISOString(),
+        message: error.message,
+      });
+    });
+
+    this.logger.info("pi rpc session started", {
+      threadId: entry.threadId,
+      pid: child.pid,
+      resumed: input.resumed,
+      sessionDir: input.sessionDir,
+      activeSessionFile: entry.activeSessionFile,
+    });
+
+    this.emitEvent({
+      type: "started",
+      threadId: entry.threadId,
+      createdAt: new Date().toISOString(),
+    });
+
+    if (input.initialPrompt) {
+      await this.sendRpcCommand(entry, { type: "prompt", message: input.initialPrompt });
+    }
   }
 
   private getSessionDirForCwd(cwd: string): string {
@@ -1008,6 +1316,174 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       return { cwd: parsed.cwd };
     } catch {
       return null;
+    }
+  }
+
+  private sendRpcCommand(entry: PiSessionEntry, command: Record<string, unknown>): Promise<unknown> {
+    const child = entry.rpcProcess;
+    if (!child || !child.stdin.writable) {
+      return Promise.reject(new Error(`No active html pi session for thread: ${entry.threadId}`));
+    }
+
+    const id = `clui-${++entry.rpcRequestSeq}`;
+    const payload = JSON.stringify({ id, ...command });
+    return new Promise((resolve, reject) => {
+      entry.rpcPendingRequests.set(id, { resolve, reject });
+      child.stdin.write(`${payload}\n`, (error) => {
+        if (!error) return;
+        entry.rpcPendingRequests.delete(id);
+        reject(error);
+      });
+    });
+  }
+
+  private sendRpcNotification(entry: PiSessionEntry, command: Record<string, unknown>): void {
+    const child = entry.rpcProcess;
+    if (!child || !child.stdin.writable) {
+      throw new Error(`No active html pi session for thread: ${entry.threadId}`);
+    }
+    child.stdin.write(`${JSON.stringify(command)}\n`);
+  }
+
+  private onRpcStdout(entry: PiSessionEntry, chunk: string): void {
+    const combined = entry.rpcLineCarry + chunk;
+    const lines = combined.split("\n");
+    entry.rpcLineCarry = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.endsWith("\r") ? line.slice(0, -1) : line;
+      if (!trimmed.trim()) continue;
+      this.handleRpcLine(entry, trimmed);
+    }
+  }
+
+  private onRpcStderr(entry: PiSessionEntry, chunk: string): void {
+    entry.scrollbackBuffer.append(chunk);
+    this.emitEvent({
+      type: "output",
+      threadId: entry.threadId,
+      createdAt: new Date().toISOString(),
+      data: "",
+      offset: entry.scrollbackBuffer.offset,
+    });
+  }
+
+  private handleRpcLine(entry: PiSessionEntry, line: string): void {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(line) as unknown;
+    } catch {
+      this.logger.warn("pi rpc emitted non-json line", { threadId: entry.threadId, line });
+      return;
+    }
+    if (!isRecord(payload)) return;
+
+    if (payload.type === "response" && typeof payload.id === "string") {
+      const pending = entry.rpcPendingRequests.get(payload.id);
+      if (pending) {
+        entry.rpcPendingRequests.delete(payload.id);
+        if (payload.success === false) {
+          pending.reject(new Error(typeof payload.error === "string" ? payload.error : "pi command failed"));
+        } else {
+          pending.resolve(payload);
+        }
+      }
+      return;
+    }
+
+    this.handleRpcEvent(entry, payload);
+  }
+
+  private handleRpcEvent(entry: PiSessionEntry, event: Record<string, unknown>): void {
+    switch (event.type) {
+      case "agent_start":
+      case "turn_start":
+      case "message_update":
+      case "tool_execution_start":
+      case "tool_execution_update":
+        this.applyHookStatusIfChanged(entry, "working");
+        break;
+      case "agent_end":
+        entry.pendingExtensionUiRequest = null;
+        this.applyHookStatusIfChanged(entry, "completed");
+        break;
+      case "extension_error":
+        entry.pendingExtensionUiRequest = null;
+        this.applyHookStatusIfChanged(entry, "error");
+        break;
+      case "extension_ui_request":
+        if (isExtensionDialogMethod(event.method)) {
+          entry.pendingExtensionUiRequest = event;
+        } else {
+          this.applyExtensionUiRequest(entry, event);
+        }
+        break;
+    }
+
+    const renderableEvent = this.renderableRpcEvent(event);
+    if (renderableEvent) {
+      this.emitEvent({
+        type: "rpcEvent",
+        threadId: entry.threadId,
+        createdAt: new Date().toISOString(),
+        event: renderableEvent,
+      });
+    }
+
+    this.emitEvent({
+      type: "output",
+      threadId: entry.threadId,
+      createdAt: new Date().toISOString(),
+      data: "",
+      offset: entry.scrollbackBuffer.offset,
+    });
+  }
+
+  private applyExtensionUiRequest(entry: PiSessionEntry, event: Record<string, unknown>): void {
+    switch (event.method) {
+      case "setStatus": {
+        const key = normalizeStringValue(event.statusKey);
+        if (!key) return;
+        const text = normalizeStringValue(event.statusText);
+        if (text === null) {
+          entry.extensionUiState.statuses.delete(key);
+        } else {
+          entry.extensionUiState.statuses.set(key, text);
+        }
+        return;
+      }
+      case "setWidget": {
+        const key = normalizeStringValue(event.widgetKey);
+        if (!key) return;
+        const lines = normalizeStringArray(event.widgetLines);
+        if (lines === null) {
+          entry.extensionUiState.widgets.delete(key);
+        } else {
+          entry.extensionUiState.widgets.set(key, {
+            key,
+            lines,
+            placement: extensionWidgetPlacement(event.widgetPlacement),
+          });
+        }
+        return;
+      }
+    }
+  }
+
+  private renderableRpcEvent(event: Record<string, unknown>): Record<string, unknown> | null {
+    switch (event.type) {
+      case "agent_start":
+      case "agent_end":
+        return { type: event.type };
+      case "message_start":
+      case "message_update":
+      case "message_end":
+      case "tool_execution_start":
+      case "tool_execution_update":
+      case "tool_execution_end":
+      case "extension_ui_request":
+        return event;
+      default:
+        return null;
     }
   }
 
@@ -1240,19 +1716,52 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     });
   }
 
+  private onRpcProcessExit(entry: PiSessionEntry, event: PtyExitEvent): void {
+    this.unregisterProcess(entry);
+    this.rejectRpcPendingRequests(entry, new Error("pi rpc session exited"));
+    entry.rpcProcess = null;
+    entry.rpcLineCarry = "";
+    entry.pendingExtensionUiRequest = null;
+    entry.extensionUiState = createEmptyExtensionUiState();
+    entry.status = "dormant";
+    this.stopSessionSyncWatcher(entry);
+    this.resetHookStatus(entry);
+
+    this.logger.info("pi rpc session exited", {
+      threadId: entry.threadId,
+      exitCode: event.exitCode,
+      signal: event.signal,
+      activeSessionFile: entry.activeSessionFile,
+    });
+
+    this.emitEvent({
+      type: "exited",
+      threadId: entry.threadId,
+      createdAt: new Date().toISOString(),
+      exitCode: Number.isInteger(event.exitCode) ? event.exitCode : null,
+    });
+  }
+
   private stopProcess(entry: PiSessionEntry): void {
     this.stopSessionSyncWatcher(entry);
     this.stopJsonlHookWatcher(entry);
     this.unregisterProcess(entry);
     const ptyProcess = entry.process;
-    if (!ptyProcess) {
-      this.resetHookStatus(entry);
-      return;
-    }
+    const rpcProcess = entry.rpcProcess;
     this.cleanupProcessHandles(entry);
     entry.process = null;
+    entry.rpcProcess = null;
+    entry.rpcLineCarry = "";
+    entry.pendingExtensionUiRequest = null;
+    entry.extensionUiState = createEmptyExtensionUiState();
+    this.rejectRpcPendingRequests(entry, new Error("pi session stopped"));
     this.resetHookStatus(entry);
-    this.killProcessWithEscalation(ptyProcess, entry.threadId);
+    if (ptyProcess) {
+      this.killProcessWithEscalation(ptyProcess, entry.threadId);
+    }
+    if (rpcProcess) {
+      this.killRpcProcess(rpcProcess, entry.threadId);
+    }
   }
 
   private cleanupProcessHandles(entry: PiSessionEntry): void {
@@ -1264,16 +1773,25 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   private registerProcess(entry: PiSessionEntry, expectedProcess: PtyProcess): void {
     if (entry.process !== expectedProcess || entry.status !== "active") return;
+    this.writeProcessRegistryEntry(entry, expectedProcess.pid);
+  }
+
+  private registerRpcProcess(entry: PiSessionEntry, expectedProcess: ChildProcessWithoutNullStreams): void {
+    if (entry.rpcProcess !== expectedProcess || entry.status !== "active" || !expectedProcess.pid) return;
+    this.writeProcessRegistryEntry(entry, expectedProcess.pid);
+  }
+
+  private writeProcessRegistryEntry(entry: PiSessionEntry, pid: number): void {
     try {
       writeSessionProcessRegistryEntry(this.processRegistryDir, {
         harness: "pi",
         threadId: entry.threadId,
-        pid: expectedProcess.pid,
+        pid,
       });
     } catch (error) {
       this.logger.warn("failed to register pi session process", {
         threadId: entry.threadId,
-        pid: expectedProcess.pid,
+        pid,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -1296,6 +1814,40 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     if (!timer) return;
     clearTimeout(timer);
     this.killEscalationTimers.delete(process);
+  }
+
+  private rejectRpcPendingRequests(entry: PiSessionEntry, error: Error): void {
+    for (const pending of entry.rpcPendingRequests.values()) {
+      pending.reject(error);
+    }
+    entry.rpcPendingRequests.clear();
+  }
+
+  private killRpcProcess(rpcProcess: ChildProcessWithoutNullStreams, threadId: string): void {
+    try {
+      rpcProcess.kill("SIGTERM");
+    } catch (error) {
+      this.logger.warn("failed to kill pi rpc process", {
+        threadId,
+        signal: "SIGTERM",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (rpcProcess.killed) return;
+      try {
+        rpcProcess.kill("SIGKILL");
+      } catch (error) {
+        this.logger.warn("failed to force-kill pi rpc process", {
+          threadId,
+          signal: "SIGKILL",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }, this.processKillGraceMs);
+    timer.unref?.();
   }
 
   private killProcessWithEscalation(ptyProcess: PtyProcess, threadId: string): void {
@@ -1369,6 +1921,27 @@ export const PiSessionManagerLive = Layer.effect(
         }),
       getScrollback: (threadId, sinceOffset) =>
         Effect.sync(() => runtime.getScrollback(threadId, sinceOffset)),
+      promptSession: (threadId, message, streamingBehavior) =>
+        Effect.tryPromise({
+          try: () => runtime.promptSession(threadId, message, streamingBehavior),
+          catch: (cause) => new PiSessionError({ message: "Failed to send pi prompt", cause }),
+        }),
+      abortSession: (threadId) =>
+        Effect.tryPromise({
+          try: () => runtime.abortSession(threadId),
+          catch: (cause) => new PiSessionError({ message: "Failed to abort pi session", cause }),
+        }),
+      respondExtensionUi: (threadId, response) =>
+        Effect.tryPromise({
+          try: () => runtime.respondExtensionUi(threadId, response),
+          catch: (cause) =>
+            new PiSessionError({ message: "Failed to answer pi UI prompt", cause }),
+        }),
+      getCommands: (threadId) =>
+        Effect.tryPromise({
+          try: () => runtime.getCommands(threadId),
+          catch: (cause) => new PiSessionError({ message: "Failed to list pi commands", cause }),
+        }),
       writeToSession: (threadId, data) =>
         Effect.try({
           try: () => runtime.writeToSession(threadId, data),
@@ -1390,6 +1963,14 @@ export const PiSessionManagerLive = Layer.effect(
       getSessionHookStatus: (threadId) => Effect.sync(() => runtime.getSessionHookStatus(threadId)),
       getSessionActivityStatus: (threadId) =>
         Effect.sync(() => runtime.getSessionActivityStatus(threadId)),
+      getPendingExtensionUiRequest: (threadId) =>
+        Effect.sync(() => runtime.getPendingExtensionUiRequest(threadId)),
+      getExtensionUiState: (threadId) => Effect.sync(() => runtime.getExtensionUiState(threadId)),
+      getSessionUsageStats: (threadId) =>
+        Effect.tryPromise({
+          try: () => runtime.getSessionUsageStats(threadId),
+          catch: (cause) => new PiSessionError({ message: "Failed to get pi usage stats", cause }),
+        }),
       reconcileActiveSessions: (maxActive) =>
         Effect.promise(() => runtime.reconcileActiveSessions(maxActive)),
       setMaxActiveSessions: (maxActive) =>

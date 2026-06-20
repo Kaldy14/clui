@@ -1,4 +1,4 @@
-import { type NativeApi, type ThreadId } from "@clui/contracts";
+import { type NativeApi, type PiRenderMode, type ThreadId } from "@clui/contracts";
 import type { ClaudeSessionEvent, PiSessionEvent } from "@clui/contracts";
 import { PlayIcon, TerminalIcon } from "lucide-react";
 
@@ -40,6 +40,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import type { Thread } from "../types";
 import type { EnvMode } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
+import PiHtmlThreadView from "./PiHtmlThreadView";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { runProjectScriptInTerminal } from "./TerminalToolbar";
@@ -108,6 +109,7 @@ function startHarnessSession(
     fresh?: boolean;
     yoloMode?: boolean;
     piFastMode?: boolean;
+    piHtmlMode?: boolean;
     initialPrompt?: string;
   },
 ): Promise<void> {
@@ -122,6 +124,7 @@ function startHarnessSession(
       ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
       ...(input.initialPrompt !== undefined ? { initialPrompt: input.initialPrompt } : {}),
       ...(input.piFastMode ? { fastMode: true } : {}),
+      ...(input.piHtmlMode ? { htmlMode: true } : {}),
     });
   }
 
@@ -188,7 +191,13 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   const piFastMode = useTerminalStateStore(
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piFastMode,
   );
+  const draftPiRenderMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode ?? "terminal",
+  );
+  const piRenderMode = thread.piRenderMode === "html" || draftPiRenderMode === "html" ? "html" : "terminal";
   const setPiFastMode = useTerminalStateStore((s) => s.setPiFastMode);
+  const setDraftPiRenderMode = useTerminalStateStore((s) => s.setPiRenderMode);
+  const setThreadPiRenderMode = useStore((s) => s.setThreadPiRenderMode);
   const [envMode, setEnvModeState] = useState<EnvMode>("local");
   const [localFastMode, setLocalFastMode] = useState<boolean>(piFastMode);
   const [prDialogOpen, setPrDialogOpen] = useState(false);
@@ -310,6 +319,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         rows: 40,
         yoloMode: dangerouslySkipPermissions,
         piFastMode: thread.harness === "pi" ? localFastMode : false,
+        piHtmlMode: thread.harness === "pi" && piRenderMode === "html",
         ...(initialPromptSentByStart ? { initialPrompt } : {}),
       });
       if (hasInitialPrompt && !initialPromptSentByStart) {
@@ -332,6 +342,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     hasInitialPrompt,
     initialPrompt,
     localFastMode,
+    piRenderMode,
     clearNewThreadPromptDraft,
   ]);
 
@@ -416,6 +427,24 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       });
     },
     [setThreadHarness, thread.terminalStatus, threadId],
+  );
+
+  const handlePiRenderModeChange = useCallback(
+    (renderMode: PiRenderMode) => {
+      if (thread.terminalStatus !== "new") return;
+      const api = readNativeApi();
+      setDraftPiRenderMode(threadId, renderMode);
+      setThreadPiRenderMode(threadId, renderMode);
+      requestAnimationFrame(() => initialPromptRef.current?.focus({ preventScroll: true }));
+      if (!api) return;
+      void api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: newCommandId(),
+        threadId,
+        piRenderMode: renderMode,
+      });
+    },
+    [setDraftPiRenderMode, setThreadPiRenderMode, thread.terminalStatus, threadId],
   );
 
   // Auto-focus the first-prompt textarea so new threads are keyboard-first.
@@ -595,6 +624,31 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                   </button>
                 ))}
               </div>
+              {thread.harness === "pi" && (
+                <div
+                  role="group"
+                  aria-label="pi render mode"
+                  className="flex items-center rounded-md bg-muted/60 p-0.5"
+                >
+                  {[
+                    { value: "terminal" as const, label: "Terminal" },
+                    { value: "html" as const, label: "HTML" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handlePiRenderModeChange(option.value)}
+                      className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors ${
+                        piRenderMode === option.value
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground/70 hover:text-foreground"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {thread.harness === "pi" && activeProjectCwd && (
                 <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs font-medium text-muted-foreground/70 transition-colors hover:text-foreground dark:border-border/20">
                   <Checkbox
@@ -891,6 +945,89 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
         )}
       </div>
     </div>
+  );
+}
+
+function DormantPiHtmlView({ threadId, thread }: { threadId: ThreadId; thread: Thread }) {
+  const resumeButtonRef = useRef<HTMLButtonElement>(null);
+  const [resuming, setResuming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const project = useStore((s) => s.projects.find((p) => p.id === thread.projectId));
+  const cwd = thread.worktreePath ?? project?.cwd ?? "";
+  const yoloMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
+  );
+  const piFastMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piFastMode,
+  );
+
+  useEffect(() => {
+    resumeButtonRef.current?.focus();
+  }, []);
+
+  const handleResume = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !cwd) return;
+    setResuming(true);
+    setError(null);
+    try {
+      await startHarnessSession(api, thread, {
+        cwd,
+        cols: 120,
+        rows: 40,
+        yoloMode,
+        piFastMode,
+        piHtmlMode: true,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resume session");
+      setResuming(false);
+    }
+  }, [thread, cwd, yoloMode, piFastMode]);
+
+  useEffect(() => {
+    if (thread.archivedAt !== null) return;
+    const lastAttempt = autoResumeLastAttempt.get(threadId) ?? 0;
+    if (!resuming && cwd && Date.now() - lastAttempt > AUTO_RESUME_COOLDOWN_MS) {
+      pruneAutoResumeMap();
+      autoResumeLastAttempt.set(threadId, Date.now());
+      handleResume();
+    }
+  }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <PiHtmlThreadView
+      threadId={threadId}
+      footer={
+        <div className="flex shrink-0 items-center justify-center gap-3 border-t border-border/40 bg-card/60 px-4 py-2 backdrop-blur-sm dark:border-border/20 dark:bg-card/40">
+          <button
+            ref={resumeButtonRef}
+            type="button"
+            disabled={resuming || !cwd}
+            aria-busy={resuming}
+            onClick={handleResume}
+            className="inline-flex items-center gap-1.5 rounded-md border border-primary/60 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50 dark:border-primary/40 dark:bg-primary/8 dark:text-primary/90"
+          >
+            {resuming ? (
+              <>
+                <span className="size-2.5 animate-spin rounded-full border border-primary/30 border-t-primary" />
+                Resuming...
+              </>
+            ) : (
+              <>
+                <PlayIcon className="size-3" aria-hidden="true" />
+                Resume
+              </>
+            )}
+          </button>
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      }
+    />
   );
 }
 
@@ -1851,14 +1988,43 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
 export default function ThreadTerminalView({ threadId }: { threadId: ThreadId }) {
   const thread = useStore((s) => s.threads.find((t) => t.id === threadId));
+  const setThreadPiRenderMode = useStore((s) => s.setThreadPiRenderMode);
+  const localPiRenderMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode ?? "terminal",
+  );
+
+  useEffect(() => {
+    if (!thread || thread.harness !== "pi") return;
+    if (thread.piRenderMode === "html" || localPiRenderMode !== "html") return;
+    const api = readNativeApi();
+    setThreadPiRenderMode(threadId, "html");
+    if (!api) return;
+    void api.orchestration.dispatchCommand({
+      type: "thread.meta.update",
+      commandId: newCommandId(),
+      threadId,
+      piRenderMode: "html",
+    });
+  }, [localPiRenderMode, setThreadPiRenderMode, thread, threadId]);
 
   if (!thread) return null;
 
+  const piRenderMode = thread.piRenderMode === "html" || localPiRenderMode === "html" ? "html" : "terminal";
+  const usePiHtml = thread.harness === "pi" && piRenderMode === "html";
+
   switch (thread.terminalStatus) {
     case "active":
-      return <ActiveTerminalView threadId={threadId} thread={thread} />;
+      return usePiHtml ? (
+        <PiHtmlThreadView threadId={threadId} showComposer />
+      ) : (
+        <ActiveTerminalView threadId={threadId} thread={thread} />
+      );
     case "dormant":
-      return <DormantTerminalView threadId={threadId} thread={thread} />;
+      return usePiHtml ? (
+        <DormantPiHtmlView threadId={threadId} thread={thread} />
+      ) : (
+        <DormantTerminalView threadId={threadId} thread={thread} />
+      );
     case "new":
     default:
       return <NewThreadView threadId={threadId} thread={thread} />;

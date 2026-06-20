@@ -615,4 +615,86 @@ describe("PiSessionManagerRuntime", () => {
       expect(statuses.at(-1)).toBe("working");
     });
   });
+
+  it("keeps RPC extension status and widget updates separate from pending dialogs", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+
+    await runtime.startSession({
+      threadId: "thread-1",
+      cwd,
+      cols: 100,
+      rows: 24,
+    });
+
+    const runtimeInternals = runtime as unknown as {
+      sessions: Map<string, unknown>;
+      handleRpcEvent: (entry: unknown, event: Record<string, unknown>) => void;
+    };
+    const entry = runtimeInternals.sessions.get("thread-1");
+    expect(entry).toBeDefined();
+
+    runtimeInternals.handleRpcEvent(entry, {
+      type: "extension_ui_request",
+      id: "status-1",
+      method: "setStatus",
+      statusKey: "codex-usage",
+      statusText: "Codex ok",
+    });
+    runtimeInternals.handleRpcEvent(entry, {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "subagent-async",
+      widgetLines: ["Async subagents", "- abc running"],
+      widgetPlacement: "belowEditor",
+    });
+
+    expect(runtime.getPendingExtensionUiRequest("thread-1")).toBeNull();
+    expect(runtime.getExtensionUiState("thread-1")).toEqual({
+      statuses: { "codex-usage": "Codex ok" },
+      widgets: [
+        {
+          key: "subagent-async",
+          lines: ["Async subagents", "- abc running"],
+          placement: "belowEditor",
+        },
+      ],
+    });
+
+    runtimeInternals.handleRpcEvent(entry, {
+      type: "extension_ui_request",
+      id: "dialog-1",
+      method: "select",
+      title: "Choose",
+      options: ["Alpha", "Beta"],
+    });
+
+    expect(runtime.getPendingExtensionUiRequest("thread-1")).toEqual({
+      type: "extension_ui_request",
+      id: "dialog-1",
+      method: "select",
+      title: "Choose",
+      options: ["Alpha", "Beta"],
+    });
+    expect(runtime.getExtensionUiState("thread-1").statuses).toEqual({ "codex-usage": "Codex ok" });
+
+    runtimeInternals.handleRpcEvent(entry, {
+      type: "extension_ui_request",
+      id: "status-2",
+      method: "setStatus",
+      statusKey: "codex-usage",
+    });
+    runtimeInternals.handleRpcEvent(entry, {
+      type: "extension_ui_request",
+      id: "widget-2",
+      method: "setWidget",
+      widgetKey: "subagent-async",
+    });
+
+    expect(runtime.getPendingExtensionUiRequest("thread-1")?.id).toBe("dialog-1");
+    expect(runtime.getExtensionUiState("thread-1")).toEqual({ statuses: {}, widgets: [] });
+  });
 });

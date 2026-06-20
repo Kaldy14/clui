@@ -55,6 +55,9 @@ export const ProviderSandboxMode = Schema.Literals([
 export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const DEFAULT_CODING_HARNESS: CodingHarness = "claudeCode";
+export const PiRenderMode = Schema.Literals(["terminal", "html"] as const);
+export type PiRenderMode = typeof PiRenderMode.Type;
+export const DEFAULT_PI_RENDER_MODE: PiRenderMode = "terminal";
 const CodexProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyString),
   homePath: Schema.optional(TrimmedNonEmptyString),
@@ -321,6 +324,7 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
+  piRenderMode: Schema.optional(PiRenderMode),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -408,6 +412,7 @@ const ThreadCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
+  piRenderMode: Schema.optional(PiRenderMode),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -430,6 +435,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   harness: Schema.optional(CodingHarness),
+  piRenderMode: Schema.optional(PiRenderMode),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),
@@ -748,6 +754,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
+  piRenderMode: Schema.optional(PiRenderMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -768,6 +775,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   harness: Schema.optional(CodingHarness),
+  piRenderMode: Schema.optional(PiRenderMode),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleSource: Schema.optional(TitleSource),

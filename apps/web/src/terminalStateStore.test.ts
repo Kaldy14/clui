@@ -31,6 +31,7 @@ describe("terminalStateStore actions", () => {
       activeTerminalGroupId: "group-default",
       yoloMode: true,
       piFastMode: false,
+      piRenderMode: "terminal",
       newThreadPromptDraft: "",
     });
   });
@@ -83,6 +84,20 @@ describe("terminalStateStore actions", () => {
       selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
         .piFastMode,
     ).toBe(false);
+  });
+
+  it("tracks pi render mode per thread", () => {
+    const store = useTerminalStateStore.getState();
+    store.setPiRenderMode(THREAD_ID, "html");
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .piRenderMode,
+    ).toBe("html");
+
+    store.setPiRenderMode(THREAD_ID, "terminal");
+
+    expect(useTerminalStateStore.getState().terminalStateByThreadId[THREAD_ID]).toBeUndefined();
   });
 
   it("tracks and clears new-thread prompt drafts", () => {

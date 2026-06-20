@@ -5,7 +5,14 @@
  * hibernate, output fanout, and session state transitions.
  */
 import { Effect, Schema, ServiceMap } from "effect";
-import type { AgentActivityStatus, ClaudeHookStatus, TerminalStatus, PiSessionEvent } from "@clui/contracts";
+import type {
+  AgentActivityStatus,
+  ClaudeHookStatus,
+  PiExtensionUiState,
+  PiSessionEvent,
+  PiSessionUsageStats,
+  TerminalStatus,
+} from "@clui/contracts";
 
 export class PiSessionError extends Schema.TaggedErrorClass<PiSessionError>()(
   "PiSessionError",
@@ -33,12 +40,26 @@ export interface PiSessionManagerShape {
     resumeSessionFile?: string;
     initialPrompt?: string;
     fastMode?: boolean;
+    htmlMode?: boolean;
   }) => Effect.Effect<void, PiSessionError>;
   readonly hibernateSession: (threadId: string) => Effect.Effect<void, PiSessionError>;
   readonly getScrollback: (
     threadId: string,
     sinceOffset?: number,
   ) => Effect.Effect<{ scrollback: string | null; offset: number; reset: boolean }>;
+  readonly promptSession: (
+    threadId: string,
+    message: string,
+    streamingBehavior?: "steer" | "followUp",
+  ) => Effect.Effect<void, PiSessionError>;
+  readonly abortSession: (threadId: string) => Effect.Effect<void, PiSessionError>;
+  readonly respondExtensionUi: (
+    threadId: string,
+    response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean },
+  ) => Effect.Effect<void, PiSessionError>;
+  readonly getCommands: (
+    threadId: string,
+  ) => Effect.Effect<ReadonlyArray<{ name: string; description?: string; source?: string }>, PiSessionError>;
   readonly writeToSession: (threadId: string, data: string) => Effect.Effect<void, PiSessionError>;
   /** After a non-empty first line is submitted via `pi.write` (newline seen). */
   readonly notifyPromptSubmitted: (threadId: string) => Effect.Effect<void, PiSessionError>;
@@ -53,6 +74,9 @@ export interface PiSessionManagerShape {
   readonly getSessionActivityStatus: (
     threadId: string,
   ) => Effect.Effect<AgentActivityStatus | null>;
+  readonly getPendingExtensionUiRequest: (threadId: string) => Effect.Effect<Record<string, unknown> | null>;
+  readonly getExtensionUiState: (threadId: string) => Effect.Effect<PiExtensionUiState>;
+  readonly getSessionUsageStats: (threadId: string) => Effect.Effect<PiSessionUsageStats | null, PiSessionError>;
   readonly reconcileActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;

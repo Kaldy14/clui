@@ -16,6 +16,8 @@ import {
   isProjectTerminalThreadId,
 } from "./types";
 
+export type PiRenderMode = "terminal" | "html";
+
 interface ThreadTerminalState {
   terminalOpen: boolean;
   terminalHeight: number;
@@ -28,6 +30,8 @@ interface ThreadTerminalState {
   yoloMode: boolean;
   /** When true, pi sessions for this thread use Fast mode. */
   piFastMode: boolean;
+  /** Controls whether pi thread output renders through xterm or HTML. */
+  piRenderMode: PiRenderMode;
   /** Draft text for the new-thread first prompt. */
   newThreadPromptDraft: string;
 }
@@ -156,6 +160,7 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
     left.activeTerminalGroupId === right.activeTerminalGroupId &&
     left.yoloMode === right.yoloMode &&
     left.piFastMode === right.piFastMode &&
+    left.piRenderMode === right.piRenderMode &&
     left.newThreadPromptDraft === right.newThreadPromptDraft &&
     arraysEqual(left.terminalIds, right.terminalIds) &&
     arraysEqual(left.runningTerminalIds, right.runningTerminalIds) &&
@@ -167,6 +172,7 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
 const DEFAULT_YOLO_MODE = true;
 /** Fast mode defaults OFF; only consumed by pi starts. */
 const DEFAULT_PI_FAST_MODE = false;
+const DEFAULT_PI_RENDER_MODE: PiRenderMode = "terminal";
 
 const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   terminalOpen: false,
@@ -183,6 +189,7 @@ const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   activeTerminalGroupId: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
   yoloMode: DEFAULT_YOLO_MODE,
   piFastMode: DEFAULT_PI_FAST_MODE,
+  piRenderMode: DEFAULT_PI_RENDER_MODE,
   newThreadPromptDraft: "",
 });
 
@@ -194,6 +201,7 @@ function createDefaultThreadTerminalState(): ThreadTerminalState {
     terminalGroups: copyTerminalGroups(DEFAULT_THREAD_TERMINAL_STATE.terminalGroups),
     yoloMode: DEFAULT_YOLO_MODE,
     piFastMode: DEFAULT_PI_FAST_MODE,
+    piRenderMode: DEFAULT_PI_RENDER_MODE,
     newThreadPromptDraft: "",
   };
 }
@@ -235,6 +243,7 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
       fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
     yoloMode: state.yoloMode ?? DEFAULT_YOLO_MODE,
     piFastMode: state.piFastMode ?? DEFAULT_PI_FAST_MODE,
+    piRenderMode: state.piRenderMode === "html" ? "html" : DEFAULT_PI_RENDER_MODE,
     newThreadPromptDraft: state.newThreadPromptDraft ?? "",
   };
   return threadTerminalStateEqual(state, normalized) ? state : normalized;
@@ -427,6 +436,7 @@ function closeThreadTerminal(state: ThreadTerminalState, terminalId: string): Th
     activeTerminalGroupId: nextActiveTerminalGroupId,
     yoloMode: normalized.yoloMode,
     piFastMode: normalized.piFastMode,
+    piRenderMode: normalized.piRenderMode,
     newThreadPromptDraft: normalized.newThreadPromptDraft,
   });
 }
@@ -509,6 +519,7 @@ interface TerminalStateStoreState {
   ) => void;
   setYoloMode: (threadId: ThreadId, yolo: boolean) => void;
   setPiFastMode: (threadId: ThreadId, fastMode: boolean) => void;
+  setPiRenderMode: (threadId: ThreadId, renderMode: PiRenderMode) => void;
   setNewThreadPromptDraft: (threadId: ThreadId, draft: string) => void;
   clearNewThreadPromptDraft: (threadId: ThreadId) => void;
   clearTerminalState: (threadId: ThreadId) => void;
@@ -590,6 +601,12 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
             const normalized = normalizeThreadTerminalState(state);
             if (normalized.piFastMode === fastMode) return normalized;
             return { ...normalized, piFastMode: fastMode };
+          }),
+        setPiRenderMode: (threadId, renderMode) =>
+          updateTerminal(threadId, (state) => {
+            const normalized = normalizeThreadTerminalState(state);
+            if (normalized.piRenderMode === renderMode) return normalized;
+            return { ...normalized, piRenderMode: renderMode };
           }),
         setNewThreadPromptDraft: (threadId, draft) =>
           updateTerminal(threadId, (state) => {

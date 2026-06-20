@@ -1,6 +1,8 @@
 import type { Terminal } from "@xterm/xterm";
 import { terminalThemeFromApp } from "./terminalTheme";
 
+export const TERMINAL_LINE_HEIGHT = 1.2;
+
 /**
  * Keep the host DOM surface in sync with the terminal theme.
  *

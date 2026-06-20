@@ -2,6 +2,7 @@ import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
   DEFAULT_CODING_HARNESS,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_PI_RENDER_MODE,
   type CodingHarness,
   type ProviderKind,
   ProjectId,
@@ -11,6 +12,7 @@ import {
   type ClaudeHookStatus,
   type AgentActivityStatus,
   type TerminalStatus,
+  type PiRenderMode,
 } from "@clui/contracts";
 import {
   getModelOptions,
@@ -342,6 +344,7 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.title !== incoming.title) return true;
   if (existing.model !== incoming.model) return true;
   if (existing.harness !== incoming.harness) return true;
+  if (existing.piRenderMode !== incoming.piRenderMode) return true;
   if (existing.branch !== incoming.branch) return true;
   if (existing.worktreePath !== incoming.worktreePath) return true;
   if (existing.runtimeMode !== incoming.runtimeMode) return true;
@@ -518,6 +521,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           thread.model,
         ),
         harness: thread.harness ?? DEFAULT_CODING_HARNESS,
+        piRenderMode: thread.piRenderMode ?? DEFAULT_PI_RENDER_MODE,
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
         session: thread.session
@@ -726,6 +730,7 @@ export function addOptimisticThread(
     title: input.title,
     model: "",
     harness: input.harness,
+    piRenderMode: DEFAULT_PI_RENDER_MODE,
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,
@@ -798,6 +803,18 @@ export function setThreadHarness(
   const threads = updateThread(state.threads, threadId, (thread) => {
     if (thread.harness === harness) return thread;
     return { ...thread, harness };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setThreadPiRenderMode(
+  state: AppState,
+  threadId: ThreadId,
+  piRenderMode: PiRenderMode,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.piRenderMode === piRenderMode) return thread;
+    return { ...thread, piRenderMode };
   });
   return threads === state.threads ? state : { ...state, threads };
 }
@@ -923,6 +940,7 @@ interface AppStore extends AppState {
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
   setThreadHarness: (threadId: ThreadId, harness: CodingHarness) => void;
+  setThreadPiRenderMode: (threadId: ThreadId, piRenderMode: PiRenderMode) => void;
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
   setThreadArchived: (threadId: ThreadId, archivedAt: string | null) => void;
@@ -969,6 +987,8 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
   setThreadHarness: (threadId, harness) =>
     set((state) => setThreadHarness(state, threadId, harness)),
+  setThreadPiRenderMode: (threadId, piRenderMode) =>
+    set((state) => setThreadPiRenderMode(state, threadId, piRenderMode)),
   setProjectOrder: (order) => set((state) => setProjectOrder(state, order)),
   addOptimisticThread: (input) => set((state) => addOptimisticThread(state, input)),
   removeThread: (threadId) =>

@@ -426,6 +426,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             title: event.payload.title,
             model: event.payload.model,
             harness: event.payload.harness,
+            piRenderMode: event.payload.piRenderMode ?? "terminal",
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
@@ -462,6 +463,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             ...(!skipTitle && event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
             ...(event.payload.harness !== undefined ? { harness: event.payload.harness } : {}),
+            ...(event.payload.piRenderMode !== undefined ? { piRenderMode: event.payload.piRenderMode } : {}),
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
