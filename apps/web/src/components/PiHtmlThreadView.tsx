@@ -63,7 +63,12 @@ const PI_DARK_COLORS = {
   mdCodeBlock: "#b5bd68",
   mdHeading: "#f0c674",
   mdLink: "#81a2be",
+  thinkingOff: "#505050",
+  thinkingMinimal: "#6e6e6e",
+  thinkingLow: "#5f87af",
+  thinkingMedium: "#81a2be",
   thinkingHigh: "#b294bb",
+  thinkingXhigh: "#d183e8",
 } as const;
 
 const PI_LIGHT_COLORS = {
@@ -88,7 +93,12 @@ const PI_LIGHT_COLORS = {
   mdCodeBlock: "#588458",
   mdHeading: "#9a7326",
   mdLink: "#547da7",
+  thinkingOff: "#b0b0b0",
+  thinkingMinimal: "#767676",
+  thinkingLow: "#547da7",
+  thinkingMedium: "#5a8080",
   thinkingHigh: "#875f87",
+  thinkingXhigh: "#8b008b",
 } as const;
 
 type PiHtmlColors = { readonly [Key in keyof typeof PI_DARK_COLORS]: string };
@@ -133,7 +143,7 @@ type Suggestion =
   | { type: "command"; value: string; label: string; description?: string }
   | { type: "file"; value: string; label: string; description?: string };
 type PiModelOption = { provider: string; id: string; label: string };
-type PiThinkingLevel = "off" | "low" | "medium" | "high" | "ultrathink" | string;
+type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | string;
 
 interface PiHtmlThreadViewProps {
   threadId: ThreadId;
@@ -377,15 +387,39 @@ function modelOptionFromUnknown(value: unknown): PiModelOption | null {
   return { provider: value.provider, id: value.id, label: `${value.provider}/${value.id}` };
 }
 
+function normalizeThinkingLevel(level: string): PiThinkingLevel | null {
+  const normalized = level.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function thinkingLevelFromState(value: unknown): PiThinkingLevel | null {
   if (!isRecord(value) || typeof value.thinkingLevel !== "string") return null;
-  const level = value.thinkingLevel.trim();
-  return level.length > 0 ? level : null;
+  return normalizeThinkingLevel(value.thinkingLevel);
 }
 
 function formatThinkingLevel(level: PiThinkingLevel | null): string | null {
   if (!level) return null;
   return `think ${level}`;
+}
+
+function thinkingBorderColor(level: PiThinkingLevel | null, piTheme: PiHtmlTheme): string {
+  switch (level) {
+    case "minimal":
+      return piTheme.thinkingMinimal;
+    case "low":
+      return piTheme.thinkingLow;
+    case "medium":
+    case "normal":
+      return piTheme.thinkingMedium;
+    case "high":
+      return piTheme.thinkingHigh;
+    case "xhigh":
+    case "ultrathink":
+      return piTheme.thinkingXhigh;
+    case "off":
+    default:
+      return piTheme.thinkingOff;
+  }
 }
 
 function stringifyInput(value: unknown): string {
@@ -1058,7 +1092,7 @@ function PiTextBlock(props: {
   if (!props.text.trim()) return null;
   return (
     <div
-      className={`m-0 flex min-w-0 flex-col gap-[0.35em] break-words text-[1em] ${props.className ?? ""}`}
+      className={`m-0 min-w-0 break-words text-[1em] ${props.className ?? ""}`}
       style={{ color: props.color, fontFamily: "inherit", fontSize: "1em", lineHeight: TERMINAL_LINE_HEIGHT }}
     >
       <ReactMarkdown components={components} remarkPlugins={[remarkGfm]}>
@@ -1603,6 +1637,32 @@ function nextWordEnd(value: string, cursor: number): number {
   while (index < value.length && /\s/u.test(value[index] ?? "")) index += 1;
   while (index < value.length && !/\s/u.test(value[index] ?? "")) index += 1;
   return index;
+}
+
+function extendSelectionByWord(value: string, selection: TextSelectionDraft, direction: "left" | "right"): TextSelectionDraft {
+  const collapsed = selection.start === selection.end;
+  const anchor = collapsed
+    ? selection.start
+    : selection.direction === "backward"
+      ? selection.end
+      : selection.direction === "forward"
+        ? selection.start
+        : direction === "left"
+          ? selection.end
+          : selection.start;
+  const focus = collapsed
+    ? selection.start
+    : selection.direction === "backward"
+      ? selection.start
+      : selection.direction === "forward"
+        ? selection.end
+        : direction === "left"
+          ? selection.start
+          : selection.end;
+  const nextFocus = direction === "left" ? previousWordStart(value, focus) : nextWordEnd(value, focus);
+  if (nextFocus < anchor) return { start: nextFocus, end: anchor, direction: "backward" };
+  if (nextFocus > anchor) return { start: anchor, end: nextFocus, direction: "forward" };
+  return { start: anchor, end: anchor, direction: "none" };
 }
 
 function clampSelectionForValue(value: string, selection: TextSelectionDraft): TextSelectionDraft {
@@ -2609,6 +2669,16 @@ function usePiBusyFrame(active: boolean): string {
   return PI_HTML_BUSY_FRAMES[frameIndex] ?? PI_HTML_BUSY_FRAMES[0];
 }
 
+function PiThinkingPlaceholder(props: { active: boolean; piTheme: PiHtmlTheme }) {
+  const busyFrame = usePiBusyFrame(props.active);
+  if (!props.active) return null;
+  return (
+    <pre className="m-0 whitespace-pre-wrap" style={{ color: props.piTheme.muted, fontStyle: "italic", lineHeight: TERMINAL_LINE_HEIGHT }}>
+      {`${busyFrame} thinking…`}
+    </pre>
+  );
+}
+
 function PiHtmlFooterStatus(props: {
   threadId: ThreadId;
   theme: ITheme;
@@ -2706,6 +2776,7 @@ function PiHtmlComposer(props: {
   const suggestions = activeSuggestionToken && activeSuggestionToken === dismissedSuggestionToken ? [] : rawSuggestions;
   const history = useMemo(() => mergePromptHistory(localHistory, props.history), [localHistory, props.history]);
   const thinkingLevelLabel = formatThinkingLevel(thinkingLevel);
+  const composerRuleColor = thinkingBorderColor(thinkingLevel, props.piTheme);
 
   const autosizeComposer = useCallback(() => {
     const textarea = textareaRef.current;
@@ -3231,22 +3302,24 @@ function PiHtmlComposer(props: {
       }
       if (start !== end) return false;
 
+      const plainArrowLeft = event.key === "ArrowLeft" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+      const plainArrowRight = event.key === "ArrowRight" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
       const inside = markerContainingOffset(current, start);
-      if (inside && (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Backspace" || event.key === "Delete")) {
+      if (inside && (plainArrowLeft || plainArrowRight || event.key === "Backspace" || event.key === "Delete")) {
         event.preventDefault();
-        const cursor = event.key === "ArrowLeft" || event.key === "Backspace" ? inside.start : inside.end;
+        const cursor = plainArrowLeft || event.key === "Backspace" ? inside.start : inside.end;
         setComposerSelection({ start: cursor, end: cursor, direction: "none" });
         return true;
       }
 
       const before = markerBeforeCursor(current, start);
       const after = markerAfterCursor(current, start);
-      if (event.key === "ArrowLeft" && before) {
+      if (plainArrowLeft && before) {
         event.preventDefault();
         setComposerSelection({ start: before.index ?? 0, end: before.index ?? 0, direction: "none" });
         return true;
       }
-      if (event.key === "ArrowRight" && after) {
+      if (plainArrowRight && after) {
         event.preventDefault();
         const cursor = (after.index ?? 0) + after[0].length;
         setComposerSelection({ start: cursor, end: cursor, direction: "none" });
@@ -3406,7 +3479,7 @@ function PiHtmlComposer(props: {
     try {
       const result = await runPiRpcCommand("cycle_thinking_level");
       if (isRecord(result) && typeof result.level === "string") {
-        setThinkingLevel(result.level);
+        setThinkingLevel(normalizeThinkingLevel(result.level));
       } else {
         await refreshPiSessionState();
       }
@@ -3506,12 +3579,20 @@ function PiHtmlComposer(props: {
       }
       if (wordLeft) {
         event.preventDefault();
+        if (event.shiftKey) {
+          setComposerSelection(extendSelectionByWord(current, selection, "left"));
+          return true;
+        }
         const cursor = previousWordStart(current, selection.start);
         setComposerSelection({ start: cursor, end: cursor, direction: "none" });
         return true;
       }
       if (wordRight) {
         event.preventDefault();
+        if (event.shiftKey) {
+          setComposerSelection(extendSelectionByWord(current, selection, "right"));
+          return true;
+        }
         const cursor = nextWordEnd(current, selection.end);
         setComposerSelection({ start: cursor, end: cursor, direction: "none" });
         return true;
@@ -3760,11 +3841,11 @@ function PiHtmlComposer(props: {
         </div>
       )}
       <div className="relative">
-        <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: props.piTheme.thinkingHigh, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
+        <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
         {thinkingLevelLabel && (
           <span
             className="absolute right-0 top-0 px-[0.5ch] text-[1em]"
-            style={{ backgroundColor: props.theme.background, color: props.piTheme.thinkingHigh, lineHeight: TERMINAL_LINE_HEIGHT }}
+            style={{ backgroundColor: props.theme.background, color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}
           >
             {thinkingLevelLabel}
           </span>
@@ -3800,7 +3881,7 @@ function PiHtmlComposer(props: {
           }}
         />
       </div>
-      <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: props.piTheme.thinkingHigh, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
+      <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
       <PiHtmlFooterStatus
         threadId={props.threadId}
         theme={props.theme}
@@ -3817,6 +3898,7 @@ function PiHtmlComposer(props: {
 export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
   const { items, liveItems, uiRequest, extensionUiState, editorTextRequest, usageStats, clearUiRequest, loadState, error } = usePiTranscript(props.threadId);
   const { settings } = useAppSettings();
+  const thread = useStore((s) => s.threads.find((t) => t.id === props.threadId));
   const baseTerminalTheme = terminalThemeFromApp();
   const piTheme = piHtmlThemeFromApp(baseTerminalTheme);
   const terminalTheme = piTheme.terminal;
@@ -3832,12 +3914,13 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
   const [searchIndex, setSearchIndex] = useState(0);
   const [toolsExpanded, setToolsExpanded] = useState(false);
   const [thinkingVisible, setThinkingVisible] = useState(true);
-  const visibleItems = useMemo(() => {
-    if (liveItems.length === 0) return mergeToolResultsForDisplay(items);
+  const visibleLiveItems = useMemo(() => {
+    if (liveItems.length === 0) return [];
     const persistedSignatures = new Set(items.map(transcriptSignature));
-    const visibleLiveItems = liveItems.filter((item) => !persistedSignatures.has(transcriptSignature(item)));
-    return mergeToolResultsForDisplay([...items, ...visibleLiveItems]);
+    return liveItems.filter((item) => !persistedSignatures.has(transcriptSignature(item)));
   }, [items, liveItems]);
+  const visibleItems = useMemo(() => mergeToolResultsForDisplay([...items, ...visibleLiveItems]), [items, visibleLiveItems]);
+  const showThinkingPlaceholder = thinkingVisible && thread?.hookStatus === "working" && visibleLiveItems.length === 0;
   const promptHistory = useMemo(() => transcriptPromptHistory(items), [items]);
   const searchMatches = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -3857,7 +3940,7 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
       return;
     }
     if (visibleItems.length > previousCount) setShowNewOutput(true);
-  }, [visibleItems.length]);
+  }, [showThinkingPlaceholder, visibleItems.length]);
 
   useEffect(() => {
     if (!searchOpen || activeSearchRowIndex === null) return;
@@ -4024,6 +4107,7 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
             <PiTranscriptRow item={item} theme={terminalTheme} piTheme={piTheme} toolsExpanded={toolsExpanded} thinkingVisible={thinkingVisible} />
           </div>
         ))}
+        <PiThinkingPlaceholder active={showThinkingPlaceholder} piTheme={piTheme} />
         {error && <pre className="m-0" style={{ color: terminalTheme.red ?? themeText(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{error}</pre>}
         {showNewOutput && (
           <button

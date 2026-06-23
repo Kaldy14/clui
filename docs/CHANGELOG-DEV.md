@@ -4,6 +4,51 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-23 — Remove extra Pi HTML markdown row gaps
+
+**Problem:** Markdown-formatted assistant text in Pi HTML had visible vertical gaps between rendered rows/blocks.
+
+**Root cause:** The markdown wrapper used a flex column with an explicit gap, which made block markdown feel less like terminal output.
+
+**Fix:** Removed the wrapper gap so markdown blocks stack at terminal line spacing.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Fix Pi HTML word selection shortcuts
+
+**Problem:** Option+Shift+Left/Right in the Pi HTML composer moved the cursor by word instead of extending text selection.
+
+**Root cause:** The custom word-navigation keymap intercepted modified arrow keys without preserving Shift selection semantics.
+
+**Fix:** Added word-selection expansion for Shift+word navigation and limited paste-marker arrow snapping to unmodified arrows.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Color Pi HTML composer by thinking level
+
+**Problem:** Pi HTML did not mirror terminal mode's thinking-level border colors.
+
+**Root cause:** The HTML composer always used the high-thinking color for its top and bottom rules.
+
+**Fix:** Added Pi thinking-level color tokens and applied the current thinking level to the composer rules and label.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-23 — Show thinking sidebar status
 
 **Problem:** Sidebar status badges showed generic or task-derived working labels while the agent was waiting on model reasoning.
@@ -23,6 +68,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 - `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
 - `apps/web/src/lib/threadStatus.test.ts`
 - `apps/web/src/components/Sidebar.logic.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Add Pi HTML non-streaming thinking placeholder
+
+**Problem:** Some model/provider turns buffered thinking text, leaving Pi HTML visually idle until a large thinking block appeared at once.
+
+**Root cause:** The HTML transcript only rendered thinking when Pi emitted live message updates or the transcript file changed.
+
+**Fix:** Show a gray italic `thinking…` placeholder while the Pi thread is working and no live transcript item is visible.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
 - `docs/CHANGELOG-DEV.md`
 
 ---
