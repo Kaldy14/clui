@@ -7,10 +7,14 @@ import type {
   PiTranscriptPart,
   ThreadId,
 } from "@clui/contracts";
+import { AGENT_ACTIVITY_LABELS } from "@clui/shared/agentActivity";
 import type { ITheme } from "@xterm/xterm";
+import type { Components } from "react-markdown";
 import type {
   CSSProperties,
+  ClipboardEvent as ReactClipboardEvent,
   Dispatch,
+  FormEvent as ReactFormEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
@@ -18,9 +22,13 @@ import type {
   WheelEvent as ReactWheelEvent,
 } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { useAppSettings } from "../appSettings";
+import { clipboardImageFiles, readFileAsDataUrl } from "../lib/clipboard";
 import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscriptions";
+import { addPiHtmlComposerInsertListener, dispatchPiHtmlComposerInsert } from "../lib/piHtmlComposerEvents";
 import { TERMINAL_LINE_HEIGHT } from "../lib/terminalSurfaceTheme";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { readNativeApi } from "../nativeApi";
@@ -28,6 +36,8 @@ import { useStore } from "../store";
 
 const TRANSCRIPT_REFRESH_DELAY_MS = 120;
 const MAX_SUGGESTIONS = 9;
+const PI_HTML_COMPOSER_MAX_ROWS = 6;
+const PI_HTML_BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 const CLUI_RPC_QUESTIONNAIRE_PREFIX = "__clui_rpc_questionnaire_v1__:";
 const CLUI_RPC_PLAN_REVIEW_PREFIX = "__clui_rpc_plan_review_v1__:";
 
@@ -118,9 +128,12 @@ type ExtensionUiRequest =
   | GenericExtensionUiRequest
   | { id: string; method: "questionnaire"; questions: QuestionnaireQuestion[] }
   | { id: string; method: "planReview"; title: string; plan: string };
+type EditorTextRequest = { text: string; nonce: number };
 type Suggestion =
   | { type: "command"; value: string; label: string; description?: string }
   | { type: "file"; value: string; label: string; description?: string };
+type PiModelOption = { provider: string; id: string; label: string };
+type PiThinkingLevel = "off" | "low" | "medium" | "high" | "ultrathink" | string;
 
 interface PiHtmlThreadViewProps {
   threadId: ThreadId;
@@ -212,6 +225,7 @@ function usePiTranscript(threadId: ThreadId) {
   const [liveItems, setLiveItems] = useState<LiveTranscriptItem[]>([]);
   const [uiRequest, setUiRequest] = useState<ExtensionUiRequest | null>(null);
   const [extensionUiState, setExtensionUiState] = useState<PiExtensionUiState>({ statuses: {}, widgets: [] });
+  const [editorTextRequest, setEditorTextRequest] = useState<EditorTextRequest | null>(null);
   const [usageStats, setUsageStats] = useState<PiSessionUsageStats | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -282,6 +296,7 @@ function usePiTranscript(threadId: ThreadId) {
     setLiveItems([]);
     setUiRequest(null);
     setExtensionUiState({ statuses: {}, widgets: [] });
+    setEditorTextRequest(null);
     setUsageStats(null);
     void load("reset");
   }, [load]);
@@ -304,6 +319,7 @@ function usePiTranscript(threadId: ThreadId) {
         setLiveItems([]);
         setUiRequest(null);
         setExtensionUiState({ statuses: {}, widgets: [] });
+        setEditorTextRequest(null);
         setUsageStats(null);
         void load("reset");
         return;
@@ -314,7 +330,9 @@ function usePiTranscript(threadId: ThreadId) {
           setUiRequest(extensionUiRequest);
           return;
         }
-        const handledExtensionUi = applyExtensionUiRequest(setExtensionUiState, event.event);
+        const handledExtensionUi = applyExtensionUiRequest(setExtensionUiState, event.event, (text) => {
+          setEditorTextRequest({ text, nonce: Date.now() });
+        });
         if (handledExtensionUi) return;
         const liveItem = liveItemFromRpcEvent(event.event);
         if (liveItem) setLiveItems((current) => mergeLiveItem(current, liveItem));
@@ -347,11 +365,27 @@ function usePiTranscript(threadId: ThreadId) {
     setUiRequest((current) => (current?.id === id ? null : current));
   }, []);
 
-  return { items, liveItems, uiRequest, extensionUiState, usageStats, clearUiRequest, loadState, error };
+  return { items, liveItems, uiRequest, extensionUiState, editorTextRequest, usageStats, clearUiRequest, loadState, error };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function modelOptionFromUnknown(value: unknown): PiModelOption | null {
+  if (!isRecord(value) || typeof value.provider !== "string" || typeof value.id !== "string") return null;
+  return { provider: value.provider, id: value.id, label: `${value.provider}/${value.id}` };
+}
+
+function thinkingLevelFromState(value: unknown): PiThinkingLevel | null {
+  if (!isRecord(value) || typeof value.thinkingLevel !== "string") return null;
+  const level = value.thinkingLevel.trim();
+  return level.length > 0 ? level : null;
+}
+
+function formatThinkingLevel(level: PiThinkingLevel | null): string | null {
+  if (!level) return null;
+  return `think ${level}`;
 }
 
 function stringifyInput(value: unknown): string {
@@ -456,6 +490,7 @@ function extensionWidgetPlacement(value: unknown): PiExtensionUiWidget["placemen
 function applyExtensionUiRequest(
   setExtensionUiState: Dispatch<SetStateAction<PiExtensionUiState>>,
   event: unknown,
+  setEditorText?: (text: string) => void,
 ): boolean {
   if (!isRecord(event) || event.type !== "extension_ui_request") return false;
 
@@ -490,7 +525,12 @@ function applyExtensionUiRequest(
     return true;
   }
 
-  return event.method === "notify" || event.method === "setTitle" || event.method === "set_editor_text";
+  if (event.method === "set_editor_text") {
+    if (typeof event.text === "string") setEditorText?.(event.text);
+    return true;
+  }
+
+  return event.method === "notify" || event.method === "setTitle";
 }
 
 const TERMINAL_CONTROL_SEQUENCE_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/gu;
@@ -852,50 +892,179 @@ function rowStyle(item: PiTranscriptItem, theme: ITheme): CSSProperties {
   }
 }
 
-type MarkdownSegment =
-  | { type: "text"; text: string }
-  | { type: "code"; text: string; language?: string };
-
-function markdownSegments(text: string): MarkdownSegment[] {
-  const segments: MarkdownSegment[] = [];
-  const fencePattern = /```([^\n`]*)\n?([\s\S]*?)```/gu;
-  let lastIndex = 0;
-  for (const match of text.matchAll(fencePattern)) {
-    const index = match.index ?? 0;
-    if (index > lastIndex) segments.push({ type: "text", text: text.slice(lastIndex, index) });
-    segments.push({
-      type: "code",
-      text: (match[2] ?? "").replace(/\n$/u, ""),
-      ...(match[1]?.trim() ? { language: match[1]?.trim() } : {}),
-    });
-    lastIndex = index + match[0].length;
-  }
-  if (lastIndex < text.length) segments.push({ type: "text", text: text.slice(lastIndex) });
-  return segments.length > 0 ? segments : [{ type: "text", text }];
-}
-
 function PiTextBlock(props: {
   text: string;
   color: string;
   piTheme: PiHtmlTheme;
   className?: string;
+  isThinking?: boolean;
 }) {
+  const components = useMemo<Components>(() => {
+    const blockStyle: CSSProperties = {
+      color: props.color,
+      fontFamily: "inherit",
+      fontSize: "1em",
+      fontStyle: props.isThinking ? "italic" : undefined,
+      lineHeight: TERMINAL_LINE_HEIGHT,
+      margin: 0,
+    };
+    const terminalBlockStyle: CSSProperties = {
+      ...blockStyle,
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+    };
+    const headingStyle: CSSProperties = {
+      ...terminalBlockStyle,
+      color: props.isThinking ? props.color : props.piTheme.mdHeading,
+      fontWeight: props.isThinking ? 400 : 700,
+    };
+    const codeBlockStyle: CSSProperties = {
+      ...terminalBlockStyle,
+      borderLeft: `2px solid ${props.piTheme.borderMuted}`,
+      color: props.isThinking ? props.color : props.piTheme.mdCodeBlock,
+      overflowX: "auto",
+      padding: "0 1ch",
+    };
+    const tableCellStyle: CSSProperties = {
+      ...blockStyle,
+      border: `1px solid ${props.piTheme.borderMuted}`,
+      padding: "0 1ch",
+      verticalAlign: "top",
+    };
+    const renderHeading = (children: ReactNode) => <pre style={headingStyle}>{children}</pre>;
+
+    return {
+      p({ children }) {
+        return <pre style={terminalBlockStyle}>{children}</pre>;
+      },
+      h1({ children }) {
+        return renderHeading(children);
+      },
+      h2({ children }) {
+        return renderHeading(children);
+      },
+      h3({ children }) {
+        return renderHeading(children);
+      },
+      h4({ children }) {
+        return renderHeading(children);
+      },
+      h5({ children }) {
+        return renderHeading(children);
+      },
+      h6({ children }) {
+        return renderHeading(children);
+      },
+      strong({ children }) {
+        return <strong style={{ color: props.isThinking ? props.color : props.piTheme.accent, fontWeight: 700 }}>{children}</strong>;
+      },
+      em({ children }) {
+        return <em style={{ color: props.color, fontStyle: "italic" }}>{children}</em>;
+      },
+      del({ children }) {
+        return <span style={{ color: props.color, textDecoration: "line-through" }}>{children}</span>;
+      },
+      code({ children, className }) {
+        const text = String(children);
+        const isBlock = /(?:^|\s)language-/u.test(className ?? "") || text.includes("\n");
+        return (
+          <code
+            className={className}
+            style={{
+              color: props.isThinking ? props.color : isBlock ? props.piTheme.mdCodeBlock : props.piTheme.mdCode,
+              fontFamily: "inherit",
+              fontSize: "1em",
+              padding: isBlock ? 0 : "0 0.35ch",
+              whiteSpace: isBlock ? "pre-wrap" : "break-spaces",
+            }}
+          >
+            {children}
+          </code>
+        );
+      },
+      pre({ children }) {
+        return <pre style={codeBlockStyle}>{children}</pre>;
+      },
+      ul({ children }) {
+        return (
+          <ul style={{ ...blockStyle, listStylePosition: "outside", listStyleType: "disc", paddingLeft: "3ch" }}>
+            {children}
+          </ul>
+        );
+      },
+      ol({ children }) {
+        return (
+          <ol style={{ ...blockStyle, listStylePosition: "outside", listStyleType: "decimal", paddingLeft: "3ch" }}>
+            {children}
+          </ol>
+        );
+      },
+      li({ children }) {
+        return <li style={{ ...blockStyle, paddingLeft: "0.5ch" }}>{children}</li>;
+      },
+      input({ checked, type }) {
+        if (type !== "checkbox") return null;
+        return <span style={{ color: props.piTheme.accent }}>{checked ? "[x] " : "[ ] "}</span>;
+      },
+      blockquote({ children }) {
+        return (
+          <blockquote
+            style={{
+              ...terminalBlockStyle,
+              borderLeft: `2px solid ${props.piTheme.borderMuted}`,
+              color: props.color,
+              paddingLeft: "1ch",
+            }}
+          >
+            {children}
+          </blockquote>
+        );
+      },
+      a({ children, href, title }) {
+        return (
+          <a
+            href={href}
+            rel="noreferrer"
+            target="_blank"
+            title={title}
+            style={{ color: props.isThinking ? props.color : props.piTheme.mdLink, textDecoration: "underline", textDecorationThickness: "1px" }}
+          >
+            {children}
+          </a>
+        );
+      },
+      table({ children }) {
+        return (
+          <div style={{ maxWidth: "100%", overflowX: "auto" }}>
+            <table style={{ ...blockStyle, borderCollapse: "collapse", width: "100%" }}>{children}</table>
+          </div>
+        );
+      },
+      th({ children }) {
+        return <th style={{ ...tableCellStyle, color: props.isThinking ? props.color : props.piTheme.accent, fontWeight: 700, textAlign: "left" }}>{children}</th>;
+      },
+      td({ children }) {
+        return <td style={tableCellStyle}>{children}</td>;
+      },
+      hr() {
+        return <pre style={{ ...terminalBlockStyle, color: props.color }}>{"─".repeat(80)}</pre>;
+      },
+      img({ alt, src }) {
+        return <span style={{ color: props.color }}>{alt ? `[image: ${alt}]` : src ? `[image: ${src}]` : "[image]"}</span>;
+      },
+    };
+  }, [props.color, props.isThinking, props.piTheme]);
+
   if (!props.text.trim()) return null;
   return (
-    <>
-      {markdownSegments(props.text).map((segment, index) => (
-        <pre
-          key={index}
-          className={`m-0 whitespace-pre-wrap break-words text-[1em] ${props.className ?? ""}`}
-          style={{
-            color: segment.type === "code" ? props.piTheme.mdCodeBlock : props.color,
-            lineHeight: TERMINAL_LINE_HEIGHT,
-          }}
-        >
-          {segment.text}
-        </pre>
-      ))}
-    </>
+    <div
+      className={`m-0 flex min-w-0 flex-col gap-[0.35em] break-words text-[1em] ${props.className ?? ""}`}
+      style={{ color: props.color, fontFamily: "inherit", fontSize: "1em", lineHeight: TERMINAL_LINE_HEIGHT }}
+    >
+      <ReactMarkdown components={components} remarkPlugins={[remarkGfm]}>
+        {props.text}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -903,7 +1072,7 @@ function PiUserMessage(props: { text: string; piTheme: PiHtmlTheme }) {
   if (!props.text.trim()) return null;
   return (
     <div
-      className="relative my-[1.2em] border px-[1ch] py-[1.2em]"
+      className="relative my-[1.2em] rounded-[0.6em] border px-[1ch] py-[0.8em]"
       style={{
         borderColor: props.piTheme.border,
         backgroundColor: props.piTheme.userMessageBg,
@@ -1012,11 +1181,18 @@ function writePreviewFromInput(input: unknown): string | null {
   return typeof content === "string" ? content : null;
 }
 
+function tailToolOutput(normalizedName: string, output: string): string {
+  if (!TAIL_ONLY_TOOL_OUTPUTS.has(normalizedName)) return output;
+  const lines = output.replace(/\n$/u, "").split("\n");
+  if (lines.length <= MAX_VISIBLE_TOOL_OUTPUT_LINES) return output;
+  return `[last ${MAX_VISIBLE_TOOL_OUTPUT_LINES} of ${lines.length} lines]\n${lines.slice(-MAX_VISIBLE_TOOL_OUTPUT_LINES).join("\n")}`;
+}
+
 function displayToolOutput(normalizedName: string, input: unknown, fallback: string, isError: boolean): string {
-  if (isError) return fallback;
+  if (isError) return tailToolOutput(normalizedName, fallback);
   if (normalizedName === "write") return writePreviewFromInput(input) ?? fallback;
   if (normalizedName === "edit") return editPreviewFromInput(input) ?? fallback;
-  return fallback;
+  return tailToolOutput(normalizedName, fallback);
 }
 
 function shouldShowToolOutput(name: string, item: PiTranscriptItem): boolean {
@@ -1048,7 +1224,7 @@ function PiToolOutput(props: { output: string; normalizedName: string; piTheme: 
   );
 }
 
-function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<PiTranscriptPart, { type: "toolCall" }>; piTheme: PiHtmlTheme }) {
+function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<PiTranscriptPart, { type: "toolCall" }>; piTheme: PiHtmlTheme; expanded?: boolean }) {
   const name = props.toolCall?.name ?? props.item.toolName ?? "tool";
   const normalizedName = normalizedToolName(name);
   const input = props.toolCall?.input ?? {};
@@ -1058,7 +1234,7 @@ function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<Pi
     props.item.mergedToolOutput ?? toolOutputText(props.item.parts),
     props.item.isError === true,
   );
-  const showOutput = output.trim().length > 0 && shouldShowToolOutput(name, props.item);
+  const showOutput = output.trim().length > 0 && (props.expanded === true || shouldShowToolOutput(name, props.item));
   const liveState = props.item as PiTranscriptItem & { live?: boolean; pending?: boolean };
   const isPending = liveState.live === true && liveState.pending === true;
   return (
@@ -1082,7 +1258,8 @@ function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<Pi
   );
 }
 
-function shouldHideStandaloneToolResult(item: PiTranscriptItem): boolean {
+function shouldHideStandaloneToolResult(item: PiTranscriptItem, toolsExpanded = false): boolean {
+  if (toolsExpanded) return false;
   if (item.role !== "toolResult" || item.isError) return false;
   const normalized = normalizedToolName(item.toolName ?? "");
   return COLLAPSED_RESULT_TOOLS.has(normalized);
@@ -1094,7 +1271,7 @@ function systemDisplayText(item: PiTranscriptItem, text: string): string {
   return modelMatch ? `Model scope: ${modelMatch[2]}` : text;
 }
 
-function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; piTheme: PiHtmlTheme }) {
+function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; piTheme: PiHtmlTheme; toolsExpanded?: boolean; thinkingVisible?: boolean }) {
   const text = systemDisplayText(props.item, itemText(props.item));
   if (!text.trim()) return null;
 
@@ -1102,18 +1279,20 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
     return <PiUserMessage text={text} piTheme={props.piTheme} />;
   }
 
-  if (shouldHideStandaloneToolResult(props.item)) return null;
+  if (shouldHideStandaloneToolResult(props.item, props.toolsExpanded)) return null;
 
   const toolCallParts = props.item.parts.filter(
     (part): part is Extract<PiTranscriptPart, { type: "toolCall" }> => part.type === "toolCall",
   );
-  if (toolCallParts.length > 0) {
+  const hasThinkingParts = props.item.parts.some((part) => part.type === "thinking");
+  if (toolCallParts.length > 0 || hasThinkingParts) {
     return (
       <>
         {props.item.parts.map((part, index) => {
           if (part.type === "toolCall") {
-            return <PiToolBlock key={`${props.item.id}:tool:${index}`} item={props.item} toolCall={part} piTheme={props.piTheme} />;
+            return <PiToolBlock key={`${props.item.id}:tool:${index}`} item={props.item} toolCall={part} piTheme={props.piTheme} expanded={props.toolsExpanded === true} />;
           }
+          if (part.type === "thinking" && props.thinkingVisible === false) return null;
           const partText = renderPartText(part);
           return (
             <PiTextBlock
@@ -1121,6 +1300,7 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
               text={partText}
               color={part.type === "thinking" ? props.piTheme.muted : (rowStyle(props.item, props.theme).color as string)}
               piTheme={props.piTheme}
+              isThinking={part.type === "thinking"}
             />
           );
         })}
@@ -1129,27 +1309,31 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
   }
 
   if (props.item.role === "toolResult" || props.item.role === "bashExecution") {
-    return <PiToolBlock item={props.item} piTheme={props.piTheme} />;
+    return <PiToolBlock item={props.item} piTheme={props.piTheme} expanded={props.toolsExpanded === true} />;
   }
 
   return <PiTextBlock text={text} color={rowStyle(props.item, props.theme).color as string} piTheme={props.piTheme} />;
 }
 
-function findCommandToken(value: string): { query: string } | null {
-  const beforeCursor = value;
+function findCommandToken(value: string, cursor = value.length): { query: string; start: number; end: number } | null {
+  const beforeCursor = value.slice(0, cursor);
+  const afterCursor = value.slice(cursor);
   if (!beforeCursor.startsWith("/")) return null;
-  if (/\s/u.test(beforeCursor)) return null;
-  return { query: beforeCursor.slice(1).toLowerCase() };
+  if (/\s/u.test(beforeCursor) || /^\S/u.test(afterCursor)) return null;
+  return { query: beforeCursor.slice(1).toLowerCase(), start: 0, end: cursor };
 }
 
-function findFileToken(value: string): { prefix: string; query: string; start: number; end: number } | null {
-  const match = /(?:^|\s)@([^\s@]*)$/u.exec(value);
+function findFileToken(value: string, cursor = value.length): { prefix: string; query: string; start: number; end: number } | null {
+  const beforeCursor = value.slice(0, cursor);
+  const afterCursor = value.slice(cursor);
+  if (/^\S/u.test(afterCursor)) return null;
+  const match = /(?:^|\s)@([^\s@]*)$/u.exec(beforeCursor);
   if (!match || match.index === undefined) return null;
   const full = match[0] ?? "";
   const query = match[1] ?? "";
   const atOffset = full.indexOf("@");
   const start = match.index + atOffset;
-  return { prefix: `@${query}`, query, start, end: value.length };
+  return { prefix: `@${query}`, query, start, end: cursor };
 }
 
 function commandSuggestions(commands: readonly PiCommandSuggestion[], query: string): Suggestion[] {
@@ -1162,6 +1346,12 @@ function commandSuggestions(commands: readonly PiCommandSuggestion[], query: str
       label: `/${command.name}`,
       ...(command.description ? { description: command.description } : {}),
     }));
+}
+
+function suggestionTokenKey(commandToken: ReturnType<typeof findCommandToken>, fileToken: ReturnType<typeof findFileToken>): string | null {
+  if (commandToken) return `command:${commandToken.start}:${commandToken.end}:${commandToken.query}`;
+  if (fileToken) return `file:${fileToken.start}:${fileToken.end}:${fileToken.query}`;
+  return null;
 }
 
 function clampIndex(index: number, length: number): number {
@@ -1179,7 +1369,16 @@ function stopTerminalPromptPropagation(event: ReactKeyboardEvent): void {
 }
 
 const PI_HTML_DRAFT_STORAGE_PREFIX = "clui:pi-html-draft:";
+const LARGE_PASTE_LINE_THRESHOLD = 10;
+const LARGE_PASTE_CHAR_THRESHOLD = 1000;
+const MAX_PROMPT_HISTORY = 100;
+const MAX_EDITOR_UNDO_STACK = 100;
+const PASTE_MARKER_REGEX = /\[paste #(\d+)(?: [^\]]+)?\]/gu;
+const MAX_VISIBLE_TOOL_OUTPUT_LINES = 10;
+const TAIL_ONLY_TOOL_OUTPUTS = new Set(["bash", "functionsbash", "read", "functionsread"]);
 const fallbackDraftMemory = new Map<string, string>();
+
+type PasteDrafts = Record<string, string>;
 
 function draftStorageKey(key: string): string {
   return `${PI_HTML_DRAFT_STORAGE_PREFIX}${key}`;
@@ -1237,6 +1436,191 @@ function usePersistentDraftState<T>(key: string, fallback: () => T): [T, Dispatc
   );
   const clear = useCallback(() => clearPersistentDraft(key), [key]);
   return [value, setPersistentValue, clear];
+}
+
+function promptHistoryKey(threadId: ThreadId): string {
+  return `composerHistory:${threadId}`;
+}
+
+function pasteDraftsKey(key: string): string {
+  return `${key}:pastes`;
+}
+
+function normalizePromptHistory(items: readonly string[]): string[] {
+  const normalized: string[] = [];
+  for (const item of items) {
+    const text = item.trim();
+    if (!text || normalized[normalized.length - 1] === text) continue;
+    normalized.push(text);
+    if (normalized.length >= MAX_PROMPT_HISTORY) break;
+  }
+  return normalized;
+}
+
+function mergePromptHistory(...groups: readonly (readonly string[])[]): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const rawText of group) {
+      const text = rawText.trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      merged.push(text);
+      if (merged.length >= MAX_PROMPT_HISTORY) return merged;
+    }
+  }
+  return merged;
+}
+
+function addPromptHistoryEntry(history: readonly string[], text: string): string[] {
+  return normalizePromptHistory([text, ...history.filter((item) => item.trim() !== text.trim())]);
+}
+
+function transcriptPromptHistory(items: readonly PiTranscriptItem[]): string[] {
+  const prompts: string[] = [];
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    if (item?.role !== "user") continue;
+    const text = itemText(item).trim();
+    if (text) prompts.push(text);
+  }
+  return normalizePromptHistory(prompts);
+}
+
+function clipboardPlainText(data: DataTransfer | null | undefined): string {
+  if (!data) return "";
+  return data.getData("text/plain") || data.getData("text") || data.getData("Text");
+}
+
+function normalizePastedText(text: string): string {
+  return text
+    .replace(/\x1b\[(\d+);5u/gu, (match, code: string) => {
+      const cp = Number(code);
+      if (cp >= 97 && cp <= 122) return String.fromCharCode(cp - 96);
+      if (cp >= 65 && cp <= 90) return String.fromCharCode(cp - 64);
+      return match;
+    })
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\t/g, "    ")
+    .split("")
+    .filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
+    .join("");
+}
+
+function pasteMarkerFor(id: number, text: string): string {
+  const lineCount = text.split("\n").length;
+  return lineCount > LARGE_PASTE_LINE_THRESHOLD
+    ? `[paste #${id} ${lineCount} lines]`
+    : `[paste #${id} ${text.length} chars]`;
+}
+
+function isLargePaste(text: string): boolean {
+  return text.split("\n").length > LARGE_PASTE_LINE_THRESHOLD || text.length > LARGE_PASTE_CHAR_THRESHOLD;
+}
+
+function nextPasteId(pastes: PasteDrafts): number {
+  return Math.max(0, ...Object.keys(pastes).map((key) => Number(key)).filter(Number.isFinite)) + 1;
+}
+
+function expandPasteMarkers(text: string, pastes: PasteDrafts): string {
+  return text.replace(PASTE_MARKER_REGEX, (marker, id: string) => pastes[id] ?? marker);
+}
+
+function insertTextIntoControlValue(value: string, insert: string, start: number, end: number): { value: string; cursor: number } {
+  const safeStart = Math.max(0, Math.min(start, value.length));
+  const safeEnd = Math.max(safeStart, Math.min(end, value.length));
+  return {
+    value: `${value.slice(0, safeStart)}${insert}${value.slice(safeEnd)}`,
+    cursor: safeStart + insert.length,
+  };
+}
+
+function markerBeforeCursor(value: string, cursor: number): RegExpMatchArray | null {
+  for (const match of value.matchAll(PASTE_MARKER_REGEX)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (end === cursor) return match;
+  }
+  return null;
+}
+
+function markerAfterCursor(value: string, cursor: number): RegExpMatchArray | null {
+  for (const match of value.matchAll(PASTE_MARKER_REGEX)) {
+    const start = match.index ?? 0;
+    if (start === cursor) return match;
+  }
+  return null;
+}
+
+function markerContainingOffset(value: string, offset: number): { start: number; end: number; text: string } | null {
+  for (const match of value.matchAll(PASTE_MARKER_REGEX)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (offset > start && offset < end) return { start, end, text: match[0] };
+  }
+  return null;
+}
+
+function markerIntersectingRange(value: string, start: number, end: number): { start: number; end: number; text: string } | null {
+  if (start === end) return markerContainingOffset(value, start);
+  for (const match of value.matchAll(PASTE_MARKER_REGEX)) {
+    const markerStart = match.index ?? 0;
+    const markerEnd = markerStart + match[0].length;
+    if (start < markerEnd && end > markerStart && (start > markerStart || end < markerEnd)) {
+      return { start: markerStart, end: markerEnd, text: match[0] };
+    }
+  }
+  return null;
+}
+
+function selectionFromTextControl(element: TextControlElement): TextSelectionDraft {
+  return {
+    start: element.selectionStart ?? element.value.length,
+    end: element.selectionEnd ?? element.value.length,
+    direction: element.selectionDirection ?? "none",
+  };
+}
+
+function lineStart(value: string, cursor: number): number {
+  return value.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
+}
+
+function lineEnd(value: string, cursor: number): number {
+  const index = value.indexOf("\n", cursor);
+  return index === -1 ? value.length : index;
+}
+
+function previousWordStart(value: string, cursor: number): number {
+  let index = Math.max(0, cursor);
+  while (index > 0 && /\s/u.test(value[index - 1] ?? "")) index -= 1;
+  while (index > 0 && !/\s/u.test(value[index - 1] ?? "")) index -= 1;
+  return index;
+}
+
+function nextWordEnd(value: string, cursor: number): number {
+  let index = Math.max(0, cursor);
+  while (index < value.length && /\s/u.test(value[index] ?? "")) index += 1;
+  while (index < value.length && !/\s/u.test(value[index] ?? "")) index += 1;
+  return index;
+}
+
+function clampSelectionForValue(value: string, selection: TextSelectionDraft): TextSelectionDraft {
+  const start = Math.max(0, Math.min(value.length, selection.start));
+  const end = Math.max(0, Math.min(value.length, selection.end));
+  return { start, end, direction: selection.direction ?? "none" };
+}
+
+function replaceRange(value: string, start: number, end: number, insert = ""): { value: string; selection: TextSelectionDraft } {
+  const safeStart = Math.max(0, Math.min(start, value.length));
+  const safeEnd = Math.max(safeStart, Math.min(end, value.length));
+  const nextValue = `${value.slice(0, safeStart)}${insert}${value.slice(safeEnd)}`;
+  const cursor = safeStart + insert.length;
+  return { value: nextValue, selection: { start: cursor, end: cursor, direction: "none" } };
+}
+
+function isMacLikePlatform(): boolean {
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/u.test(navigator.platform);
 }
 
 function focusElementSoon(getElement: () => HTMLElement | null): () => void {
@@ -2210,6 +2594,21 @@ function isInsideKeyboardOwner(element: HTMLElement | null): boolean {
   return Boolean(element?.closest(".xterm, [role='dialog'], [aria-modal='true'], [data-radix-dialog-content]"));
 }
 
+function usePiBusyFrame(active: boolean): string {
+  const [frameIndex, setFrameIndex] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setFrameIndex(0);
+      return undefined;
+    }
+    const intervalId = window.setInterval(() => {
+      setFrameIndex((index) => (index + 1) % PI_HTML_BUSY_FRAMES.length);
+    }, 120);
+    return () => window.clearInterval(intervalId);
+  }, [active]);
+  return PI_HTML_BUSY_FRAMES[frameIndex] ?? PI_HTML_BUSY_FRAMES[0];
+}
+
 function PiHtmlFooterStatus(props: {
   threadId: ThreadId;
   theme: ITheme;
@@ -2223,8 +2622,12 @@ function PiHtmlFooterStatus(props: {
   const statusEntries = Object.values(props.extensionUiState.statuses).filter((status) => status.trim().length > 0);
   const hasCodexStatus = statusEntries.some((status) => cleanTranscriptText(status).includes("Codex"));
   const usageSummary = formatPiUsageStats(props.usageStats, hasCodexStatus);
+  const isWorking = thread?.hookStatus === "working";
+  const busyFrame = usePiBusyFrame(isWorking);
+  const workingLabel = thread?.activityStatus ? AGENT_ACTIVITY_LABELS[thread.activityStatus] : "Working";
   const statusSegments = useMemo(() => {
-    const segments = statusEntries.map((status) => ({ kind: "ansi" as const, text: status }));
+    const segments: Array<{ kind: "ansi" | "text"; text: string }> = statusEntries.map((status) => ({ kind: "ansi", text: status }));
+    if (isWorking) segments.unshift({ kind: "text" as const, text: `${busyFrame} ${workingLabel}` });
     if (!usageSummary) return segments;
     const codexIndex = segments.findIndex((segment) => cleanTranscriptText(segment.text).includes("Codex"));
     const insertIndex = codexIndex >= 0 ? codexIndex + 1 : segments.length;
@@ -2233,7 +2636,7 @@ function PiHtmlFooterStatus(props: {
       { kind: "text" as const, text: usageSummary },
       ...segments.slice(insertIndex),
     ];
-  }, [statusEntries, usageSummary]);
+  }, [busyFrame, isWorking, statusEntries, usageSummary, workingLabel]);
 
   if (!cwd && statusSegments.length === 0) return null;
   return (
@@ -2256,30 +2659,140 @@ function PiHtmlComposer(props: {
   piTheme: PiHtmlTheme;
   extensionUiState: PiExtensionUiState;
   usageStats: PiSessionUsageStats | null;
+  history: readonly string[];
+  editorTextRequest: EditorTextRequest | null;
   autoFocusEnabled: boolean;
   registerFocus: (focus: (() => void) | null) => void;
 }) {
   const composerDraftKey = `composer:${props.threadId}`;
-  const [value, setValue, clearValue] = usePersistentDraftState(composerDraftKey, () => "");
+  const [draftValue, setDraftValue, clearDraftValue] = usePersistentDraftState(composerDraftKey, () => "");
+  const [value, setValue] = useState(draftValue);
+  const [pastes, setPastes, clearPastes] = usePersistentDraftState<PasteDrafts>(pasteDraftsKey(composerDraftKey), () => ({}));
+  const [localHistory, setLocalHistory] = usePersistentDraftState<string[]>(promptHistoryKey(props.threadId), () => []);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const historyDraftRef = useRef<{ value: string; selection: TextSelectionDraft } | null>(null);
   const [commands, setCommands] = useState<PiCommandSuggestion[]>([]);
   const [fileSuggestions, setFileSuggestions] = useState<Suggestion[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+  const [dismissedSuggestionToken, setDismissedSuggestionToken] = useState<string | null>(null);
+  const [modelOptions, setModelOptions] = useState<PiModelOption[]>([]);
+  const [modelSelectOpen, setModelSelectOpen] = useState(false);
+  const [selectedModelIndex, setSelectedModelIndex] = useState(0);
+  const [thinkingLevel, setThinkingLevel] = useState<PiThinkingLevel | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [composerVisualRows, setComposerVisualRows] = useState(1);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const valueRef = useRef(value);
+  const undoStackRef = useRef<Array<{ value: string; selection: TextSelectionDraft }>>([]);
+  const killRingRef = useRef<string[]>([]);
+  const lastYankRef = useRef<{ start: number; end: number; ringIndex: number } | null>(null);
+  const lastClearShortcutAtRef = useRef(0);
+  const lastPasteHandledAtRef = useRef(0);
   const thread = useStore((s) => s.threads.find((t) => t.id === props.threadId));
   const project = useStore((s) => s.projects.find((p) => p.id === thread?.projectId));
   const hookStatus = thread?.hookStatus ?? null;
   const cwd = thread?.worktreePath ?? project?.cwd ?? null;
   const isBusy = hookStatus === "working";
-  const commandToken = useMemo(() => findCommandToken(value), [value]);
-  const fileToken = useMemo(() => findFileToken(value), [value]);
-  const suggestions = commandToken
+  const tokenCursor = textareaRef.current?.selectionStart ?? readTextSelectionDraft(composerDraftKey, value).end;
+  const commandToken = useMemo(() => findCommandToken(value, tokenCursor), [tokenCursor, value]);
+  const fileToken = useMemo(() => findFileToken(value, tokenCursor), [tokenCursor, value]);
+  const activeSuggestionToken = suggestionTokenKey(commandToken, fileToken);
+  const rawSuggestions = commandToken
     ? commandSuggestions(commands, commandToken.query)
     : fileToken
       ? fileSuggestions
       : [];
-  const lineCount = Math.min(6, Math.max(1, value.split("\n").length));
+  const suggestions = activeSuggestionToken && activeSuggestionToken === dismissedSuggestionToken ? [] : rawSuggestions;
+  const history = useMemo(() => mergePromptHistory(localHistory, props.history), [localHistory, props.history]);
+  const thinkingLevelLabel = formatThinkingLevel(thinkingLevel);
+
+  const autosizeComposer = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const computedStyle = window.getComputedStyle(textarea);
+    const parsedLineHeight = Number.parseFloat(computedStyle.lineHeight);
+    const fontSize = Number.parseFloat(computedStyle.fontSize);
+    const lineHeightPx = Number.isFinite(parsedLineHeight)
+      ? parsedLineHeight
+      : (Number.isFinite(fontSize) ? fontSize * TERMINAL_LINE_HEIGHT : 18);
+    const minHeight = lineHeightPx;
+    const maxHeight = lineHeightPx * PI_HTML_COMPOSER_MAX_ROWS;
+
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(maxHeight, Math.max(minHeight, textarea.scrollHeight));
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight + 1 ? "auto" : "hidden";
+    setComposerVisualRows(Math.max(1, Math.round(nextHeight / lineHeightPx)));
+  }, []);
+
+  useLayoutEffect(() => {
+    autosizeComposer();
+  }, [autosizeComposer, value]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    const parent = textarea?.parentElement;
+    if (!parent) return undefined;
+    let animationFrame: number | null = null;
+    const scheduleAutosize = () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null;
+        autosizeComposer();
+      });
+    };
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleAutosize) : null;
+    resizeObserver?.observe(parent);
+    window.addEventListener("resize", scheduleAutosize);
+    scheduleAutosize();
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleAutosize);
+    };
+  }, [autosizeComposer]);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    setValue(draftValue);
+    valueRef.current = draftValue;
+    setHistoryIndex(-1);
+    historyDraftRef.current = null;
+    undoStackRef.current = [];
+    lastYankRef.current = null;
+  }, [composerDraftKey, draftValue]);
+
+  const pushUndoSnapshot = useCallback(
+    (snapshotValue = valueRef.current, selection?: TextSelectionDraft) => {
+      const snapshot = {
+        value: snapshotValue,
+        selection: selection ?? (textareaRef.current ? selectionFromTextControl(textareaRef.current) : readTextSelectionDraft(composerDraftKey, snapshotValue)),
+      };
+      const previous = undoStackRef.current[undoStackRef.current.length - 1];
+      if (previous?.value === snapshot.value && previous.selection.start === snapshot.selection.start && previous.selection.end === snapshot.selection.end) return;
+      undoStackRef.current = [...undoStackRef.current.slice(-(MAX_EDITOR_UNDO_STACK - 1)), snapshot];
+    },
+    [composerDraftKey],
+  );
+
+  const updateDraftValue = useCallback(
+    (nextValue: string, selection?: TextSelectionDraft, options?: { recordUndo?: boolean }) => {
+      const previousValue = valueRef.current;
+      if (options?.recordUndo !== false && previousValue !== nextValue) pushUndoSnapshot(previousValue);
+      setHistoryIndex(-1);
+      historyDraftRef.current = null;
+      lastYankRef.current = null;
+      valueRef.current = nextValue;
+      setValue(nextValue);
+      setDraftValue(nextValue);
+      if (selection) writeTextSelectionDraft(composerDraftKey, clampSelectionForValue(nextValue, selection));
+    },
+    [composerDraftKey, pushUndoSnapshot, setDraftValue],
+  );
 
   useEffect(() => {
     const focusComposer = () => {
@@ -2295,6 +2808,13 @@ function PiHtmlComposer(props: {
   }, [composerDraftKey, props.autoFocusEnabled]);
 
   useEffect(() => {
+    if (!props.editorTextRequest) return;
+    const text = props.editorTextRequest.text;
+    updateDraftValue(text, { start: text.length, end: text.length, direction: "none" });
+    requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
+  }, [composerDraftKey, props.editorTextRequest, updateDraftValue]);
+
+  useEffect(() => {
     const api = readNativeApi();
     if (!api) return;
     void api.pi
@@ -2305,7 +2825,12 @@ function PiHtmlComposer(props: {
 
   useEffect(() => {
     setSelectedSuggestionIndex(0);
-  }, [commandToken?.query, fileToken?.query]);
+  }, [activeSuggestionToken]);
+
+  useEffect(() => {
+    if (activeSuggestionToken !== dismissedSuggestionToken) return;
+    if (rawSuggestions.length === 0) setDismissedSuggestionToken(null);
+  }, [activeSuggestionToken, dismissedSuggestionToken, rawSuggestions.length]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -2345,41 +2870,55 @@ function PiHtmlComposer(props: {
 
   const applySuggestion = useCallback(
     (suggestion: Suggestion) => {
+      setDismissedSuggestionToken(null);
+      const currentValue = valueRef.current;
+      const cursorPosition = textareaRef.current?.selectionStart ?? currentValue.length;
       if (suggestion.type === "command") {
-        const cursor = suggestion.value.length;
-        setValue(suggestion.value);
-        writeTextSelectionDraft(composerDraftKey, { start: cursor, end: cursor, direction: "none" });
+        const token = findCommandToken(currentValue, cursorPosition);
+        const next = token
+          ? `${currentValue.slice(0, token.start)}${suggestion.value}${currentValue.slice(token.end)}`
+          : suggestion.value;
+        const cursor = (token?.start ?? 0) + suggestion.value.length;
+        updateDraftValue(next, { start: cursor, end: cursor, direction: "none" });
         requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
         return;
       }
-      const currentFileToken = findFileToken(value);
+      const currentFileToken = findFileToken(currentValue, cursorPosition);
       if (!currentFileToken) return;
-      const next = `${value.slice(0, currentFileToken.start)}${suggestion.value}${value.slice(
+      const next = `${currentValue.slice(0, currentFileToken.start)}${suggestion.value}${currentValue.slice(
         currentFileToken.end,
       )}`;
       const cursor = currentFileToken.start + suggestion.value.length;
-      setValue(next);
-      writeTextSelectionDraft(composerDraftKey, { start: cursor, end: cursor, direction: "none" });
+      updateDraftValue(next, { start: cursor, end: cursor, direction: "none" });
       requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
     },
-    [composerDraftKey, setValue, value],
+    [composerDraftKey, updateDraftValue],
   );
 
-  const submit = useCallback(async () => {
-    const message = value.trim();
+  const submit = useCallback(async (overrideValue?: string, streamingBehavior?: "steer" | "followUp") => {
+    const sourceValue = overrideValue ?? valueRef.current;
+    const message = expandPasteMarkers(sourceValue, pastes).trim();
     if (!message || submitting) return;
     const api = readNativeApi();
     if (!api) return;
+    const behavior = streamingBehavior ?? (isBusy ? "steer" as const : undefined);
     setSubmitting(true);
     setError(null);
     try {
       await api.pi.prompt({
         threadId: props.threadId,
         message,
-        ...(isBusy ? { streamingBehavior: "steer" as const } : {}),
+        ...(behavior ? { streamingBehavior: behavior } : {}),
       });
-      clearValue();
+      setLocalHistory((current) => addPromptHistoryEntry(current, message));
+      clearDraftValue();
+      clearPastes();
       clearTextSelectionDraft(composerDraftKey);
+      undoStackRef.current = [];
+      historyDraftRef.current = null;
+      lastYankRef.current = null;
+      setHistoryIndex(-1);
+      valueRef.current = "";
       setValue("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send prompt.");
@@ -2387,7 +2926,7 @@ function PiHtmlComposer(props: {
       setSubmitting(false);
       requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
     }
-  }, [clearValue, composerDraftKey, isBusy, props.threadId, setValue, submitting, value]);
+  }, [clearDraftValue, clearPastes, composerDraftKey, isBusy, pastes, props.threadId, setLocalHistory, submitting]);
 
   const abort = useCallback(async () => {
     const api = readNativeApi();
@@ -2399,9 +2938,676 @@ function PiHtmlComposer(props: {
     }
   }, [props.threadId]);
 
+  const replaceSelection = useCallback(
+    (insert: string, selectionStart?: number, selectionEnd?: number) => {
+      const textarea = textareaRef.current;
+      const current = valueRef.current;
+      const start = selectionStart ?? textarea?.selectionStart ?? current.length;
+      const end = selectionEnd ?? textarea?.selectionEnd ?? start;
+      const next = insertTextIntoControlValue(current, insert, start, end);
+      updateDraftValue(next.value, { start: next.cursor, end: next.cursor, direction: "none" });
+      requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
+    },
+    [composerDraftKey, updateDraftValue],
+  );
+
+  const insertPastedText = useCallback(
+    (text: string) => {
+      const normalized = normalizePastedText(text);
+      if (!normalized) return false;
+      lastPasteHandledAtRef.current = Date.now();
+      if (isLargePaste(normalized)) {
+        const pasteId = nextPasteId(pastes);
+        setPastes({ ...pastes, [String(pasteId)]: normalized });
+        replaceSelection(pasteMarkerFor(pasteId, normalized));
+        return true;
+      }
+      replaceSelection(normalized);
+      return true;
+    },
+    [pastes, replaceSelection, setPastes],
+  );
+
+  useEffect(
+    () =>
+      addPiHtmlComposerInsertListener((detail) => {
+        if (detail.threadId !== props.threadId || !detail.text) return;
+        if (detail.source === "paste") {
+          insertPastedText(detail.text);
+          return;
+        }
+        replaceSelection(detail.text);
+      }),
+    [insertPastedText, props.threadId, replaceSelection],
+  );
+
+  const handlePaste = useCallback(
+    (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+      if (event.defaultPrevented) return;
+      const imageFiles = clipboardImageFiles(event.clipboardData?.items);
+      if (imageFiles.length > 0) {
+        event.preventDefault();
+        const api = readNativeApi();
+        if (!api) {
+          setError("Image paste unavailable.");
+          return;
+        }
+        const selectionStart = event.currentTarget.selectionStart ?? valueRef.current.length;
+        const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
+        setError(null);
+        void (async () => {
+          try {
+            const filePaths: string[] = [];
+            for (const file of imageFiles) {
+              const dataUrl = await readFileAsDataUrl(file);
+              const result = await api.server.writeTempImage({
+                threadId: props.threadId,
+                name: file.name.trim() || "clipboard-image.png",
+                mimeType: file.type || "image/png",
+                sizeBytes: file.size,
+                dataUrl,
+              });
+              filePaths.push(result.filePath);
+            }
+            replaceSelection(filePaths.join("\n"), selectionStart, selectionEnd);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to paste image.");
+          }
+        })();
+        return;
+      }
+
+      const text = clipboardPlainText(event.clipboardData);
+      if (!text) return;
+      event.preventDefault();
+      insertPastedText(text);
+    },
+    [insertPastedText, props.threadId, replaceSelection],
+  );
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return undefined;
+    const handleNativePaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (clipboardImageFiles(event.clipboardData?.items).length > 0) return;
+      const text = clipboardPlainText(event.clipboardData);
+      if (!text) return;
+      event.preventDefault();
+      insertPastedText(text);
+    };
+    textarea.addEventListener("paste", handleNativePaste, true);
+    return () => textarea.removeEventListener("paste", handleNativePaste, true);
+  }, [insertPastedText]);
+
+  useEffect(() => {
+    const handleDocumentPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
+      const target = isHTMLElement(event.target) ? event.target : null;
+      if (target === textareaRef.current) return;
+      if (isEditableTarget(target)) return;
+      if (clipboardImageFiles(event.clipboardData?.items).length > 0) return;
+      const text = clipboardPlainText(event.clipboardData);
+      if (!text) return;
+      event.preventDefault();
+      insertPastedText(text);
+    };
+
+    const handlePasteShortcutFallback = (event: globalThis.KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key !== "v" || event.altKey || event.shiftKey || (!event.metaKey && !event.ctrlKey)) return;
+      const target = isHTMLElement(event.target) ? event.target : null;
+      if (target !== textareaRef.current) {
+        if (isEditableTarget(target)) return;
+        focusTextControl(composerDraftKey, textareaRef.current);
+      }
+      const readText = navigator.clipboard?.readText;
+      if (!readText) return;
+      const requestedAt = Date.now();
+      void readText.call(navigator.clipboard).then((text) => {
+        window.setTimeout(() => {
+          if (!text || lastPasteHandledAtRef.current >= requestedAt) return;
+          insertPastedText(text);
+        }, 120);
+      }).catch(() => {
+        window.setTimeout(() => {
+          if (lastPasteHandledAtRef.current >= requestedAt) return;
+          setError("Clipboard read denied. Click the input and paste again.");
+        }, 120);
+      });
+    };
+
+    document.addEventListener("paste", handleDocumentPaste, true);
+    document.addEventListener("keydown", handlePasteShortcutFallback, true);
+    return () => {
+      document.removeEventListener("paste", handleDocumentPaste, true);
+      document.removeEventListener("keydown", handlePasteShortcutFallback, true);
+    };
+  }, [composerDraftKey, insertPastedText]);
+
+  const navigateHistory = useCallback(
+    (direction: -1 | 1) => {
+      if (history.length === 0) return false;
+      const nextIndex = historyIndex - direction;
+      if (nextIndex < -1 || nextIndex >= history.length) return false;
+
+      if (historyIndex === -1 && nextIndex >= 0) {
+        const textarea = textareaRef.current;
+        const currentValue = valueRef.current;
+        historyDraftRef.current = {
+          value: currentValue,
+          selection: textarea ? selectionFromTextControl(textarea) : readTextSelectionDraft(composerDraftKey, currentValue),
+        };
+      }
+
+      setHistoryIndex(nextIndex);
+      if (nextIndex === -1) {
+        const draft = historyDraftRef.current;
+        historyDraftRef.current = null;
+        const nextValue = draft?.value ?? draftValue;
+        const selection = draft?.selection ?? readTextSelectionDraft(composerDraftKey, nextValue);
+        valueRef.current = nextValue;
+        setValue(nextValue);
+        setDraftValue(nextValue);
+        writeTextSelectionDraft(composerDraftKey, selection);
+      } else {
+        const nextValue = history[nextIndex] ?? "";
+        const cursor = direction === -1 ? 0 : nextValue.length;
+        valueRef.current = nextValue;
+        setValue(nextValue);
+        requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(cursor, cursor, "none");
+        });
+        return true;
+      }
+      requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
+      return true;
+    },
+    [composerDraftKey, draftValue, history, historyIndex, setDraftValue],
+  );
+
+  const setComposerSelection = useCallback(
+    (selection: TextSelectionDraft) => {
+      const nextSelection = clampSelectionForValue(valueRef.current, selection);
+      writeTextSelectionDraft(composerDraftKey, nextSelection);
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(nextSelection.start, nextSelection.end, nextSelection.direction ?? "none");
+      });
+    },
+    [composerDraftKey],
+  );
+
+  const applyEditorValue = useCallback(
+    (nextValue: string, selection: TextSelectionDraft, options?: { recordUndo?: boolean }) => {
+      updateDraftValue(nextValue, selection, options);
+      requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
+    },
+    [composerDraftKey, updateDraftValue],
+  );
+
+  const addKillRingText = useCallback((text: string) => {
+    if (!text) return;
+    killRingRef.current = [text, ...killRingRef.current.filter((entry) => entry !== text)].slice(0, 20);
+  }, []);
+
+  const snapSelectionAwayFromPasteMarker = useCallback(
+    (element: HTMLTextAreaElement): boolean => {
+      const current = valueRef.current;
+      const selection = selectionFromTextControl(element);
+      if (selection.start !== selection.end) {
+        const intersecting = markerIntersectingRange(current, selection.start, selection.end);
+        if (!intersecting) return false;
+        const nextSelection = {
+          start: Math.min(selection.start, intersecting.start),
+          end: Math.max(selection.end, intersecting.end),
+          direction: selection.direction ?? "none",
+        };
+        element.setSelectionRange(nextSelection.start, nextSelection.end, nextSelection.direction);
+        writeTextSelectionDraft(composerDraftKey, nextSelection);
+        return true;
+      }
+      const marker = markerContainingOffset(current, selection.start);
+      if (!marker) return false;
+      const cursor = selection.start - marker.start < marker.end - selection.start ? marker.start : marker.end;
+      element.setSelectionRange(cursor, cursor, "none");
+      writeTextSelectionDraft(composerDraftKey, { start: cursor, end: cursor, direction: "none" });
+      return true;
+    },
+    [composerDraftKey],
+  );
+
+  const handlePasteMarkerBeforeInput = useCallback(
+    (event: ReactFormEvent<HTMLTextAreaElement>): boolean => {
+      const nativeEvent = event.nativeEvent as InputEvent & { dataTransfer?: DataTransfer | null };
+      if (nativeEvent.isComposing) return false;
+      const inputType = nativeEvent.inputType;
+      if (inputType === "insertFromPaste" || inputType === "insertFromDrop") {
+        const text = clipboardPlainText(nativeEvent.dataTransfer) || nativeEvent.data || "";
+        if (text) {
+          event.preventDefault();
+          return insertPastedText(text);
+        }
+      }
+      if (!inputType.startsWith("insert") && !inputType.startsWith("delete")) return false;
+      const textarea = event.currentTarget;
+      const current = valueRef.current;
+      const selection = selectionFromTextControl(textarea);
+      const marker = markerIntersectingRange(current, selection.start, selection.end);
+      if (!marker) return false;
+      event.preventDefault();
+      const insert = inputType.startsWith("insert") ? (nativeEvent.data ?? "") : "";
+      if (inputType.startsWith("insert") && selection.start === selection.end) {
+        const atEnd = selection.start - marker.start >= marker.end - selection.start;
+        const cursor = atEnd ? marker.end : marker.start;
+        const next = replaceRange(current, cursor, cursor, insert);
+        applyEditorValue(next.value, next.selection);
+        return true;
+      }
+      const next = replaceRange(current, marker.start, marker.end, insert);
+      applyEditorValue(next.value, next.selection);
+      return true;
+    },
+    [applyEditorValue, insertPastedText],
+  );
+
+  const handlePasteMarkerKey = useCallback(
+    (event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean => {
+      const textarea = event.currentTarget;
+      const current = valueRef.current;
+      const start = textarea.selectionStart ?? current.length;
+      const end = textarea.selectionEnd ?? start;
+      const intersecting = markerIntersectingRange(current, start, end);
+      if (intersecting && start !== end && (event.key === "Backspace" || event.key === "Delete")) {
+        event.preventDefault();
+        const next = replaceRange(current, intersecting.start, intersecting.end);
+        applyEditorValue(next.value, next.selection);
+        return true;
+      }
+      if (start !== end) return false;
+
+      const inside = markerContainingOffset(current, start);
+      if (inside && (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Backspace" || event.key === "Delete")) {
+        event.preventDefault();
+        const cursor = event.key === "ArrowLeft" || event.key === "Backspace" ? inside.start : inside.end;
+        setComposerSelection({ start: cursor, end: cursor, direction: "none" });
+        return true;
+      }
+
+      const before = markerBeforeCursor(current, start);
+      const after = markerAfterCursor(current, start);
+      if (event.key === "ArrowLeft" && before) {
+        event.preventDefault();
+        setComposerSelection({ start: before.index ?? 0, end: before.index ?? 0, direction: "none" });
+        return true;
+      }
+      if (event.key === "ArrowRight" && after) {
+        event.preventDefault();
+        const cursor = (after.index ?? 0) + after[0].length;
+        setComposerSelection({ start: cursor, end: cursor, direction: "none" });
+        return true;
+      }
+      if (event.key === "Backspace" && before) {
+        event.preventDefault();
+        const cursor = before.index ?? 0;
+        const next = replaceRange(current, cursor, start);
+        applyEditorValue(next.value, next.selection);
+        return true;
+      }
+      if (event.key === "Delete" && after) {
+        event.preventDefault();
+        const markerStart = after.index ?? 0;
+        const next = replaceRange(current, markerStart, markerStart + after[0].length);
+        applyEditorValue(next.value, { start, end: start, direction: "none" });
+        return true;
+      }
+      return false;
+    },
+    [applyEditorValue, setComposerSelection],
+  );
+
+  const persistComposerSelection = useCallback(
+    (element: HTMLTextAreaElement) => {
+      snapSelectionAwayFromPasteMarker(element);
+      if (historyIndex === -1) persistTextSelection(composerDraftKey, element);
+    },
+    [composerDraftKey, historyIndex, snapSelectionAwayFromPasteMarker],
+  );
+
+  const undoEditor = useCallback((): boolean => {
+    const snapshot = undoStackRef.current.pop();
+    if (!snapshot) return false;
+    applyEditorValue(snapshot.value, snapshot.selection, { recordUndo: false });
+    return true;
+  }, [applyEditorValue]);
+
+  const deleteSelectionOrRange = useCallback(
+    (start: number, end: number, kill = false): boolean => {
+      const current = valueRef.current;
+      if (start === end) return false;
+      if (kill) addKillRingText(current.slice(start, end));
+      const next = replaceRange(current, start, end);
+      applyEditorValue(next.value, next.selection);
+      return true;
+    },
+    [addKillRingText, applyEditorValue],
+  );
+
+  const insertAtSelection = useCallback(
+    (insert: string): boolean => {
+      const textarea = textareaRef.current;
+      const current = valueRef.current;
+      const selection = textarea ? selectionFromTextControl(textarea) : readTextSelectionDraft(composerDraftKey, current);
+      const next = replaceRange(current, selection.start, selection.end, insert);
+      applyEditorValue(next.value, next.selection);
+      return true;
+    },
+    [applyEditorValue, composerDraftKey],
+  );
+
+  const yank = useCallback((): boolean => {
+    const text = killRingRef.current[0];
+    if (!text) return false;
+    const textarea = textareaRef.current;
+    const current = valueRef.current;
+    const selection = textarea ? selectionFromTextControl(textarea) : readTextSelectionDraft(composerDraftKey, current);
+    const next = replaceRange(current, selection.start, selection.end, text);
+    applyEditorValue(next.value, next.selection);
+    lastYankRef.current = { start: next.selection.start - text.length, end: next.selection.start, ringIndex: 0 };
+    return true;
+  }, [applyEditorValue, composerDraftKey]);
+
+  const yankPop = useCallback((): boolean => {
+    const lastYank = lastYankRef.current;
+    if (!lastYank || killRingRef.current.length < 2) return false;
+    const nextRingIndex = (lastYank.ringIndex + 1) % killRingRef.current.length;
+    const text = killRingRef.current[nextRingIndex] ?? "";
+    const current = valueRef.current;
+    const next = replaceRange(current, lastYank.start, lastYank.end, text);
+    applyEditorValue(next.value, next.selection);
+    lastYankRef.current = { start: next.selection.start - text.length, end: next.selection.start, ringIndex: nextRingIndex };
+    return true;
+  }, [applyEditorValue]);
+
+  const shutdownHtmlSession = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api) return;
+    try {
+      await api.pi.hibernate({ threadId: props.threadId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to exit session.");
+    }
+  }, [props.threadId]);
+
+  const runPiRpcCommand = useCallback(
+    async (commandType: string, payload?: Record<string, unknown>): Promise<unknown> => {
+      const api = readNativeApi();
+      if (!api) return null;
+      const result = await api.pi.rpcCommand({ threadId: props.threadId, commandType, ...(payload ? { payload } : {}) });
+      return result.data;
+    },
+    [props.threadId],
+  );
+
+  const refreshPiSessionState = useCallback(async () => {
+    try {
+      const state = await runPiRpcCommand("get_state");
+      setThinkingLevel(thinkingLevelFromState(state));
+    } catch {
+      // Best-effort status only.
+    }
+  }, [runPiRpcCommand]);
+
+  useEffect(() => {
+    let disposed = false;
+    const refresh = async () => {
+      if (disposed) return;
+      await refreshPiSessionState();
+    };
+    void refresh();
+    const intervalId = window.setInterval(() => void refresh(), 5_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
+  }, [refreshPiSessionState]);
+
+  const cycleModel = useCallback(
+    async (direction: 1 | -1) => {
+      try {
+        const state = await runPiRpcCommand("get_state");
+        const modelsResponse = await runPiRpcCommand("get_available_models");
+        const models = isRecord(modelsResponse) && Array.isArray(modelsResponse.models)
+          ? modelsResponse.models.flatMap((model) => {
+              const option = modelOptionFromUnknown(model);
+              return option ? [option] : [];
+            })
+          : [];
+        if (models.length === 0) return;
+        const currentModel = isRecord(state) ? modelOptionFromUnknown(state.model) : null;
+        const currentIndex = currentModel ? models.findIndex((model) => model.provider === currentModel.provider && model.id === currentModel.id) : -1;
+        const next = models[(currentIndex + direction + models.length) % models.length] ?? models[0];
+        if (!next) return;
+        await runPiRpcCommand("set_model", { provider: next.provider, modelId: next.id });
+        await refreshPiSessionState();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to cycle model.");
+      }
+    },
+    [refreshPiSessionState, runPiRpcCommand],
+  );
+
+  const cycleThinkingLevel = useCallback(async () => {
+    try {
+      const result = await runPiRpcCommand("cycle_thinking_level");
+      if (isRecord(result) && typeof result.level === "string") {
+        setThinkingLevel(result.level);
+      } else {
+        await refreshPiSessionState();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cycle thinking level.");
+    }
+  }, [refreshPiSessionState, runPiRpcCommand]);
+
+  const openModelSelector = useCallback(async () => {
+    try {
+      const state = await runPiRpcCommand("get_state");
+      const modelsResponse = await runPiRpcCommand("get_available_models");
+      const models = isRecord(modelsResponse) && Array.isArray(modelsResponse.models)
+        ? modelsResponse.models.flatMap((model) => {
+            const option = modelOptionFromUnknown(model);
+            return option ? [option] : [];
+          })
+        : [];
+      const currentModel = isRecord(state) ? modelOptionFromUnknown(state.model) : null;
+      const selectedIndex = currentModel ? models.findIndex((model) => model.provider === currentModel.provider && model.id === currentModel.id) : -1;
+      setModelOptions(models);
+      setSelectedModelIndex(Math.max(0, selectedIndex));
+      setModelSelectOpen(models.length > 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load models.");
+    }
+  }, [runPiRpcCommand]);
+
+  const selectModel = useCallback(
+    async (model: PiModelOption) => {
+      try {
+        await runPiRpcCommand("set_model", { provider: model.provider, modelId: model.id });
+        await refreshPiSessionState();
+        setModelSelectOpen(false);
+        requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to set model.");
+      }
+    },
+    [composerDraftKey, refreshPiSessionState, runPiRpcCommand],
+  );
+
+  const handleEditorKeymap = useCallback(
+    (event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean => {
+      const current = valueRef.current;
+      const selection = selectionFromTextControl(event.currentTarget);
+      const hasSelection = selection.start !== selection.end;
+      const key = event.key;
+      const lowerKey = key.toLowerCase();
+      const mac = isMacLikePlatform();
+      const wordLeft = (mac ? event.altKey && !event.metaKey && !event.ctrlKey : event.ctrlKey && !event.altKey && !event.metaKey) && lowerKey === "arrowleft";
+      const wordRight = (mac ? event.altKey && !event.metaKey && !event.ctrlKey : event.ctrlKey && !event.altKey && !event.metaKey) && lowerKey === "arrowright";
+      const lineLeft = (mac ? event.metaKey && !event.altKey && !event.ctrlKey && lowerKey === "arrowleft" : event.key === "Home") && !event.shiftKey;
+      const lineRight = (mac ? event.metaKey && !event.altKey && !event.ctrlKey && lowerKey === "arrowright" : event.key === "End") && !event.shiftKey;
+
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (key === "-" || key === "_")) {
+        event.preventDefault();
+        return undoEditor();
+      }
+      if (event.key === "Tab" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        void cycleThinkingLevel();
+        return true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === "p") {
+        event.preventDefault();
+        void cycleModel(event.shiftKey ? -1 : 1);
+        return true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "l") {
+        event.preventDefault();
+        void openModelSelector();
+        return true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "a") {
+        event.preventDefault();
+        setComposerSelection({ start: lineStart(current, selection.start), end: lineStart(current, selection.start), direction: "none" });
+        return true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "e") {
+        event.preventDefault();
+        const cursor = lineEnd(current, selection.end);
+        setComposerSelection({ start: cursor, end: cursor, direction: "none" });
+        return true;
+      }
+      if (lineLeft) {
+        event.preventDefault();
+        const cursor = lineStart(current, selection.start);
+        setComposerSelection({ start: cursor, end: cursor, direction: "none" });
+        return true;
+      }
+      if (lineRight) {
+        event.preventDefault();
+        const cursor = lineEnd(current, selection.end);
+        setComposerSelection({ start: cursor, end: cursor, direction: "none" });
+        return true;
+      }
+      if (wordLeft) {
+        event.preventDefault();
+        const cursor = previousWordStart(current, selection.start);
+        setComposerSelection({ start: cursor, end: cursor, direction: "none" });
+        return true;
+      }
+      if (wordRight) {
+        event.preventDefault();
+        const cursor = nextWordEnd(current, selection.end);
+        setComposerSelection({ start: cursor, end: cursor, direction: "none" });
+        return true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "k") {
+        event.preventDefault();
+        const end = lineEnd(current, selection.end);
+        if (deleteSelectionOrRange(selection.start, end, true)) return true;
+        if (end < current.length) return deleteSelectionOrRange(selection.start, end + 1, true);
+        return true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "u") {
+        event.preventDefault();
+        return deleteSelectionOrRange(lineStart(current, selection.start), selection.end, true) || true;
+      }
+      if ((event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "w") || (event.altKey && !event.metaKey && !event.ctrlKey && key === "Backspace")) {
+        event.preventDefault();
+        return hasSelection
+          ? deleteSelectionOrRange(selection.start, selection.end, true)
+          : deleteSelectionOrRange(previousWordStart(current, selection.start), selection.start, true) || true;
+      }
+      if (event.altKey && !event.metaKey && !event.ctrlKey && (lowerKey === "d" || key === "Delete")) {
+        event.preventDefault();
+        return hasSelection
+          ? deleteSelectionOrRange(selection.start, selection.end, true)
+          : deleteSelectionOrRange(selection.start, nextWordEnd(current, selection.start), true) || true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "y") {
+        event.preventDefault();
+        return yank();
+      }
+      if (event.altKey && !event.metaKey && !event.ctrlKey && lowerKey === "y") {
+        event.preventDefault();
+        return yankPop();
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "d") {
+        event.preventDefault();
+        if (current.length === 0) {
+          void shutdownHtmlSession();
+          return true;
+        }
+        return hasSelection
+          ? deleteSelectionOrRange(selection.start, selection.end)
+          : deleteSelectionOrRange(selection.start, Math.min(current.length, selection.start + 1)) || true;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "c" && !hasSelection) {
+        event.preventDefault();
+        const now = Date.now();
+        if (now - lastClearShortcutAtRef.current < 500 && current.length === 0) {
+          void shutdownHtmlSession();
+          return true;
+        }
+        lastClearShortcutAtRef.current = now;
+        applyEditorValue("", { start: 0, end: 0, direction: "none" });
+        return true;
+      }
+      if (event.key === "PageUp" || event.key === "PageDown") {
+        return false;
+      }
+      return false;
+    },
+    [applyEditorValue, cycleModel, cycleThinkingLevel, deleteSelectionOrRange, openModelSelector, setComposerSelection, shutdownHtmlSession, undoEditor, yank, yankPop],
+  );
+
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+      if (modelSelectOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setModelSelectOpen(false);
+          return;
+        }
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setSelectedModelIndex((index) => (index + 1) % Math.max(1, modelOptions.length));
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setSelectedModelIndex((index) => (index - 1 + Math.max(1, modelOptions.length)) % Math.max(1, modelOptions.length));
+          return;
+        }
+        if (event.key === "Enter") {
+          event.preventDefault();
+          const model = modelOptions[selectedModelIndex] ?? modelOptions[0];
+          if (model) void selectModel(model);
+          return;
+        }
+      }
+      if (handlePasteMarkerKey(event)) return;
       if (suggestions.length > 0) {
+        if (event.key === "Escape" || (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "c")) {
+          event.preventDefault();
+          setDismissedSuggestionToken(activeSuggestionToken);
+          return;
+        }
         if (event.key === "ArrowDown") {
           event.preventDefault();
           setSelectedSuggestionIndex((index) => (index + 1) % suggestions.length);
@@ -2412,30 +3618,87 @@ function PiHtmlComposer(props: {
           setSelectedSuggestionIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
           return;
         }
+        if (event.key === "PageDown") {
+          event.preventDefault();
+          setSelectedSuggestionIndex((index) => Math.min(suggestions.length - 1, index + MAX_SUGGESTIONS));
+          return;
+        }
+        if (event.key === "PageUp") {
+          event.preventDefault();
+          setSelectedSuggestionIndex((index) => Math.max(0, index - MAX_SUGGESTIONS));
+          return;
+        }
         if (event.key === "Tab") {
           event.preventDefault();
           applySuggestion(suggestions[selectedSuggestionIndex] ?? suggestions[0]!);
           return;
         }
-        if (event.key === "Enter" && !event.shiftKey) {
+        if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
           event.preventDefault();
-          applySuggestion(suggestions[selectedSuggestionIndex] ?? suggestions[0]!);
+          const selected = suggestions[selectedSuggestionIndex] ?? suggestions[0]!;
+          if (selected.type === "command") {
+            void submit(selected.value.trim());
+          } else {
+            applySuggestion(selected);
+          }
           return;
         }
+      } else if (event.key === "Tab" && rawSuggestions.length > 0 && activeSuggestionToken) {
+        event.preventDefault();
+        setDismissedSuggestionToken(null);
+        setSelectedSuggestionIndex(0);
+        return;
+      }
+
+      if (handleEditorKeymap(event)) return;
+
+      if (!event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const start = event.currentTarget.selectionStart ?? value.length;
+        const end = event.currentTarget.selectionEnd ?? start;
+        const collapsed = start === end;
+        if (event.key === "ArrowUp" && collapsed && (historyIndex > -1 || start === 0 || value.length === 0)) {
+          if (navigateHistory(-1)) {
+            event.preventDefault();
+            return;
+          }
+        }
+        if (event.key === "ArrowDown" && collapsed && historyIndex > -1 && value.indexOf("\n", end) === -1) {
+          if (navigateHistory(1)) {
+            event.preventDefault();
+            return;
+          }
+        }
+      }
+
+      if (event.key === "Enter" && (event.shiftKey || event.altKey) && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        if (event.altKey) {
+          void submit(undefined, isBusy ? "followUp" : undefined);
+          return;
+        }
+        insertAtSelection("\n");
+        return;
       }
 
       if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
+        const textarea = event.currentTarget;
+        const cursor = textarea.selectionStart ?? value.length;
+        if (cursor > 0 && value[cursor - 1] === "\\") {
+          const next = replaceRange(value, cursor - 1, cursor, "\n");
+          applyEditorValue(next.value, next.selection);
+          return;
+        }
         void submit();
         return;
       }
 
-      if (event.key === "Escape" && value.length === 0 && isBusy) {
+      if (event.key === "Escape" && isBusy) {
         event.preventDefault();
         void abort();
       }
     },
-    [abort, applySuggestion, isBusy, selectedSuggestionIndex, submit, suggestions, value.length],
+    [abort, activeSuggestionToken, applyEditorValue, applySuggestion, handleEditorKeymap, handlePasteMarkerKey, historyIndex, insertAtSelection, isBusy, modelOptions, modelSelectOpen, navigateHistory, rawSuggestions.length, selectModel, selectedModelIndex, selectedSuggestionIndex, submit, suggestions, value],
   );
 
   return (
@@ -2447,7 +3710,30 @@ function PiHtmlComposer(props: {
         lineHeight: TERMINAL_LINE_HEIGHT,
       }}
     >
-      {suggestions.length > 0 && (
+      {modelSelectOpen && (
+        <div
+          className="absolute bottom-full left-0 right-0 z-30 max-h-64 overflow-y-auto border shadow-2xl"
+          style={{
+            borderColor: props.piTheme.borderMuted,
+            backgroundColor: props.theme.background,
+            color: themeText(props.theme),
+          }}
+        >
+          {modelOptions.map((model, index) => (
+            <button
+              key={model.label}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void selectModel(model)}
+              className="flex w-full items-center gap-3 px-[1ch] py-0 text-left text-[1em]"
+              style={index === selectedModelIndex ? selectedStyle(props.theme) : { color: themeText(props.theme) }}
+            >
+              <span className="min-w-0 flex-1 truncate">{model.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {suggestions.length > 0 && !modelSelectOpen && (
         <div
           className="absolute bottom-full left-0 right-0 z-20 max-h-64 overflow-y-auto border shadow-2xl"
           style={{
@@ -2473,28 +3759,43 @@ function PiHtmlComposer(props: {
           ))}
         </div>
       )}
-      <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: props.piTheme.thinkingHigh, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
-      <div className={`flex px-0 ${lineCount === 1 ? "items-center" : "items-start"}`}>
+      <div className="relative">
+        <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: props.piTheme.thinkingHigh, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
+        {thinkingLevelLabel && (
+          <span
+            className="absolute right-0 top-0 px-[0.5ch] text-[1em]"
+            style={{ backgroundColor: props.theme.background, color: props.piTheme.thinkingHigh, lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            {thinkingLevelLabel}
+          </span>
+        )}
+      </div>
+      <div className={`flex px-0 ${composerVisualRows === 1 ? "items-center" : "items-start"}`}>
         <textarea
           ref={textareaRef}
           value={value}
           onChange={(event) => {
-            setValue(event.target.value);
-            persistTextSelection(composerDraftKey, event.currentTarget);
+            const selection = {
+              start: event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+              end: event.currentTarget.selectionEnd ?? event.currentTarget.value.length,
+              direction: event.currentTarget.selectionDirection ?? "none" as const,
+            };
+            updateDraftValue(event.target.value, selection);
           }}
-          onSelect={(event) => persistTextSelection(composerDraftKey, event.currentTarget)}
-          onKeyUp={(event) => persistTextSelection(composerDraftKey, event.currentTarget)}
-          onMouseUp={(event) => persistTextSelection(composerDraftKey, event.currentTarget)}
-          onBlur={(event) => persistTextSelection(composerDraftKey, event.currentTarget)}
+          onSelect={(event) => persistComposerSelection(event.currentTarget)}
+          onKeyUp={(event) => persistComposerSelection(event.currentTarget)}
+          onMouseUp={(event) => persistComposerSelection(event.currentTarget)}
+          onBlur={(event) => persistComposerSelection(event.currentTarget)}
+          onBeforeInput={handlePasteMarkerBeforeInput}
+          onPaste={handlePaste}
           onKeyDown={handleKeyDown}
-          rows={lineCount}
+          rows={1}
           spellCheck={false}
           aria-label="message pi"
-          className="flex-1 resize-none overflow-y-auto border-0 bg-transparent p-0 text-[1em] outline-none"
+          className="flex-1 resize-none overflow-hidden border-0 bg-transparent p-0 text-[1em] outline-none"
           style={{
             color: themeText(props.theme),
             caretColor: props.theme.cursor ?? themeText(props.theme),
-            height: `${lineCount * TERMINAL_LINE_HEIGHT}em`,
             lineHeight: TERMINAL_LINE_HEIGHT,
           }}
         />
@@ -2514,7 +3815,7 @@ function PiHtmlComposer(props: {
 }
 
 export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
-  const { items, liveItems, uiRequest, extensionUiState, usageStats, clearUiRequest, loadState, error } = usePiTranscript(props.threadId);
+  const { items, liveItems, uiRequest, extensionUiState, editorTextRequest, usageStats, clearUiRequest, loadState, error } = usePiTranscript(props.threadId);
   const { settings } = useAppSettings();
   const baseTerminalTheme = terminalThemeFromApp();
   const piTheme = piHtmlThemeFromApp(baseTerminalTheme);
@@ -2522,38 +3823,140 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerFocusRef = useRef<(() => void) | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number; target: HTMLElement | null } | null>(null);
   const atBottomRef = useRef(true);
+  const previousVisibleCountRef = useRef(0);
+  const [showNewOutput, setShowNewOutput] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
+  const [thinkingVisible, setThinkingVisible] = useState(true);
   const visibleItems = useMemo(() => {
     if (liveItems.length === 0) return mergeToolResultsForDisplay(items);
     const persistedSignatures = new Set(items.map(transcriptSignature));
     const visibleLiveItems = liveItems.filter((item) => !persistedSignatures.has(transcriptSignature(item)));
     return mergeToolResultsForDisplay([...items, ...visibleLiveItems]);
   }, [items, liveItems]);
+  const promptHistory = useMemo(() => transcriptPromptHistory(items), [items]);
+  const searchMatches = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+    return visibleItems.flatMap((item, index) => itemText(item).toLowerCase().includes(query) ? [index] : []);
+  }, [searchQuery, visibleItems]);
+  const activeSearchRowIndex = searchMatches.length > 0 ? searchMatches[searchIndex % searchMatches.length] : null;
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || !atBottomRef.current) return;
-    el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const previousCount = previousVisibleCountRef.current;
+    previousVisibleCountRef.current = visibleItems.length;
+    if (atBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+      setShowNewOutput(false);
+      return;
+    }
+    if (visibleItems.length > previousCount) setShowNewOutput(true);
   }, [visibleItems.length]);
+
+  useEffect(() => {
+    if (!searchOpen || activeSearchRowIndex === null) return;
+    const row = scrollRef.current?.querySelector(`[data-pi-row-index="${activeSearchRowIndex}"]`);
+    if (row instanceof HTMLElement) row.scrollIntoView({ block: "center" });
+  }, [activeSearchRowIndex, searchOpen]);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (atBottomRef.current) setShowNewOutput(false);
   }, []);
 
   const registerComposerFocus = useCallback((focus: (() => void) | null) => {
     composerFocusRef.current = focus;
   }, []);
 
+  const goToSearchMatch = useCallback((direction: -1 | 1) => {
+    if (searchMatches.length === 0) return;
+    setSearchIndex((index) => (index + direction + searchMatches.length) % searchMatches.length);
+  }, [searchMatches.length]);
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    atBottomRef.current = true;
+    setShowNewOutput(false);
+  }, []);
+
+  const handleRootKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const key = event.key.toLowerCase();
+      const searchShortcut = key === "f" && !event.altKey && !event.shiftKey && (isMacLikePlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey);
+      if (searchShortcut) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSearchOpen(true);
+        setSearchIndex(0);
+        return;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && key === "o") {
+        event.preventDefault();
+        event.stopPropagation();
+        setToolsExpanded((expanded) => !expanded);
+        return;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && key === "t") {
+        event.preventDefault();
+        event.stopPropagation();
+        setThinkingVisible((visible) => !visible);
+        return;
+      }
+      if (searchOpen && event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setSearchOpen(false);
+        requestAnimationFrame(() => composerFocusRef.current?.());
+      }
+    },
+    [searchOpen],
+  );
+
   const showComposer = props.showComposer === true;
   const showInputComposer = showComposer && !uiRequest;
 
-  const handleRootPointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!showInputComposer) return;
+  const handleRootPasteCapture = useCallback(
+    (event: ReactClipboardEvent<HTMLDivElement>) => {
+      if (!showInputComposer || event.defaultPrevented) return;
       const target = isHTMLElement(event.target) ? event.target : null;
       if (isEditableTarget(target) || isInteractiveTarget(target) || isInsideKeyboardOwner(target)) return;
+      const text = clipboardPlainText(event.clipboardData);
+      if (!text) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dispatchPiHtmlComposerInsert({ threadId: props.threadId, text, source: "paste" });
+    },
+    [props.threadId, showInputComposer],
+  );
+
+  const handleRootPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    pointerStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      target: isHTMLElement(event.target) ? event.target : null,
+    };
+  }, []);
+
+  const handleRootPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!showInputComposer) return;
+      const start = pointerStartRef.current;
+      pointerStartRef.current = null;
+      const target = isHTMLElement(event.target) ? event.target : null;
+      const originalTarget = start?.target ?? target;
+      if (isEditableTarget(originalTarget) || isInteractiveTarget(originalTarget) || isInsideKeyboardOwner(originalTarget)) return;
+      if (Math.abs(event.clientX - (start?.x ?? event.clientX)) > 4 || Math.abs(event.clientY - (start?.y ?? event.clientY)) > 4) return;
+      if (window.getSelection()?.toString()) return;
       requestAnimationFrame(() => composerFocusRef.current?.());
     },
     [showInputComposer],
@@ -2563,6 +3966,9 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
     <div
       ref={rootRef}
       onPointerDownCapture={handleRootPointerDown}
+      onPointerUpCapture={handleRootPointerUp}
+      onPasteCapture={handleRootPasteCapture}
+      onKeyDownCapture={handleRootKeyDown}
       className="flex h-full min-h-0 flex-col"
       style={{
         backgroundColor: terminalTheme.background,
@@ -2572,14 +3978,63 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
         lineHeight: TERMINAL_LINE_HEIGHT,
       }}
     >
-      <div ref={scrollRef} role="log" aria-live="polite" onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+      {searchOpen && (
+        <div
+          className="flex shrink-0 items-center gap-[1ch] border-b px-[1ch] py-0"
+          style={{ borderColor: piTheme.borderMuted, backgroundColor: terminalTheme.background, color: themeText(terminalTheme) }}
+        >
+          <span style={{ color: piTheme.accent }}>find</span>
+          <input
+            autoFocus
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setSearchIndex(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                goToSearchMatch(event.shiftKey ? -1 : 1);
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setSearchOpen(false);
+                requestAnimationFrame(() => composerFocusRef.current?.());
+              }
+            }}
+            className="min-w-0 flex-1 border-0 bg-transparent p-0 outline-none"
+            style={{ color: themeText(terminalTheme), caretColor: terminalTheme.cursor ?? themeText(terminalTheme) }}
+          />
+          <button type="button" onClick={() => goToSearchMatch(-1)} style={{ color: themeText(terminalTheme) }}>↑</button>
+          <button type="button" onClick={() => goToSearchMatch(1)} style={{ color: themeText(terminalTheme) }}>↓</button>
+          <span style={{ color: themeMuted(terminalTheme) }}>{searchMatches.length === 0 ? "0/0" : `${searchIndex + 1}/${searchMatches.length}`}</span>
+          <button type="button" onClick={() => setSearchOpen(false)} style={{ color: themeText(terminalTheme) }}>×</button>
+        </div>
+      )}
+      <div ref={scrollRef} role="log" aria-live="polite" onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
         {visibleItems.length === 0 && loadState !== "error" && (
           <pre className="m-0" style={{ color: themeMuted(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{loadState === "loading" ? "Loading transcript…" : ""}</pre>
         )}
-        {visibleItems.map((item) => (
-          <PiTranscriptRow key={item.id} item={item} theme={terminalTheme} piTheme={piTheme} />
+        {visibleItems.map((item, index) => (
+          <div
+            key={item.id}
+            data-pi-row-index={index}
+            style={index === activeSearchRowIndex ? { outline: `1px solid ${piTheme.borderAccent}`, outlineOffset: "-1px" } : undefined}
+          >
+            <PiTranscriptRow item={item} theme={terminalTheme} piTheme={piTheme} toolsExpanded={toolsExpanded} thinkingVisible={thinkingVisible} />
+          </div>
         ))}
         {error && <pre className="m-0" style={{ color: terminalTheme.red ?? themeText(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{error}</pre>}
+        {showNewOutput && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="sticky bottom-0 left-1/2 z-10 block border px-[1ch] py-0 text-[1em]"
+            style={{ borderColor: piTheme.borderMuted, backgroundColor: terminalTheme.background, color: piTheme.accent, lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            new output ↓
+          </button>
+        )}
       </div>
       <PiExtensionWidgets widgets={extensionUiState.widgets} placement="aboveEditor" theme={terminalTheme} />
       {uiRequest && <PiExtensionUiPrompt key={`${props.threadId}:${uiRequest.id}`} threadId={props.threadId} request={uiRequest} onDone={clearUiRequest} theme={terminalTheme} />}
@@ -2591,6 +4046,8 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
           piTheme={piTheme}
           extensionUiState={extensionUiState}
           usageStats={usageStats}
+          history={promptHistory}
+          editorTextRequest={editorTextRequest}
           autoFocusEnabled
           registerFocus={registerComposerFocus}
         />

@@ -11,6 +11,7 @@ import {
   ProjectCreateCommand,
   ThreadTurnStartCommand,
   OrchestrationThread,
+  ProjectScript,
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
@@ -26,6 +27,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
+const decodeProjectScript = Schema.decodeUnknownEffect(ProjectScript);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 
 const baseThread = {
@@ -118,6 +120,21 @@ it.effect("rejects command fields that become empty after trim", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes project script worktree terminal visibility default", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectScript({
+      id: "setup",
+      name: "Setup",
+      command: "bun install",
+      icon: "configure",
+      runOnWorktreeCreate: true,
+    });
+
+    assert.strictEqual(parsed.openTerminalOnWorktreeCreate, true);
+    assert.strictEqual(parsed.terminalTarget, "thread");
   }),
 );
 

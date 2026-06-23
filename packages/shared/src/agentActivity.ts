@@ -1,6 +1,7 @@
 import type { AgentActivityStatus } from "@clui/contracts";
 
 export const AGENT_ACTIVITY_LABELS: Record<AgentActivityStatus, string> = {
+  thinking: "Thinking",
   planning: "Planning",
   reading: "Reading",
   searching: "Searching",
@@ -202,7 +203,7 @@ function classifyAgentActivityFromText(
 }
 
 export function classifyAgentActivityFromPrompt(promptText: string): AgentActivityStatus | null {
-  return classifyAgentActivityFromText(promptText, "planning");
+  return classifyAgentActivityFromText(promptText, "thinking");
 }
 
 export function classifyAgentActivityFromBashCommand(
@@ -254,6 +255,15 @@ export function classifyAgentActivityFromPiReason(input: {
   readonly description?: unknown;
   readonly agentName?: unknown;
 }): AgentActivityStatus | null {
+  const reason = input.reason ?? "";
+  if (reason === "initial_prompt" || reason === "agent_start" || reason === "provider_request") {
+    return "thinking";
+  }
+  if (reason === "agent_end") return null;
+
+  const toolMatch = /^(tool_start|tool_call|tool_input|tool_input_resolved):(.+)$/u.exec(reason);
+  if (toolMatch?.[1] === "tool_input_resolved") return "thinking";
+
   const explicitToolName = input.toolName;
   if (typeof explicitToolName === "string" && explicitToolName.trim().length > 0) {
     return classifyAgentActivityFromTool({
@@ -264,14 +274,9 @@ export function classifyAgentActivityFromPiReason(input: {
     });
   }
 
-  const reason = input.reason ?? "";
-  if (reason === "initial_prompt" || reason === "agent_start") return "planning";
-  if (reason === "agent_end") return null;
-
-  const toolMatch = /^(?:tool_start|tool_call|tool_input|tool_input_resolved):(.+)$/u.exec(reason);
   if (!toolMatch) return null;
   return classifyAgentActivityFromTool({
-    toolName: toolMatch[1],
+    toolName: toolMatch[2],
     command: input.command,
     description: input.description,
     agentName: input.agentName,

@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -26,6 +27,7 @@ import {
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
+import { projectScriptRuntimeEnv } from "../projectScripts";
 import { syncTerminalSurfaceTheme } from "../lib/terminalSurfaceTheme";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
@@ -53,6 +55,7 @@ interface ProjectTerminalViewportProps {
   threadId: ThreadId;
   terminalId: string;
   cwd: string;
+  env: Record<string, string>;
   resizeEpoch: number;
   drawerHeight: number;
 }
@@ -61,6 +64,7 @@ function ProjectTerminalViewport({
   threadId,
   terminalId,
   cwd,
+  env,
   resizeEpoch,
   drawerHeight,
 }: ProjectTerminalViewportProps) {
@@ -233,6 +237,7 @@ function ProjectTerminalViewport({
           cwd,
           cols: activeTerminal.cols,
           rows: activeTerminal.rows,
+          env,
         });
         if (disposed) return;
         activeTerminal.write("\u001bc");
@@ -329,8 +334,7 @@ function ProjectTerminalViewport({
       fitAddonRef.current = null;
       terminal.dispose();
     };
-    // cwd and terminalId are stable for the lifetime of this component instance
-  }, [cwd, terminalId, threadId, searchInit, searchHandleKey, searchDispose]);
+  }, [cwd, env, terminalId, threadId, searchInit, searchHandleKey, searchDispose]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -372,6 +376,7 @@ function ProjectTerminalViewport({
 
 export interface ProjectTerminalDrawerProps {
   projectId: ProjectId;
+  projectCwd: string;
   cwd: string;
   onClose: () => void;
   height: number;
@@ -382,6 +387,7 @@ const newProjectTerminalId = () => crypto.randomUUID().slice(0, 8);
 
 export default function ProjectTerminalDrawer({
   projectId,
+  projectCwd,
   cwd,
   onClose,
   height,
@@ -395,6 +401,15 @@ export default function ProjectTerminalDrawer({
   const createTerminal = useTerminalStateStore((state) => state.newTerminal);
   const setActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
   const closeTerminal = useTerminalStateStore((state) => state.closeTerminal);
+
+  const terminalEnv = useMemo(
+    () =>
+      projectScriptRuntimeEnv({
+        project: { cwd: projectCwd },
+        worktreePath: cwd === projectCwd ? null : cwd,
+      }),
+    [cwd, projectCwd],
+  );
 
   const terminalIds =
     terminalState.terminalIds.length > 0
@@ -632,6 +647,7 @@ export default function ProjectTerminalDrawer({
           threadId={threadId}
           terminalId={activeTerminalId}
           cwd={cwd}
+          env={terminalEnv}
           resizeEpoch={resizeEpoch}
           drawerHeight={drawerHeight}
         />

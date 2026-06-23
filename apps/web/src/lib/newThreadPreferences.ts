@@ -1,3 +1,5 @@
+import type { PiRenderMode } from "@clui/contracts";
+
 const STORAGE_KEY = "clui:new-thread-preferences:v1";
 
 export type NewThreadEnvMode = "local" | "worktree";
@@ -7,12 +9,15 @@ export interface NewThreadPreference {
   branch: string;
   /** Persisted Fast mode default for new pi threads in this project. */
   fastMode: boolean;
+  /** Persisted pi render mode default for new pi threads in this project. */
+  piRenderMode: PiRenderMode;
 }
 
 export interface PartialNewThreadPreference {
   envMode?: NewThreadEnvMode;
   branch?: string;
   fastMode?: boolean;
+  piRenderMode?: PiRenderMode;
 }
 
 function safeBranch(branch: string | null | undefined): string | null {
@@ -23,6 +28,10 @@ function safeBranch(branch: string | null | undefined): string | null {
 function safeProjectCwd(projectCwd: string): string | null {
   const trimmed = projectCwd.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function safePiRenderMode(piRenderMode: unknown): PiRenderMode | null {
+  return piRenderMode === "terminal" || piRenderMode === "html" ? piRenderMode : null;
 }
 
 function getStorage(): Storage | null {
@@ -64,7 +73,12 @@ export function readNewThreadPreference(projectCwd: string): NewThreadPreference
   if (!raw || (raw.envMode !== "local" && raw.envMode !== "worktree") || !branch) {
     return null;
   }
-  return { envMode: raw.envMode, branch, fastMode: raw.fastMode === true };
+  return {
+    envMode: raw.envMode,
+    branch,
+    fastMode: raw.fastMode === true,
+    piRenderMode: safePiRenderMode(raw.piRenderMode) ?? "terminal",
+  };
 }
 
 export function writeNewThreadPreference(
@@ -86,6 +100,7 @@ export function writeNewThreadPreference(
     envMode: nextEnvMode,
     branch,
     fastMode: preference.fastMode ?? existing?.fastMode ?? false,
+    piRenderMode: preference.piRenderMode ?? safePiRenderMode(existing?.piRenderMode) ?? "terminal",
   };
   writeRaw(all);
 }
@@ -107,6 +122,7 @@ export function writeNewThreadFastModePreference(
     envMode,
     branch: safeBranch(existing?.branch) ?? "",
     fastMode,
+    piRenderMode: safePiRenderMode(existing?.piRenderMode) ?? "terminal",
   };
   writeRaw(all);
 }
@@ -119,4 +135,35 @@ export function readNewThreadFastModePreference(projectCwd: string): boolean | n
   if (existing.fastMode === true) return true;
   if (existing.fastMode === false) return false;
   return null;
+}
+
+export function writeNewThreadPiRenderModePreference(
+  projectCwd: string,
+  piRenderMode: PiRenderMode,
+): void {
+  const cwd = safeProjectCwd(projectCwd);
+  const safeRenderMode = safePiRenderMode(piRenderMode);
+  if (!cwd || !safeRenderMode) return;
+
+  const existing = readRaw()[cwd];
+  const envMode =
+    existing?.envMode === "local" || existing?.envMode === "worktree"
+      ? existing.envMode
+      : "local";
+  const all = readRaw();
+  all[cwd] = {
+    envMode,
+    branch: safeBranch(existing?.branch) ?? "",
+    fastMode: existing?.fastMode ?? false,
+    piRenderMode: safeRenderMode,
+  };
+  writeRaw(all);
+}
+
+export function readNewThreadPiRenderModePreference(projectCwd: string): PiRenderMode | null {
+  const cwd = safeProjectCwd(projectCwd);
+  if (!cwd) return null;
+  const existing = readRaw()[cwd];
+  if (!existing) return null;
+  return safePiRenderMode(existing.piRenderMode);
 }

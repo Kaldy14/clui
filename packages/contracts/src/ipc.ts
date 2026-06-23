@@ -94,6 +94,8 @@ import type {
   PiExtensionUiResponseInput,
   PiGetCommandsInput,
   PiGetCommandsResult,
+  PiRpcCommandInput,
+  PiRpcCommandResult,
   PiSessionEvent,
 } from "./pi-terminal";
 import { EditorId } from "./editor";
@@ -274,6 +276,7 @@ export interface NativeApi {
     abort: (input: PiAbortInput) => Promise<void>;
     respondExtensionUi: (input: PiExtensionUiResponseInput) => Promise<void>;
     getCommands: (input: PiGetCommandsInput) => Promise<PiGetCommandsResult>;
+    rpcCommand: (input: PiRpcCommandInput) => Promise<PiRpcCommandResult>;
     onSessionEvent: (callback: (event: PiSessionEvent) => void) => () => void;
   };
 }

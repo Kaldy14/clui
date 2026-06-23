@@ -13,7 +13,10 @@ describe("terminalStateStore actions", () => {
     if (typeof localStorage !== "undefined") {
       localStorage.clear();
     }
-    useTerminalStateStore.setState({ terminalStateByThreadId: {} });
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {},
+      projectTerminalCwdByThreadId: {},
+    });
   });
 
   it("returns a closed default terminal state for unknown threads", () => {
@@ -168,8 +171,8 @@ describe("terminalStateStore actions", () => {
     const projectBTerminalThreadId = projectTerminalThreadId(PROJECT_B_ID);
 
     store.newTerminal(projectATerminalThreadId, "terminal-2");
-    store.setProjectTerminalOpen(projectATerminalThreadId, true);
-    store.setProjectTerminalOpen(projectBTerminalThreadId, true);
+    store.setProjectTerminalOpen(projectATerminalThreadId, true, "/repo/worktree-a");
+    store.setProjectTerminalOpen(projectBTerminalThreadId, true, "/repo/worktree-b");
 
     const projectATerminalState = selectThreadTerminalState(
       useTerminalStateStore.getState().terminalStateByThreadId,
@@ -185,5 +188,21 @@ describe("terminalStateStore actions", () => {
     expect(projectATerminalState.activeTerminalId).toBe("terminal-2");
     expect(projectBTerminalState.terminalOpen).toBe(true);
     expect(projectBTerminalState.terminalIds).toEqual(["default"]);
+    expect(useTerminalStateStore.getState().projectTerminalCwdByThreadId).toEqual({
+      [projectBTerminalThreadId]: "/repo/worktree-b",
+    });
+  });
+
+  it("tracks and clears project terminal cwd overrides", () => {
+    const store = useTerminalStateStore.getState();
+    const projectATerminalThreadId = projectTerminalThreadId(PROJECT_A_ID);
+
+    store.setProjectTerminalOpen(projectATerminalThreadId, true, "/repo/worktree-a");
+    expect(useTerminalStateStore.getState().projectTerminalCwdByThreadId).toEqual({
+      [projectATerminalThreadId]: "/repo/worktree-a",
+    });
+
+    store.setProjectTerminalOpen(projectATerminalThreadId, false);
+    expect(useTerminalStateStore.getState().projectTerminalCwdByThreadId).toEqual({});
   });
 });

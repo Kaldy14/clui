@@ -144,6 +144,9 @@ export const ProjectScript = Schema.Struct({
   command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
+  openTerminalOnWorktreeCreate: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(() => true),
+  ),
   terminalTarget: ProjectScriptTerminalTarget.pipe(
     Schema.withDecodingDefault(() => "thread" as const),
   ),

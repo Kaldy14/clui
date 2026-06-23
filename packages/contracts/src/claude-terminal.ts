@@ -13,6 +13,7 @@ export const ClaudeHookStatus = Schema.Literals([
 export type ClaudeHookStatus = typeof ClaudeHookStatus.Type;
 
 export const AgentActivityStatus = Schema.Literals([
+  "thinking",
   "planning",
   "reading",
   "searching",

@@ -76,6 +76,7 @@ describe("decider project scripts", () => {
         icon: "lint",
         terminalTarget: "thread",
         runOnWorktreeCreate: false,
+        openTerminalOnWorktreeCreate: true,
       },
     ] as const;
 

@@ -221,6 +221,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               icon: "build",
               terminalTarget: "thread",
               runOnWorktreeCreate: false,
+              openTerminalOnWorktreeCreate: true,
             },
           ],
           prompts: [],

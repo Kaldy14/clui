@@ -31,6 +31,7 @@ describe("projectScripts helpers", () => {
         command: "bun install",
         icon: "configure" as const,
         runOnWorktreeCreate: true,
+        openTerminalOnWorktreeCreate: true,
         terminalTarget: "thread" as const,
       },
       {
@@ -39,6 +40,7 @@ describe("projectScripts helpers", () => {
         command: "bun test",
         icon: "test" as const,
         runOnWorktreeCreate: false,
+        openTerminalOnWorktreeCreate: true,
         terminalTarget: "thread" as const,
       },
     ];

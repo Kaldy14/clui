@@ -38,7 +38,10 @@ const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 function ProjectTerminalDrawers() {
   const projects = useStore((s) => s.projects);
   const terminalStateByThreadId = useTerminalStateStore((s) => s.terminalStateByThreadId);
-  const setTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
+  const projectTerminalCwdByThreadId = useTerminalStateStore(
+    (s) => s.projectTerminalCwdByThreadId,
+  );
+  const setProjectTerminalOpen = useTerminalStateStore((s) => s.setProjectTerminalOpen);
   const setTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
 
   const openProjectTerminals = projects.filter((project) => {
@@ -58,10 +61,11 @@ function ProjectTerminalDrawers() {
           <ProjectTerminalDrawer
             key={project.id}
             projectId={project.id}
-            cwd={project.cwd}
+            projectCwd={project.cwd}
+            cwd={projectTerminalCwdByThreadId[syntheticId] ?? project.cwd}
             height={state?.terminalHeight ?? 280}
             onHeightChange={(height) => setTerminalHeight(syntheticId, height)}
-            onClose={() => setTerminalOpen(syntheticId, false)}
+            onClose={() => setProjectTerminalOpen(syntheticId, false)}
           />
         );
       })}
@@ -171,14 +175,20 @@ function ChatRouteLayout() {
       // Cmd+Shift+J: Toggle project terminal drawer
       if (isProjectTerminalToggleShortcut(event, keybindings)) {
         event.preventDefault();
+        const storeState = useStore.getState();
         const currentThread = routeThreadId
-          ? useStore.getState().threads.find((t) => t.id === routeThreadId)
+          ? storeState.threads.find((t) => t.id === routeThreadId)
           : undefined;
         if (currentThread) {
+          const project = storeState.projects.find((entry) => entry.id === currentThread.projectId);
+          const targetCwd = currentThread.worktreePath ?? project?.cwd ?? null;
+          if (!targetCwd) return;
           const tsState = useTerminalStateStore.getState();
           const syntheticId = projectTerminalThreadId(currentThread.projectId);
-          const isOpen = tsState.terminalStateByThreadId[syntheticId]?.terminalOpen ?? false;
-          tsState.setProjectTerminalOpen(syntheticId, !isOpen);
+          const terminalState = tsState.terminalStateByThreadId[syntheticId];
+          const currentCwd = tsState.projectTerminalCwdByThreadId[syntheticId] ?? project?.cwd ?? null;
+          const shouldClose = terminalState?.terminalOpen === true && currentCwd === targetCwd;
+          tsState.setProjectTerminalOpen(syntheticId, !shouldClose, targetCwd);
         }
         return;
       }

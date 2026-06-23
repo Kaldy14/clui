@@ -657,6 +657,9 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     [],
   );
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
+  const projectTerminalCwdByThreadId = useTerminalStateStore(
+    (state) => state.projectTerminalCwdByThreadId,
+  );
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const storeSetTerminalOpen = useTerminalStateStore((state) => state.setProjectTerminalOpen);
   const clearProjectDraftThreadId = useCallback((_projectId: ProjectId) => {}, []);
@@ -745,6 +748,23 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
+  );
+  const toggleProjectTerminalForCwd = useCallback(
+    (projectId: ProjectId, cwd: string) => {
+      const syntheticId = projectTerminalThreadId(projectId);
+      const terminalStore = useTerminalStateStore.getState();
+      const terminalState = selectThreadTerminalState(
+        terminalStore.terminalStateByThreadId,
+        syntheticId,
+      );
+      const currentCwd =
+        terminalStore.projectTerminalCwdByThreadId[syntheticId] ??
+        projectCwdById.get(projectId) ??
+        null;
+      const shouldClose = terminalState.terminalOpen && currentCwd === cwd;
+      storeSetTerminalOpen(syntheticId, !shouldClose, cwd);
+    },
+    [projectCwdById, storeSetTerminalOpen],
   );
   const threadGitTargets = useMemo(
     () =>
@@ -2213,6 +2233,10 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                               );
                               const hasRunning = projTermState.runningTerminalIds.length > 0;
                               const isOpen = projTermState.terminalOpen;
+                              const isOpenForProjectCwd =
+                                isOpen &&
+                                (projectTerminalCwdByThreadId[projTermThreadId] ?? project.cwd) ===
+                                  project.cwd;
                               return (
                                 <Tooltip>
                                   <TooltipTrigger
@@ -2235,7 +2259,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                         onClick={(event) => {
                                           event.preventDefault();
                                           event.stopPropagation();
-                                          storeSetTerminalOpen(projTermThreadId, !isOpen);
+                                          toggleProjectTerminalForCwd(project.id, project.cwd);
                                         }}
                                       >
                                         <TerminalIcon
@@ -2245,7 +2269,9 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                     }
                                   />
                                   <TooltipPopup side="top">
-                                    {isOpen ? "Close project terminal" : "Open project terminal"}
+                                    {isOpenForProjectCwd
+                                      ? "Close project terminal"
+                                      : "Open project terminal"}
                                   </TooltipPopup>
                                 </Tooltip>
                               );
@@ -2304,6 +2330,20 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                     selectThreadTerminalState(terminalStateByThreadId, thread.id)
                                       .runningTerminalIds,
                                   );
+                                  const threadWorktreePath = thread.worktreePath;
+                                  const projectTerminalId = projectTerminalThreadId(thread.projectId);
+                                  const projectTerminalState = selectThreadTerminalState(
+                                    terminalStateByThreadId,
+                                    projectTerminalId,
+                                  );
+                                  const projectTerminalCwd =
+                                    projectTerminalCwdByThreadId[projectTerminalId] ??
+                                    projectCwdById.get(thread.projectId) ??
+                                    null;
+                                  const isProjectTerminalOpenForWorktree =
+                                    threadWorktreePath !== null &&
+                                    projectTerminalState.terminalOpen &&
+                                    projectTerminalCwd === threadWorktreePath;
 
                                   return (
                                     <SortableThreadItem key={thread.id} thread={thread}>
@@ -2405,7 +2445,34 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                                     </Tooltip>
                                                   )}
                                                   <WorktreeIndicator
-                                                    worktreePath={thread.worktreePath}
+                                                    ariaLabel={
+                                                      isProjectTerminalOpenForWorktree
+                                                        ? "Close project terminal in worktree"
+                                                        : "Open project terminal in worktree"
+                                                    }
+                                                    className={
+                                                      isProjectTerminalOpenForWorktree
+                                                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                                                        : undefined
+                                                    }
+                                                    onClick={
+                                                      threadWorktreePath
+                                                        ? (event) => {
+                                                            event.preventDefault();
+                                                            event.stopPropagation();
+                                                            toggleProjectTerminalForCwd(
+                                                              thread.projectId,
+                                                              threadWorktreePath,
+                                                            );
+                                                          }
+                                                        : undefined
+                                                    }
+                                                    title={
+                                                      isProjectTerminalOpenForWorktree
+                                                        ? "Close project terminal"
+                                                        : "Open project terminal"
+                                                    }
+                                                    worktreePath={threadWorktreePath}
                                                   />
                                                   <SidebarThreadStatusLabel
                                                     threadStatus={threadStatus}

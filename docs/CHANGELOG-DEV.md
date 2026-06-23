@@ -4,6 +4,239 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-23 — Show thinking sidebar status
+
+**Problem:** Sidebar status badges showed generic or task-derived working labels while the agent was waiting on model reasoning.
+
+**Root cause:** Activity status did not include a Thinking state, and prompt/provider-request phases were not mapped separately from tool activity.
+
+**Fix:** Added a `thinking` activity status, emit it on prompt submission, post-tool reasoning, and Pi provider requests, and surface it through existing sidebar activity labels.
+
+**Affected files:**
+
+- `packages/contracts/src/claude-terminal.ts`
+- `packages/shared/src/agentActivity.ts`
+- `packages/shared/src/agentActivity.test.ts`
+- `apps/server/src/hooks/hookReceiver.ts`
+- `apps/server/src/hooks/hookReceiver.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/web/src/lib/threadStatus.test.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Round Pi HTML user messages
+
+**Problem:** Pi HTML user message blocks looked too sharp and vertically padded.
+
+**Root cause:** The user message container used square borders with generous top/bottom padding.
+
+**Fix:** Added rounded corners and reduced vertical padding on the user message block.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Keep Pi markdown text out of thinking gray
+
+**Problem:** Pi HTML markdown styling reused gray text in places like blockquotes and separators, which made it look like thinking output.
+
+**Root cause:** Markdown component styles used muted/border-muted colors for visual formatting, while thinking text was not explicitly styled beyond color.
+
+**Fix:** Kept markdown formatting text white-ish by default, reserved gray for thinking parts, and rendered thinking text in italics.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Quiet worktree setup actions
+
+**Problem:** Saved actions that ran automatically on worktree creation always opened a terminal drawer.
+
+**Root cause:** Project scripts only stored whether they should auto-run, and the worktree creation path always used the visible terminal runner.
+
+**Fix:** Added a persisted auto-run terminal visibility setting, exposed it as an action checkbox, and passed it to the worktree setup runner so setup actions can run without opening the terminal.
+
+**Affected files:**
+
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/orchestration.test.ts`
+- `apps/web/src/components/ProjectScriptsControl.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/store.ts`
+- `apps/web/src/projectScripts.test.ts`
+- `apps/server/src/orchestration/decider.projectScripts.test.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Show Pi thinking level on HTML composer
+
+**Problem:** Pi HTML did not show the active model thinking level near the input.
+
+**Root cause:** The HTML composer used Pi RPC commands for model/thinking shortcuts but did not surface `get_state().thinkingLevel` in the UI.
+
+**Fix:** Poll Pi RPC state for the thinking level, update it after thinking/model changes, and render it on the right side of the composer top line.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Persist per-project Pi render mode for new threads
+
+**Problem:** The new-thread Terminal/HTML selector for Pi reset instead of remembering the last choice for each project.
+
+**Root cause:** Per-project new-thread preferences only stored branch/env mode and Pi Fast mode, not Pi render mode.
+
+**Fix:** Added Pi render mode to new-thread preferences, persisted selector changes per project, restored it for new threads, and covered the preference behavior in tests.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/newThreadPreferences.ts`
+- `apps/web/src/lib/newThreadPreferences.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Pi HTML working indicator and composer sizing
+
+**Problem:** Pi HTML could look idle while Pi was still working, Cmd+Left/Right did not move to line boundaries, and composer height ignored visual wrapping.
+
+**Root cause:** The footer had no live hook-status animation, the macOS line-boundary keymap treated every Cmd key as line-left/right and blocked shortcuts like Cmd+V, and composer height was based on newline counts instead of rendered textarea `scrollHeight`.
+
+**Fix:** Added a terminal-style animated working indicator, constrained Cmd+Left/Right handling to arrow keys, and autosized the composer from measured `scrollHeight` with resize observation for wrapped lines.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Pi HTML paste focus and tool output tailing
+
+**Problem:** Cmd+V still failed when focus was on non-editable app chrome, and large bash/read tool outputs polluted the Pi HTML transcript.
+
+**Root cause:** Some browsers only reliably deliver paste contents to an editable target; the fallback read path can be permission-limited or race the native paste event. In desktop mode, Electron's permission handler also denied `clipboard-read`. Tool output rendering printed full bash/read results without line limits.
+
+**Fix:** Focus the Pi HTML textarea synchronously on paste shortcuts before the browser performs paste, keep paste/readText fallbacks with duplicate guards, show a minimal denial hint if clipboard read fails, allow app-scoped clipboard permissions in Electron, and tail bash/read tool output to the last 10 lines.
+
+**Affected files:**
+
+- `apps/desktop/src/main.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Pi HTML terminal-style markdown rendering
+
+**Problem:** Pi HTML assistant output showed raw markdown markers such as `**`, backticks, headings, lists, and tables instead of formatting them.
+
+**Root cause:** `PiTextBlock` only split fenced code blocks and rendered all other transcript text as raw `<pre>` text.
+
+**Fix:** Replaced the ad-hoc code-fence splitter with `react-markdown` plus GFM using custom terminal-style renderers that keep font size fixed while using color, weight, italics, and borders without code backgrounds.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Pi HTML composer paste and saved prompt submission
+
+**Problem:** In Pi HTML mode, pasted text could leave the composer unchanged, especially when Cmd+V focus was outside the textarea, and project prompt buttons in the app header inserted text without submitting it.
+
+**Root cause:** The HTML composer relied on native textarea paste for normal text, while focus often remained on surrounding app chrome; the header prompt path also needed an HTML-mode submit path instead of only writing terminal/TUI input or inserting composer text.
+
+**Fix:** Handle text paste explicitly through the controlled composer, add native/document paste and Cmd+V fallbacks, keep terminal prompt clicks on the TUI submit sequence, and submit Pi HTML prompt clicks through `pi.prompt`.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/lib/piHtmlComposerEvents.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Worktree sidebar icon opens project terminal in worktree
+
+**Problem:** The worktree tree icon in sidebar thread rows only indicated that a thread used a worktree; clicking it selected the thread instead of opening a terminal for that worktree.
+
+**Root cause:** Project terminal UI state only tracked open/closed state per project terminal, and the worktree indicator had no click handler or cwd target.
+
+**Fix:** Made the worktree indicator clickable in sidebar rows, tracked the cwd for the active project terminal target, and passed that cwd through sidebar, shortcuts, and project-script project terminals so the drawer opens in the selected worktree.
+
+**Affected files:**
+
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/WorktreeIndicator.tsx`
+- `apps/web/src/components/ProjectTerminalDrawer.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/routes/_chat.tsx`
+- `apps/web/src/terminalStateStore.ts`
+- `apps/web/src/terminalStateStore.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Pi HTML remaining terminal parity pass
+
+**Problem:** Pi HTML still missed several terminal Pi affordances: extended editor keybindings, atomic paste marker handling, richer autocomplete controls, search/new-output controls, tool/thinking toggles, model/thinking shortcuts, and structured fallbacks for TUI-only extension UIs.
+
+**Root cause:** HTML mode used RPC transcript rendering plus a plain textarea, while terminal mode delegates keyboard handling, search, tool expansion, model controls, and custom extension overlays to the Pi TUI/xterm runtime.
+
+**Fix:** Added a fuller HTML composer keymap, kill/yank/undo helpers, atomic paste-marker guards, improved autocomplete cancel/page/submit behavior, DOM search and new-output affordances, local tool/thinking toggles, Pi RPC command plumbing for model/thinking shortcuts, `setEditorText` handling, and RPC fallbacks for decision gate and agents manager flows.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `packages/contracts/src/pi-terminal.ts`
+- `packages/contracts/src/ipc.ts`
+- `packages/contracts/src/ws.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `/Users/richie/.pi/agent/extensions/decision-gate.ts`
+- `/Users/richie/.pi/agent/packages/pi-subagents/slash-commands.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-21 — Pi HTML input history, paste, and selection parity
+
+**Problem:** Pi HTML input could steal text selection, lacked terminal-style prompt history navigation, did not handle pasted images, and showed large pasted text inline instead of terminal paste markers.
+
+**Root cause:** The HTML composer used a plain textarea without Pi editor behaviors for history state, paste storage, paste-marker expansion, and image clipboard handling. The thread click-to-focus handler also ran too early for drag selection.
+
+**Fix:** Added non-destructive click-to-focus that preserves drag selection, prompt history navigation with draft restore, clipboard image persistence/insertion, large-paste marker storage and expansion on submit, and basic atomic marker cursor/delete behavior.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-20 — Version 0.0.29 workspace build
 
 **Problem:** The app needed a patch version bump and fresh build after the Pi HTML parity updates.

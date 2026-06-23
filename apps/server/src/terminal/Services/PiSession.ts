@@ -60,6 +60,11 @@ export interface PiSessionManagerShape {
   readonly getCommands: (
     threadId: string,
   ) => Effect.Effect<ReadonlyArray<{ name: string; description?: string; source?: string }>, PiSessionError>;
+  readonly sendRpcSessionCommand: (
+    threadId: string,
+    commandType: string,
+    payload?: Record<string, unknown>,
+  ) => Effect.Effect<unknown, PiSessionError>;
   readonly writeToSession: (threadId: string, data: string) => Effect.Effect<void, PiSessionError>;
   /** After a non-empty first line is submitted via `pi.write` (newline seen). */
   readonly notifyPromptSubmitted: (threadId: string) => Effect.Effect<void, PiSessionError>;

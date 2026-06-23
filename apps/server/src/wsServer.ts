@@ -1927,6 +1927,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { commands };
       }
 
+      case WS_METHODS.piRpcCommand: {
+        const { threadId, commandType, payload } = stripRequestTag(request.body);
+        const data = yield* piSessionManager.sendRpcSessionCommand(threadId, commandType, payload);
+        return { data };
+      }
+
       case WS_METHODS.piWrite: {
         const { threadId, data } = stripRequestTag(request.body);
         handlePiWriteBuffers(threadId, data);

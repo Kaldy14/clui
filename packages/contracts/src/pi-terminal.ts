@@ -168,6 +168,18 @@ export const PiGetCommandsResult = Schema.Struct({
 });
 export type PiGetCommandsResult = typeof PiGetCommandsResult.Type;
 
+export const PiRpcCommandInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+  commandType: TrimmedNonEmptyString,
+  payload: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+export type PiRpcCommandInput = Schema.Codec.Encoded<typeof PiRpcCommandInput>;
+
+export const PiRpcCommandResult = Schema.Struct({
+  data: Schema.Unknown,
+});
+export type PiRpcCommandResult = typeof PiRpcCommandResult.Type;
+
 export const PiWriteInput = Schema.Struct({
   threadId: TrimmedNonEmptyString,
   data: Schema.String,

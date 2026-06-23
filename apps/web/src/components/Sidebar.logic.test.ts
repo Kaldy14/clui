@@ -271,6 +271,21 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Committing", pulse: true });
   });
 
+  it("shows thinking when the agent is reasoning", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          terminalStatus: "active",
+          hookStatus: "working",
+          activityStatus: "thinking",
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toMatchObject({ label: "Thinking", pulse: true });
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({

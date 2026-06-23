@@ -239,6 +239,7 @@ const defaultPiSessionManager: PiSessionManagerShape = {
   abortSession: () => Effect.void,
   respondExtensionUi: () => Effect.void,
   getCommands: () => Effect.succeed([]),
+  sendRpcSessionCommand: () => Effect.succeed(null),
   writeToSession: () => Effect.void,
   notifyPromptSubmitted: () => Effect.void,
   resizeSession: () => Effect.void,

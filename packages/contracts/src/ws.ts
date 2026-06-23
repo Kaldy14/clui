@@ -52,6 +52,7 @@ import {
   PiAbortInput,
   PiExtensionUiResponseInput,
   PiGetCommandsInput,
+  PiRpcCommandInput,
   PiWriteInput,
   PiResizeInput,
 } from "./pi-terminal";
@@ -122,6 +123,7 @@ export const WS_METHODS = {
   piAbort: "pi.abort",
   piRespondExtensionUi: "pi.respondExtensionUi",
   piGetCommands: "pi.getCommands",
+  piRpcCommand: "pi.rpcCommand",
   piWrite: "pi.write",
   piResize: "pi.resize",
 
@@ -228,6 +230,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.piAbort, PiAbortInput),
   tagRequestBody(WS_METHODS.piRespondExtensionUi, PiExtensionUiResponseInput),
   tagRequestBody(WS_METHODS.piGetCommands, PiGetCommandsInput),
+  tagRequestBody(WS_METHODS.piRpcCommand, PiRpcCommandInput),
   tagRequestBody(WS_METHODS.piWrite, PiWriteInput),
   tagRequestBody(WS_METHODS.piResize, PiResizeInput),
 

@@ -282,6 +282,7 @@ export function createWsNativeApi(): NativeApi {
       abort: (input) => transport.request(WS_METHODS.piAbort, input),
       respondExtensionUi: (input) => transport.request(WS_METHODS.piRespondExtensionUi, input),
       getCommands: (input) => transport.request(WS_METHODS.piGetCommands, input),
+      rpcCommand: (input) => transport.request(WS_METHODS.piRpcCommand, input),
       onSessionEvent: (callback) =>
         transport.subscribe(WS_CHANNELS.piSessionEvent, (data) => {
           const payload = decodeAndWarnOnFailure(PiSessionEvent, data);

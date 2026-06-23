@@ -504,9 +504,10 @@ function updateTerminalStateByThreadId(
 
 interface TerminalStateStoreState {
   terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>;
+  projectTerminalCwdByThreadId: Record<ThreadId, string>;
   setTerminalOpen: (threadId: ThreadId, open: boolean) => void;
   /** Opens a project terminal, closing any other open project terminals first. */
-  setProjectTerminalOpen: (threadId: ThreadId, open: boolean) => void;
+  setProjectTerminalOpen: (threadId: ThreadId, open: boolean, cwd?: string | null) => void;
   setTerminalHeight: (threadId: ThreadId, height: number) => void;
   splitTerminal: (threadId: ThreadId, terminalId: string) => void;
   newTerminal: (threadId: ThreadId, terminalId: string) => void;
@@ -524,6 +525,20 @@ interface TerminalStateStoreState {
   clearNewThreadPromptDraft: (threadId: ThreadId) => void;
   clearTerminalState: (threadId: ThreadId) => void;
   removeOrphanedTerminalStates: (activeThreadIds: Set<ThreadId>) => void;
+}
+
+function normalizeProjectTerminalCwd(cwd: string | null | undefined): string | null {
+  if (typeof cwd !== "string") return null;
+  return cwd.length > 0 ? cwd : null;
+}
+
+function removeProjectTerminalCwd(
+  cwdByThreadId: Record<ThreadId, string>,
+  threadId: ThreadId,
+): Record<ThreadId, string> {
+  if (cwdByThreadId[threadId] === undefined) return cwdByThreadId;
+  const { [threadId]: _removed, ...rest } = cwdByThreadId;
+  return rest as Record<ThreadId, string>;
 }
 
 export const useTerminalStateStore = create<TerminalStateStoreState>()(
@@ -550,11 +565,15 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
 
       return {
         terminalStateByThreadId: {},
+        projectTerminalCwdByThreadId: {},
         setTerminalOpen: (threadId, open) =>
           updateTerminal(threadId, (state) => setThreadTerminalOpen(state, open)),
-        setProjectTerminalOpen: (threadId, open) =>
+        setProjectTerminalOpen: (threadId, open, cwd) =>
           set((state) => {
             let next = state.terminalStateByThreadId;
+            let nextCwdByThreadId = state.projectTerminalCwdByThreadId;
+            const targetCwd = normalizeProjectTerminalCwd(cwd);
+
             // Close all other open project terminals first
             if (open) {
               for (const existingThreadId of Object.keys(next) as ThreadId[]) {
@@ -566,15 +585,33 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
                   next = updateTerminalStateByThreadId(next, existingThreadId, (s) =>
                     setThreadTerminalOpen(s, false),
                   );
+                  nextCwdByThreadId = removeProjectTerminalCwd(
+                    nextCwdByThreadId,
+                    existingThreadId,
+                  );
                 }
               }
+              if (targetCwd !== null && nextCwdByThreadId[threadId] !== targetCwd) {
+                nextCwdByThreadId = { ...nextCwdByThreadId, [threadId]: targetCwd };
+              }
+            } else {
+              nextCwdByThreadId = removeProjectTerminalCwd(nextCwdByThreadId, threadId);
             }
+
             // Now open/close the target project terminal
             next = updateTerminalStateByThreadId(next, threadId, (s) =>
               setThreadTerminalOpen(s, open),
             );
-            if (next === state.terminalStateByThreadId) return state;
-            return { terminalStateByThreadId: next };
+            if (
+              next === state.terminalStateByThreadId &&
+              nextCwdByThreadId === state.projectTerminalCwdByThreadId
+            ) {
+              return state;
+            }
+            return {
+              terminalStateByThreadId: next,
+              projectTerminalCwdByThreadId: nextCwdByThreadId,
+            };
           }),
         setTerminalHeight: (threadId, height) =>
           updateTerminal(threadId, (state) => setThreadTerminalHeight(state, height)),
@@ -621,18 +658,57 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
             return { ...normalized, newThreadPromptDraft: "" };
           }),
         clearTerminalState: (threadId) =>
-          updateTerminal(threadId, () => createDefaultThreadTerminalState()),
+          set((state) => {
+            const nextTerminalStateByThreadId = updateTerminalStateByThreadId(
+              state.terminalStateByThreadId,
+              threadId,
+              () => createDefaultThreadTerminalState(),
+            );
+            const nextCwdByThreadId = removeProjectTerminalCwd(
+              state.projectTerminalCwdByThreadId,
+              threadId,
+            );
+            if (
+              nextTerminalStateByThreadId === state.terminalStateByThreadId &&
+              nextCwdByThreadId === state.projectTerminalCwdByThreadId
+            ) {
+              return state;
+            }
+            return {
+              terminalStateByThreadId: nextTerminalStateByThreadId,
+              projectTerminalCwdByThreadId: nextCwdByThreadId,
+            };
+          }),
         removeOrphanedTerminalStates: (activeThreadIds) =>
           set((state) => {
             const orphanedIds = Object.keys(state.terminalStateByThreadId).filter(
               (id) => !activeThreadIds.has(id as ThreadId),
             );
-            if (orphanedIds.length === 0) return state;
-            const next = { ...state.terminalStateByThreadId };
-            for (const id of orphanedIds) {
-              delete next[id as ThreadId];
+            const orphanedCwdIds = Object.keys(state.projectTerminalCwdByThreadId).filter(
+              (id) => !activeThreadIds.has(id as ThreadId),
+            );
+            if (orphanedIds.length === 0 && orphanedCwdIds.length === 0) return state;
+
+            let nextTerminalStateByThreadId = state.terminalStateByThreadId;
+            if (orphanedIds.length > 0) {
+              nextTerminalStateByThreadId = { ...state.terminalStateByThreadId };
+              for (const id of orphanedIds) {
+                delete nextTerminalStateByThreadId[id as ThreadId];
+              }
             }
-            return { terminalStateByThreadId: next };
+
+            let nextCwdByThreadId = state.projectTerminalCwdByThreadId;
+            if (orphanedCwdIds.length > 0) {
+              nextCwdByThreadId = { ...state.projectTerminalCwdByThreadId };
+              for (const id of orphanedCwdIds) {
+                delete nextCwdByThreadId[id as ThreadId];
+              }
+            }
+
+            return {
+              terminalStateByThreadId: nextTerminalStateByThreadId,
+              projectTerminalCwdByThreadId: nextCwdByThreadId,
+            };
           }),
       };
     },
@@ -642,6 +718,7 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         terminalStateByThreadId: state.terminalStateByThreadId,
+        projectTerminalCwdByThreadId: state.projectTerminalCwdByThreadId,
       }),
     },
   ),

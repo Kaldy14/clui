@@ -7,8 +7,7 @@
  * @module hookReceiver
  */
 import type { AgentActivityStatus, ClaudeHookNotificationCategory, ClaudeSessionEvent } from "@clui/contracts";
-import { classifyAgentActivityFromPrompt, classifyAgentActivityFromTool } from "@clui/shared/agentActivity";
-import { extractPromptText } from "../terminal/titleGenerator";
+import { classifyAgentActivityFromTool } from "@clui/shared/agentActivity";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_NOTIFICATION_BODY_LENGTH = 180;
@@ -166,14 +165,13 @@ function now(): string {
 }
 
 export function buildUserPromptSubmitEvents(threadId: string, rawBody = ""): ClaudeSessionEvent[] {
-  // User sent a message — Claude is about to start processing.
+  void rawBody;
+  // User sent a message — Claude is thinking before the next tool or answer.
   // Uses "turnStart" instead of "hookStatus" so the client can bypass
   // the completed grace period (a new turn is unambiguous).
-  const promptText = extractPromptText(rawBody);
-  const activityStatus = promptText ? classifyAgentActivityFromPrompt(promptText) : null;
   return [
     { type: "turnStart", threadId, createdAt: now() },
-    ...(activityStatus ? [buildActivityStatusEvent(threadId, activityStatus)] : []),
+    buildActivityStatusEvent(threadId, "thinking"),
   ];
 }
 
@@ -247,9 +245,10 @@ export function buildPermissionRequestEvents(threadId: string, rawBody: string):
 }
 
 export function buildPostToolUseEvents(threadId: string): ClaudeSessionEvent[] {
-  // A tool completed — Claude is continuing to work.
+  // A tool completed — Claude is thinking before the next tool or answer.
   // This clears "Pending Approval" after the user grants permission.
   return [
+    buildActivityStatusEvent(threadId, "thinking"),
     { type: "hookStatus", threadId, createdAt: now(), hookStatus: "working" },
   ];
 }

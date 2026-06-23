@@ -121,21 +121,23 @@ describe("summarizeNotification", () => {
 });
 
 describe("buildUserPromptSubmitEvents", () => {
-  it("returns a turnStart event", () => {
+  it("returns turnStart and thinking activity events", () => {
     const events = buildUserPromptSubmitEvents("thread-1");
-    expect(events).toHaveLength(1);
-    expect(events[0]!.type).toBe("turnStart");
+    expect(events.map((event) => event.type)).toEqual(["turnStart", "activityStatus"]);
     expect(events[0]!.threadId).toBe("thread-1");
+    if (events[1]!.type === "activityStatus") {
+      expect(events[1]!.activityStatus).toBe("thinking");
+    }
   });
 
-  it("returns an activity event when prompt text is present", () => {
+  it("keeps prompt submission activity as thinking", () => {
     const events = buildUserPromptSubmitEvents(
       "thread-1",
       JSON.stringify({ user_prompt: "translate this settings screen" }),
     );
     expect(events.map((event) => event.type)).toEqual(["turnStart", "activityStatus"]);
     if (events[1]!.type === "activityStatus") {
-      expect(events[1]!.activityStatus).toBe("translating");
+      expect(events[1]!.activityStatus).toBe("thinking");
     }
   });
 });
@@ -194,11 +196,14 @@ describe("buildPermissionRequestEvents", () => {
 });
 
 describe("buildPostToolUseEvents", () => {
-  it("returns a hookStatus working event (clears pending approval)", () => {
+  it("returns thinking activity and hookStatus working events", () => {
     const events = buildPostToolUseEvents("thread-1");
-    expect(events).toHaveLength(1);
-    if (events[0]!.type === "hookStatus") {
-      expect(events[0]!.hookStatus).toBe("working");
+    expect(events.map((event) => event.type)).toEqual(["activityStatus", "hookStatus"]);
+    if (events[0]!.type === "activityStatus") {
+      expect(events[0]!.activityStatus).toBe("thinking");
+    }
+    if (events[1]!.type === "hookStatus") {
+      expect(events[1]!.hookStatus).toBe("working");
     }
   });
 });

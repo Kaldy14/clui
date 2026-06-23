@@ -38,6 +38,7 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -84,6 +85,7 @@ export interface NewProjectScriptInput {
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
+  openTerminalOnWorktreeCreate: boolean;
   terminalTarget: ProjectScriptTerminalTarget;
   keybinding: string | null;
 }
@@ -166,6 +168,7 @@ export default function ProjectScriptsControl({
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
+  const [openTerminalOnWorktreeCreate, setOpenTerminalOnWorktreeCreate] = useState(true);
   const [terminalTarget, setTerminalTarget] = useState<ProjectScriptTerminalTarget>("thread");
   const [keybinding, setKeybinding] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -224,6 +227,7 @@ export default function ProjectScriptsControl({
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
+        openTerminalOnWorktreeCreate,
         terminalTarget,
         keybinding: keybindingRule?.key ?? null,
       } satisfies NewProjectScriptInput;
@@ -246,6 +250,7 @@ export default function ProjectScriptsControl({
     setIcon("play");
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(false);
+    setOpenTerminalOnWorktreeCreate(true);
     setTerminalTarget("thread");
     setKeybinding("");
     setValidationError(null);
@@ -259,6 +264,7 @@ export default function ProjectScriptsControl({
     setIcon(script.icon);
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(script.runOnWorktreeCreate);
+    setOpenTerminalOnWorktreeCreate(script.openTerminalOnWorktreeCreate);
     setTerminalTarget(script.terminalTarget);
     setKeybinding(keybindingValueForCommand(keybindings, commandForProjectScript(script.id)) ?? "");
     setValidationError(null);
@@ -368,6 +374,7 @@ export default function ProjectScriptsControl({
           setCommand("");
           setIcon("play");
           setRunOnWorktreeCreate(false);
+          setOpenTerminalOnWorktreeCreate(true);
           setTerminalTarget("thread");
           setKeybinding("");
           setValidationError(null);
@@ -469,6 +476,17 @@ export default function ProjectScriptsControl({
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
                 />
               </label>
+              {runOnWorktreeCreate && (
+                <label className="flex items-center gap-2 rounded-md border border-border/70 px-3 py-2 text-sm">
+                  <Checkbox
+                    checked={openTerminalOnWorktreeCreate}
+                    onCheckedChange={(checked) =>
+                      setOpenTerminalOnWorktreeCreate(checked === true)
+                    }
+                  />
+                  <span>Open terminal while running</span>
+                </label>
+              )}
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}
             </form>
           </DialogPanel>

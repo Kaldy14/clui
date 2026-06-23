@@ -48,8 +48,10 @@ import { useBranchToolbar } from "./useBranchToolbar";
 import {
   readNewThreadPreference,
   readNewThreadFastModePreference,
+  readNewThreadPiRenderModePreference,
   writeNewThreadPreference,
   writeNewThreadFastModePreference,
+  writeNewThreadPiRenderModePreference,
 } from "../lib/newThreadPreferences";
 
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
@@ -224,9 +226,14 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       const cwd = activeProjectCwd;
       const branch = nextBranch ?? thread.branch;
       if (!cwd || !branch) return;
-      writeNewThreadPreference(cwd, { envMode: nextEnvMode, branch, fastMode: localFastMode });
+      writeNewThreadPreference(cwd, {
+        envMode: nextEnvMode,
+        branch,
+        fastMode: localFastMode,
+        piRenderMode,
+      });
     },
-    [activeProjectCwd, thread.branch, localFastMode],
+    [activeProjectCwd, thread.branch, localFastMode, piRenderMode],
   );
 
   const setEnvMode = useCallback(
@@ -254,8 +261,11 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     preferenceLoadedProjectCwdRef.current = cwd;
 
     const fastDefault = readNewThreadFastModePreference(cwd) ?? false;
+    const renderModeDefault = readNewThreadPiRenderModePreference(cwd) ?? "terminal";
     setLocalFastMode(fastDefault);
     setPiFastMode(threadId, fastDefault);
+    setDraftPiRenderMode(threadId, renderModeDefault);
+    setThreadPiRenderMode(threadId, renderModeDefault);
 
     if (thread.branch || thread.worktreePath) return;
     const saved = readNewThreadPreference(cwd);
@@ -264,8 +274,10 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     setThreadBranchMetadata(saved.branch, null);
   }, [
     activeProjectCwd,
+    setDraftPiRenderMode,
     setPiFastMode,
     setThreadBranchMetadata,
+    setThreadPiRenderMode,
     thread.branch,
     thread.worktreePath,
     threadId,
@@ -299,7 +311,9 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         // This intentionally keeps today's fire-and-forget behavior.
         const setupScript = setupProjectScript(project.scripts ?? []);
         if (setupScript) {
-          runProjectScriptInTerminal(setupScript, threadId, project, result.worktree.path);
+          runProjectScriptInTerminal(setupScript, threadId, project, result.worktree.path, {
+            openTerminal: setupScript.openTerminalOnWorktreeCreate,
+          });
         }
       } else if (effectiveEnvMode === "local" && thread.branch && project?.cwd) {
         await api.git.checkout({ cwd: project.cwd, branch: thread.branch });
@@ -435,6 +449,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       const api = readNativeApi();
       setDraftPiRenderMode(threadId, renderMode);
       setThreadPiRenderMode(threadId, renderMode);
+      if (activeProjectCwd) writeNewThreadPiRenderModePreference(activeProjectCwd, renderMode);
       requestAnimationFrame(() => initialPromptRef.current?.focus({ preventScroll: true }));
       if (!api) return;
       void api.orchestration.dispatchCommand({
@@ -444,7 +459,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         piRenderMode: renderMode,
       });
     },
-    [setDraftPiRenderMode, setThreadPiRenderMode, thread.terminalStatus, threadId],
+    [activeProjectCwd, setDraftPiRenderMode, setThreadPiRenderMode, thread.terminalStatus, threadId],
   );
 
   // Auto-focus the first-prompt textarea so new threads are keyboard-first.

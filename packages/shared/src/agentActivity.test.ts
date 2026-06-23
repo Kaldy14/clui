@@ -16,6 +16,7 @@ describe("agent activity classification", () => {
     expect(classifyAgentActivityFromPrompt("fix the failing tests")).toBe("debugging");
     expect(classifyAgentActivityFromPrompt("scout the codebase first")).toBe("scouting");
     expect(classifyAgentActivityFromPrompt("use the frontend-designer agent")).toBe("designing");
+    expect(classifyAgentActivityFromPrompt("what do you think?")).toBe("thinking");
   });
 
   it("classifies common tool names", () => {
@@ -87,7 +88,14 @@ describe("agent activity classification", () => {
         command: "git push origin feature/statuses",
       }),
     ).toBe("pushing");
-    expect(classifyAgentActivityFromPiReason({ reason: "agent_start" })).toBe("planning");
+    expect(classifyAgentActivityFromPiReason({ reason: "agent_start" })).toBe("thinking");
+    expect(classifyAgentActivityFromPiReason({ reason: "provider_request" })).toBe("thinking");
+    expect(
+      classifyAgentActivityFromPiReason({
+        reason: "tool_input_resolved:questionnaire",
+        toolName: "questionnaire",
+      }),
+    ).toBe("thinking");
     expect(classifyAgentActivityFromPiReason({ reason: "agent_end" })).toBeNull();
   });
 });

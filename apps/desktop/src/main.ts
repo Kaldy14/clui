@@ -5,7 +5,7 @@ import * as OS from "node:os";
 import * as Path from "node:path";
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell, systemPreferences } from "electron";
-import type { MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions, WebContents } from "electron";
 import * as Effect from "effect/Effect";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@clui/contracts";
 import { autoUpdater } from "electron-updater";
@@ -1232,9 +1232,29 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  // Grant microphone permission for speech-to-text.
-  // Without this, getUserMedia() is silently denied in Electron.
-  window.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+  // Grant app-scoped browser permissions.
+  // Without this, Electron denies getUserMedia() and navigator.clipboard.readText().
+  const isMainWindowWebContents = (webContents: WebContents | null): boolean =>
+    webContents !== null && webContents.id === window.webContents.id;
+  const isClipboardPermission = (permission: string): boolean =>
+    permission === "clipboard-read" ||
+    permission === "clipboard-sanitized-write" ||
+    permission === "deprecated-sync-clipboard-read";
+
+  window.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    if (!isMainWindowWebContents(webContents)) return false;
+    return isClipboardPermission(permission);
+  });
+
+  window.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (!isMainWindowWebContents(webContents)) {
+      callback(false);
+      return;
+    }
+    if (isClipboardPermission(permission)) {
+      callback(true);
+      return;
+    }
     if (permission === "media") {
       // On macOS, trigger the OS-level microphone permission dialog if needed
       if (process.platform === "darwin") {

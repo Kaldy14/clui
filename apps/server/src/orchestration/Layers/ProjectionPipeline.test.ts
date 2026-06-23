@@ -1902,6 +1902,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
             icon: "build",
             terminalTarget: "thread",
             runOnWorktreeCreate: false,
+            openTerminalOnWorktreeCreate: true,
           },
         ],
         defaultModel: "gpt-5",
@@ -1920,7 +1921,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
       assert.deepEqual(projectRows, [
         {
           scriptsJson:
-            '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false,"terminalTarget":"thread"}]',
+            '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false,"openTerminalOnWorktreeCreate":true,"terminalTarget":"thread"}]',
           defaultModel: "gpt-5",
         },
       ]);

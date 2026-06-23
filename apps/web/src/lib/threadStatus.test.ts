@@ -85,4 +85,14 @@ describe("threadStatusPill", () => {
 
     expect(pill).toMatchObject({ label: "Coding", pulse: true });
   });
+
+  it("shows thinking while the agent is reasoning", () => {
+    const pill = threadStatusPill(
+      makeThread({ hookStatus: "working", activityStatus: "thinking" }),
+      false,
+      false,
+    );
+
+    expect(pill).toMatchObject({ label: "Thinking", pulse: true });
+  });
 });

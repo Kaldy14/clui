@@ -426,6 +426,7 @@ export default function (pi) {
   });
 
   pi.on("before_provider_request", (event, ctx) => {
+    writePayload(ctx, "provider_request");
     const nextPayload = maybeInjectFastServiceTier(event.payload, ctx);
     updateFastModeStatus(ctx);
     return nextPayload;
@@ -874,6 +875,23 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     const response = await this.sendRpcCommand(entry, { type: "get_session_stats" });
     if (!isRecord(response) || response.success === false) return null;
     return normalizeSessionUsageStats(response.data);
+  }
+
+  async sendRpcSessionCommand(
+    threadId: string,
+    commandType: string,
+    payload?: Record<string, unknown>,
+  ): Promise<unknown> {
+    const entry = this.sessions.get(threadId);
+    if (!entry || entry.mode !== "rpc" || !entry.rpcProcess || entry.status !== "active") {
+      throw new Error(`No active html pi session for thread: ${threadId}`);
+    }
+    const response = await this.sendRpcCommand(entry, { type: commandType, ...(payload ?? {}) });
+    if (!isRecord(response)) return null;
+    if (response.success === false) {
+      throw new Error(typeof response.error === "string" ? response.error : `Pi RPC command failed: ${commandType}`);
+    }
+    return response.data ?? null;
   }
 
   writeToSession(threadId: string, data: string): void {
@@ -1941,6 +1959,11 @@ export const PiSessionManagerLive = Layer.effect(
         Effect.tryPromise({
           try: () => runtime.getCommands(threadId),
           catch: (cause) => new PiSessionError({ message: "Failed to list pi commands", cause }),
+        }),
+      sendRpcSessionCommand: (threadId, commandType, payload) =>
+        Effect.tryPromise({
+          try: () => runtime.sendRpcSessionCommand(threadId, commandType, payload),
+          catch: (cause) => new PiSessionError({ message: "Failed to run pi RPC command", cause }),
         }),
       writeToSession: (threadId, data) =>
         Effect.try({

@@ -400,6 +400,7 @@ function projectChanged(existing: Project, incoming: Project): boolean {
       left.command !== right.command ||
       left.icon !== right.icon ||
       left.runOnWorktreeCreate !== right.runOnWorktreeCreate ||
+      left.openTerminalOnWorktreeCreate !== right.openTerminalOnWorktreeCreate ||
       left.terminalTarget !== right.terminalTarget
     ) {
       return true;

@@ -380,19 +380,26 @@ const OpenInEditorPicker = memo(function OpenInEditorPicker({
 
 // ── Run Script in Terminal ────────────────────────────────────────────
 
-const SCRIPT_TERMINAL_ID = "script";
+const quietScriptTerminalId = (threadId: ThreadId): string =>
+  `script-${threadId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80)}`;
+
+interface RunProjectScriptInTerminalOptions {
+  openTerminal?: boolean;
+}
 
 export function runProjectScriptInTerminal(
   script: ProjectScript,
   threadId: ThreadId,
   project: { id: ProjectId; cwd: string },
   worktreePath?: string | null,
+  options: RunProjectScriptInTerminalOptions = {},
 ) {
   const api = readNativeApi();
   if (!api) return;
 
   const cwd = worktreePath ?? project.cwd;
   const env = projectScriptRuntimeEnv({ project, worktreePath: worktreePath ?? null });
+  const openTerminal = options.openTerminal ?? true;
 
   if (script.terminalTarget === "project") {
     // Open / write to the currently active project terminal tab
@@ -402,8 +409,12 @@ export function runProjectScriptInTerminal(
       terminalStore.terminalStateByThreadId,
       syntheticId,
     );
-    const terminalId = terminalState.activeTerminalId ?? DEFAULT_THREAD_TERMINAL_ID;
-    terminalStore.setProjectTerminalOpen(syntheticId, true);
+    const terminalId = openTerminal
+      ? (terminalState.activeTerminalId ?? DEFAULT_THREAD_TERMINAL_ID)
+      : quietScriptTerminalId(threadId);
+    if (openTerminal) {
+      terminalStore.setProjectTerminalOpen(syntheticId, true, cwd);
+    }
     void api.terminal
       .open({ threadId: syntheticId, terminalId, cwd, env })
       .then(() =>
@@ -416,11 +427,13 @@ export function runProjectScriptInTerminal(
   } else {
     // Open / write to a thread terminal
     const terminalStore = useTerminalStateStore.getState();
-    const terminalState = terminalStore.terminalStateByThreadId[threadId];
-    if (!terminalState?.terminalOpen) {
+    const terminalState = selectThreadTerminalState(terminalStore.terminalStateByThreadId, threadId);
+    if (openTerminal && !terminalState.terminalOpen) {
       terminalStore.setTerminalOpen(threadId, true);
     }
-    const terminalId = terminalState?.activeTerminalId ?? SCRIPT_TERMINAL_ID;
+    const terminalId = openTerminal
+      ? (terminalState.activeTerminalId ?? DEFAULT_THREAD_TERMINAL_ID)
+      : quietScriptTerminalId(threadId);
     void api.terminal
       .open({ threadId, terminalId, cwd, env })
       .then(() => api.terminal.write({ threadId, terminalId, data: `${script.command}\r` }))
@@ -454,6 +467,10 @@ export default function TerminalToolbar({
   const [lastInvokedPromptId, setLastInvokedPromptId] = useState<string | null>(null);
   const [lastInvokedScriptId, setLastInvokedScriptId] = useState<string | null>(null);
   const canSendPrompt = thread?.terminalStatus === "active";
+  const piRenderMode = useTerminalStateStore(
+    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode,
+  );
+  const usesPiHtml = thread?.harness === "pi" && (thread.piRenderMode === "html" || piRenderMode === "html");
 
   const persistProjectMetadata = useCallback(
     async (input: {
@@ -491,11 +508,19 @@ export default function TerminalToolbar({
         });
         return;
       }
+      setLastInvokedPromptId(projectPrompt.id);
       const api = readNativeApi();
       if (!api) return;
-      setLastInvokedPromptId(projectPrompt.id);
       try {
-        await submitThreadPrompt(api, thread.harness, threadId, projectPrompt.prompt);
+        if (usesPiHtml) {
+          await api.pi.prompt({
+            threadId,
+            message: projectPrompt.prompt,
+            ...(thread.hookStatus === "working" ? { streamingBehavior: "steer" as const } : {}),
+          });
+        } else {
+          await submitThreadPrompt(api, thread.harness, threadId, projectPrompt.prompt);
+        }
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -505,7 +530,7 @@ export default function TerminalToolbar({
         });
       }
     },
-    [thread, threadId],
+    [thread, threadId, usesPiHtml],
   );
 
   const handleAddPrompt = useCallback(
@@ -563,6 +588,7 @@ export default function TerminalToolbar({
         command: input.command,
         icon: input.icon,
         runOnWorktreeCreate: input.runOnWorktreeCreate,
+        openTerminalOnWorktreeCreate: input.openTerminalOnWorktreeCreate,
         terminalTarget: input.terminalTarget,
       };
       // If this script has runOnWorktreeCreate, unset it from others
@@ -588,6 +614,7 @@ export default function TerminalToolbar({
             command: input.command,
             icon: input.icon,
             runOnWorktreeCreate: input.runOnWorktreeCreate,
+            openTerminalOnWorktreeCreate: input.openTerminalOnWorktreeCreate,
             terminalTarget: input.terminalTarget,
           };
         }
