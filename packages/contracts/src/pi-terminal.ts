@@ -77,6 +77,7 @@ export const PiTranscriptItem = Schema.Struct({
   createdAt: Schema.NullOr(Schema.String),
   toolName: Schema.optional(Schema.String),
   toolCallId: Schema.optional(Schema.String),
+  summaryKind: Schema.optional(Schema.Literals(["compaction", "branch"] as const)),
   isError: Schema.optional(Schema.Boolean),
 });
 export type PiTranscriptItem = typeof PiTranscriptItem.Type;

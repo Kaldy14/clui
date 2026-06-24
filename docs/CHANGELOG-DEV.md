@@ -4,6 +4,86 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-23 — Virtualize Pi HTML transcript history
+
+**Problem:** Long Pi HTML transcripts rendered every row, slowing history rendering and causing composer input lag.
+
+**Root cause:** The transcript used a direct `visibleItems.map(...)` render instead of a viewport window.
+
+**Fix:** Upgraded TanStack Virtual and render the Pi HTML transcript through an end-anchored virtualizer with dynamic row measurement, overscan, search scrolling, and bottom-follow behavior.
+
+**Affected files:**
+
+- `apps/web/package.json`
+- `bun.lock`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Add Pi HTML compact slash command
+
+**Problem:** The Pi HTML command picker was missing the built-in `/compact` command available in terminal mode.
+
+**Root cause:** HTML command suggestions only used RPC `get_commands`, which returns extension/prompt/skill commands but not Pi built-ins.
+
+**Fix:** Added a built-in `/compact` suggestion and execute it through the Pi RPC `compact` command, including optional custom instructions.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Surface Pi HTML errors and interrupts
+
+**Problem:** Pi HTML could silently hide RPC stderr/errors and gave no visible feedback when a run was interrupted.
+
+**Root cause:** Error-like session/RPC events were not converted into transcript rows, stderr only touched scrollback, and HTML abort shortcuts only sent the abort command.
+
+**Fix:** Render session/RPC errors as red transcript notices, color tool error output red, surface RPC stderr/error events, and add a red local `Interrupted.` notice for Esc/Ctrl+C aborts.
+
+**Affected files:**
+
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Render Pi HTML compaction summaries as pink cards
+
+**Problem:** Pi HTML compaction summaries blended into regular transcript text and showed trailing `<read-files>` metadata.
+
+**Root cause:** Transcript summaries did not preserve whether they came from compaction, and the renderer displayed the full summary text directly.
+
+**Fix:** Preserve summary kind from Pi transcript parsing, render compaction summaries in a pink card, and strip trailing `<read-files>` sections from the displayed summary.
+
+**Affected files:**
+
+- `packages/contracts/src/pi-terminal.ts`
+- `apps/server/src/piTranscript.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-06-23 — Show pending Pi HTML submitted prompts
+
+**Problem:** After submitting in Pi HTML, the prompt could disappear before the transcript showed it, making submission look lost.
+
+**Root cause:** The composer cleared after RPC acknowledgement while transcript/user-message rendering could lag behind queued server or model work.
+
+**Fix:** Track submitted prompts until matching user transcript entries arrive and show the latest queued prompt above the input, clamped to two lines.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-23 — Remove extra Pi HTML markdown row gaps
 
 **Problem:** Markdown-formatted assistant text in Pi HTML had visible vertical gaps between rendered rows/blocks.

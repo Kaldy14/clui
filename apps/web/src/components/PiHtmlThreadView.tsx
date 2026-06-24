@@ -8,6 +8,7 @@ import type {
   ThreadId,
 } from "@clui/contracts";
 import { AGENT_ACTIVITY_LABELS } from "@clui/shared/agentActivity";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ITheme } from "@xterm/xterm";
 import type { Components } from "react-markdown";
 import type {
@@ -21,7 +22,7 @@ import type {
   SetStateAction,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -38,8 +39,15 @@ const TRANSCRIPT_REFRESH_DELAY_MS = 120;
 const MAX_SUGGESTIONS = 9;
 const PI_HTML_COMPOSER_MAX_ROWS = 6;
 const PI_HTML_BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+const PI_HTML_TRANSCRIPT_OVERSCAN = 10;
+const PI_HTML_SCROLL_END_THRESHOLD_PX = 80;
+const PI_HTML_ESTIMATED_MAX_ROW_LINES = 24;
 const CLUI_RPC_QUESTIONNAIRE_PREFIX = "__clui_rpc_questionnaire_v1__:";
 const CLUI_RPC_PLAN_REVIEW_PREFIX = "__clui_rpc_plan_review_v1__:";
+
+const PI_HTML_BUILTIN_COMMANDS: readonly PiCommandSuggestion[] = [
+  { name: "compact", description: "Compact context", source: "builtin" },
+];
 
 const PI_DARK_COLORS = {
   accent: "#8abeb7",
@@ -59,6 +67,9 @@ const PI_DARK_COLORS = {
   toolErrorBg: "#3c2828",
   customMessageBg: "#2d2838",
   customMessageLabel: "#9575cd",
+  compactionBg: "#3a2536",
+  compactionBorder: "#d183e8",
+  compactionLabel: "#ff79c6",
   mdCode: "#8abeb7",
   mdCodeBlock: "#b5bd68",
   mdHeading: "#f0c674",
@@ -89,6 +100,9 @@ const PI_LIGHT_COLORS = {
   toolErrorBg: "#f0e8e8",
   customMessageBg: "#ede7f6",
   customMessageLabel: "#7e57c2",
+  compactionBg: "#fce7f3",
+  compactionBorder: "#db2777",
+  compactionLabel: "#be185d",
   mdCode: "#5a8080",
   mdCodeBlock: "#588458",
   mdHeading: "#9a7326",
@@ -144,6 +158,12 @@ type Suggestion =
   | { type: "file"; value: string; label: string; description?: string };
 type PiModelOption = { provider: string; id: string; label: string };
 type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | string;
+type PendingPromptPreview = { id: number; text: string; transcriptBaselineCount: number };
+type PiLocalNotice = { id: number; text: string; isError: boolean; createdAt: string };
+type PiVirtualTranscriptRow =
+  | { readonly type: "item"; readonly key: string; readonly item: DisplayTranscriptItem; readonly itemIndex: number }
+  | { readonly type: "thinking"; readonly key: string }
+  | { readonly type: "error"; readonly key: string; readonly text: string };
 
 interface PiHtmlThreadViewProps {
   threadId: ThreadId;
@@ -344,9 +364,19 @@ function usePiTranscript(threadId: ThreadId) {
           setEditorTextRequest({ text, nonce: Date.now() });
         });
         if (handledExtensionUi) return;
-        const liveItem = liveItemFromRpcEvent(event.event);
+        const liveItem = liveItemFromRpcEvent(event.event, event.createdAt);
         if (liveItem) setLiveItems((current) => mergeLiveItem(current, liveItem));
         scheduleAppend();
+        return;
+      }
+      if (event.type === "error") {
+        const liveItem = liveNoticeItem({ id: `session-error:${event.createdAt}:${event.message}`, text: event.message, createdAt: event.createdAt, isError: true });
+        if (liveItem) setLiveItems((current) => mergeLiveItem(current, liveItem));
+        return;
+      }
+      if (event.type === "exited" && event.exitCode !== null && event.exitCode !== 0) {
+        const liveItem = liveNoticeItem({ id: `session-exited:${event.createdAt}:${event.exitCode}`, text: `Pi exited with code ${event.exitCode}.`, createdAt: event.createdAt, isError: true });
+        if (liveItem) setLiveItems((current) => mergeLiveItem(current, liveItem));
         return;
       }
       if (
@@ -784,6 +814,63 @@ function rpcContentParts(content: unknown): PiTranscriptPart[] {
   return parts;
 }
 
+function liveNoticeItem(input: { id: string; text: string; createdAt?: string | null; isError?: boolean }): LiveTranscriptItem | null {
+  const text = input.text.trim();
+  if (!text) return null;
+  return {
+    id: input.id,
+    role: "system",
+    text,
+    parts: [{ type: "text", text }],
+    createdAt: input.createdAt ?? null,
+    live: true,
+    ...(input.isError === true ? { isError: true } : {}),
+  };
+}
+
+function liveCompactionSummaryItem(event: Record<string, unknown>, createdAt?: string): LiveTranscriptItem | null {
+  if (event.type !== "compaction_end" || event.aborted === true || !isRecord(event.result)) return null;
+  const summary = typeof event.result.summary === "string" ? stripTrailingReadFilesSection(event.result.summary) : "";
+  if (!summary.trim()) return null;
+  return {
+    id: `rpc-compaction:${createdAt ?? ""}:${summary}`,
+    role: "summary",
+    text: summary,
+    parts: [{ type: "text", text: summary }],
+    createdAt: createdAt ?? null,
+    summaryKind: "compaction",
+    live: true,
+  };
+}
+
+function rpcErrorEventText(event: Record<string, unknown>): string | null {
+  switch (event.type) {
+    case "stderr":
+      return firstStringField(event, ["text", "data", "message"]);
+    case "extension_error": {
+      const message = firstStringField(event, ["error", "message", "errorMessage"]);
+      const source = firstStringField(event, ["extensionPath", "extension", "event"]);
+      return message ? `${source ? `${source}: ` : ""}${message}` : null;
+    }
+    case "compaction_end": {
+      const message = firstStringField(event, ["errorMessage", "error", "message"]);
+      if (message) return `Compaction failed: ${message}`;
+      return event.aborted === true ? "Compaction cancelled." : null;
+    }
+    case "auto_retry_start": {
+      const message = firstStringField(event, ["errorMessage", "error", "message"]);
+      return message ? `Error: ${message} Retrying…` : null;
+    }
+    case "auto_retry_end": {
+      if (event.success !== false) return null;
+      const message = firstStringField(event, ["finalError", "errorMessage", "error", "message"]);
+      return message ? `Retry failed: ${message}` : "Retry failed.";
+    }
+    default:
+      return null;
+  }
+}
+
 function liveItemFromRpcMessage(event: Record<string, unknown>): LiveTranscriptItem | null {
   const message = event.message;
   if (!isRecord(message)) return null;
@@ -837,8 +924,12 @@ function liveItemFromRpcToolExecution(event: Record<string, unknown>): LiveTrans
   };
 }
 
-function liveItemFromRpcEvent(event: unknown): LiveTranscriptItem | null {
+function liveItemFromRpcEvent(event: unknown, createdAt?: string): LiveTranscriptItem | null {
   if (!isRecord(event)) return null;
+  const errorText = rpcErrorEventText(event);
+  if (errorText) return liveNoticeItem({ id: `rpc-error:${createdAt ?? ""}:${event.type}:${errorText}`, text: errorText, createdAt: createdAt ?? null, isError: true });
+  const compactionSummary = liveCompactionSummaryItem(event, createdAt);
+  if (compactionSummary) return compactionSummary;
   switch (event.type) {
     case "message_start":
     case "message_update":
@@ -907,6 +998,28 @@ function formatPiUsageStats(stats: PiSessionUsageStats | null, usingCodexSubscri
     parts.push(`${percent}%/${formatPiUsageTokenCount(stats.contextUsage.contextWindow)} (auto)`);
   }
   return parts.length > 0 ? parts.join(" ") : null;
+}
+
+function estimatePiTranscriptRowHeight(row: PiVirtualTranscriptRow | undefined, terminalFontSize: number): number {
+  const lineHeightPx = Math.max(12, terminalFontSize * TERMINAL_LINE_HEIGHT);
+  if (!row || row.type === "thinking" || row.type === "error") return Math.ceil(lineHeightPx);
+
+  const textLineCount = Math.max(1, itemText(row.item).split("\n").length);
+  const estimatedTextLines = Math.min(PI_HTML_ESTIMATED_MAX_ROW_LINES, textLineCount);
+  const extraLines =
+    row.item.role === "user" || (row.item.role === "summary" && row.item.summaryKind === "compaction")
+      ? 2.8
+      : row.item.role === "toolResult" || row.item.role === "bashExecution"
+        ? 3.2
+        : 0.2;
+  return Math.ceil((estimatedTextLines + extraLines) * lineHeightPx);
+}
+
+function piVirtualRowOuterMarginEm(row: PiVirtualTranscriptRow | undefined, toolsExpanded: boolean): number {
+  if (!row || row.type !== "item") return 0;
+  if (row.item.role === "user" || (row.item.role === "summary" && row.item.summaryKind === "compaction")) return 1.2;
+  if ((row.item.role === "toolResult" || row.item.role === "bashExecution") && !shouldHideStandaloneToolResult(row.item, toolsExpanded)) return 1.2;
+  return row.item.parts.some((part) => part.type === "toolCall") ? 1.2 : 0;
 }
 
 function rowStyle(item: PiTranscriptItem, theme: ITheme): CSSProperties {
@@ -1125,6 +1238,37 @@ function PiUserMessage(props: { text: string; piTheme: PiHtmlTheme }) {
   );
 }
 
+function stripTrailingReadFilesSection(text: string): string {
+  return text
+    .replace(/\n?\s*<read-files>[\s\S]*?<\/read-files>\s*$/u, "")
+    .replace(/\n?\s*<read-files>[\s\S]*$/u, "")
+    .trimEnd();
+}
+
+function PiCompactionSummaryCard(props: { text: string; piTheme: PiHtmlTheme }) {
+  const text = stripTrailingReadFilesSection(props.text);
+  if (!text.trim()) return null;
+  return (
+    <div
+      className="relative my-[1.2em] rounded-[0.6em] border px-[1ch] py-[0.8em]"
+      style={{
+        borderColor: props.piTheme.compactionBorder,
+        backgroundColor: props.piTheme.compactionBg,
+        color: props.piTheme.text,
+        lineHeight: TERMINAL_LINE_HEIGHT,
+      }}
+    >
+      <span
+        className="absolute left-[1ch] top-0 -translate-y-1/2 px-[0.5ch] text-[1em]"
+        style={{ backgroundColor: props.piTheme.terminal.background, color: props.piTheme.compactionLabel }}
+      >
+        compaction
+      </span>
+      <PiTextBlock text={text} color={props.piTheme.text} piTheme={props.piTheme} />
+    </div>
+  );
+}
+
 function shortenHomePath(path: string): string {
   return path.replace(/^\/Users\/[^/]+(?=\/|$)/u, "~");
 }
@@ -1236,9 +1380,9 @@ function shouldShowToolOutput(name: string, item: PiTranscriptItem): boolean {
   return !COLLAPSED_RESULT_TOOLS.has(normalized);
 }
 
-function PiToolOutput(props: { output: string; normalizedName: string; piTheme: PiHtmlTheme }) {
+function PiToolOutput(props: { output: string; normalizedName: string; piTheme: PiHtmlTheme; isError?: boolean }) {
   if (props.normalizedName !== "edit") {
-    return <PiTextBlock text={`\n${props.output}`} color={props.piTheme.muted} piTheme={props.piTheme} />;
+    return <PiTextBlock text={`\n${props.output}`} color={props.isError ? props.piTheme.error : props.piTheme.muted} piTheme={props.piTheme} />;
   }
 
   const lines = props.output.split("\n");
@@ -1248,7 +1392,7 @@ function PiToolOutput(props: { output: string; normalizedName: string; piTheme: 
         const isRemoval = /^-\d*\s/u.test(line) || (line.startsWith("-") && !line.startsWith("---"));
         const isAddition = /^\+\d*\s/u.test(line) || (line.startsWith("+") && !line.startsWith("+++"));
         return (
-          <span key={index} style={{ color: isRemoval ? props.piTheme.error : isAddition ? props.piTheme.success : props.piTheme.muted }}>
+          <span key={index} style={{ color: props.isError ? props.piTheme.error : isRemoval ? props.piTheme.error : isAddition ? props.piTheme.success : props.piTheme.muted }}>
             {line}
             {index < lines.length - 1 ? "\n" : ""}
           </span>
@@ -1287,7 +1431,7 @@ function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<Pi
       <pre className="m-0 whitespace-pre-wrap break-words text-[1em]" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}>
         {renderToolCallInline(name, input, props.piTheme)}
       </pre>
-      {showOutput && <PiToolOutput output={output} normalizedName={normalizedName} piTheme={props.piTheme} />}
+      {showOutput && <PiToolOutput output={output} normalizedName={normalizedName} piTheme={props.piTheme} isError={props.item.isError === true} />}
     </div>
   );
 }
@@ -1311,6 +1455,10 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
 
   if (props.item.role === "user") {
     return <PiUserMessage text={text} piTheme={props.piTheme} />;
+  }
+
+  if (props.item.role === "summary" && props.item.summaryKind === "compaction") {
+    return <PiCompactionSummaryCard text={text} piTheme={props.piTheme} />;
   }
 
   if (shouldHideStandaloneToolResult(props.item, props.toolsExpanded)) return null;
@@ -1349,6 +1497,8 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
   return <PiTextBlock text={text} color={rowStyle(props.item, props.theme).color as string} piTheme={props.piTheme} />;
 }
 
+const MemoizedPiTranscriptRow = memo(PiTranscriptRow);
+
 function findCommandToken(value: string, cursor = value.length): { query: string; start: number; end: number } | null {
   const beforeCursor = value.slice(0, cursor);
   const afterCursor = value.slice(cursor);
@@ -1370,6 +1520,16 @@ function findFileToken(value: string, cursor = value.length): { prefix: string; 
   return { prefix: `@${query}`, query, start, end: cursor };
 }
 
+function mergePiCommands(commands: readonly PiCommandSuggestion[]): PiCommandSuggestion[] {
+  const byName = new Map<string, PiCommandSuggestion>();
+  for (const command of [...PI_HTML_BUILTIN_COMMANDS, ...commands]) {
+    const name = command.name.trim();
+    if (!name || byName.has(name)) continue;
+    byName.set(name, { ...command, name });
+  }
+  return [...byName.values()];
+}
+
 function commandSuggestions(commands: readonly PiCommandSuggestion[], query: string): Suggestion[] {
   return commands
     .filter((command) => command.name.toLowerCase().includes(query))
@@ -1380,6 +1540,12 @@ function commandSuggestions(commands: readonly PiCommandSuggestion[], query: str
       label: `/${command.name}`,
       ...(command.description ? { description: command.description } : {}),
     }));
+}
+
+function parseCompactSlashCommand(message: string): string | null {
+  const match = /^\/compact(?:\s+([\s\S]*))?$/u.exec(message.trim());
+  if (!match) return null;
+  return match[1]?.trim() ?? "";
 }
 
 function suggestionTokenKey(commandToken: ReturnType<typeof findCommandToken>, fileToken: ReturnType<typeof findFileToken>): string | null {
@@ -1508,6 +1674,19 @@ function mergePromptHistory(...groups: readonly (readonly string[])[]): string[]
 
 function addPromptHistoryEntry(history: readonly string[], text: string): string[] {
   return normalizePromptHistory([text, ...history.filter((item) => item.trim() !== text.trim())]);
+}
+
+function normalizePendingPromptText(text: string): string {
+  return text.trim().replace(/\r\n?/gu, "\n");
+}
+
+function countTranscriptPromptText(transcriptUserTexts: readonly string[], text: string): number {
+  const normalizedText = normalizePendingPromptText(text);
+  return transcriptUserTexts.filter((item) => normalizePendingPromptText(item) === normalizedText).length;
+}
+
+function transcriptUserTexts(items: readonly PiTranscriptItem[]): string[] {
+  return items.flatMap((item) => item.role === "user" ? [itemText(item)] : []);
 }
 
 function transcriptPromptHistory(items: readonly PiTranscriptItem[]): string[] {
@@ -2679,6 +2858,28 @@ function PiThinkingPlaceholder(props: { active: boolean; piTheme: PiHtmlTheme })
   );
 }
 
+function PiQueuedPromptPreview(props: { prompts: readonly PendingPromptPreview[]; theme: ITheme; piTheme: PiHtmlTheme }) {
+  const latest = props.prompts[props.prompts.length - 1];
+  if (!latest) return null;
+  return (
+    <div
+      className="m-0 overflow-hidden px-[1ch] text-[1em]"
+      title={latest.text}
+      style={{
+        color: themeText(props.theme),
+        display: "-webkit-box",
+        lineHeight: TERMINAL_LINE_HEIGHT,
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: 2,
+        whiteSpace: "pre-wrap",
+      }}
+    >
+      <span style={{ color: props.piTheme.accent }}>{props.prompts.length > 1 ? `queued (${props.prompts.length}): ` : "queued: "}</span>
+      {latest.text}
+    </div>
+  );
+}
+
 function PiHtmlFooterStatus(props: {
   threadId: ThreadId;
   theme: ITheme;
@@ -2730,9 +2931,11 @@ function PiHtmlComposer(props: {
   extensionUiState: PiExtensionUiState;
   usageStats: PiSessionUsageStats | null;
   history: readonly string[];
+  transcriptUserTexts: readonly string[];
   editorTextRequest: EditorTextRequest | null;
   autoFocusEnabled: boolean;
   registerFocus: (focus: (() => void) | null) => void;
+  onLocalNotice: (text: string, options?: { isError?: boolean }) => void;
 }) {
   const composerDraftKey = `composer:${props.threadId}`;
   const [draftValue, setDraftValue, clearDraftValue] = usePersistentDraftState(composerDraftKey, () => "");
@@ -2741,7 +2944,7 @@ function PiHtmlComposer(props: {
   const [localHistory, setLocalHistory] = usePersistentDraftState<string[]>(promptHistoryKey(props.threadId), () => []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const historyDraftRef = useRef<{ value: string; selection: TextSelectionDraft } | null>(null);
-  const [commands, setCommands] = useState<PiCommandSuggestion[]>([]);
+  const [commands, setCommands] = useState<PiCommandSuggestion[]>(() => mergePiCommands([]));
   const [fileSuggestions, setFileSuggestions] = useState<Suggestion[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [dismissedSuggestionToken, setDismissedSuggestionToken] = useState<string | null>(null);
@@ -2749,6 +2952,7 @@ function PiHtmlComposer(props: {
   const [modelSelectOpen, setModelSelectOpen] = useState(false);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [thinkingLevel, setThinkingLevel] = useState<PiThinkingLevel | null>(null);
+  const [pendingPrompts, setPendingPrompts] = useState<PendingPromptPreview[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [composerVisualRows, setComposerVisualRows] = useState(1);
@@ -2759,6 +2963,7 @@ function PiHtmlComposer(props: {
   const lastYankRef = useRef<{ start: number; end: number; ringIndex: number } | null>(null);
   const lastClearShortcutAtRef = useRef(0);
   const lastPasteHandledAtRef = useRef(0);
+  const pendingPromptIdRef = useRef(0);
   const thread = useStore((s) => s.threads.find((t) => t.id === props.threadId));
   const project = useStore((s) => s.projects.find((p) => p.id === thread?.projectId));
   const hookStatus = thread?.hookStatus ?? null;
@@ -2777,6 +2982,12 @@ function PiHtmlComposer(props: {
   const history = useMemo(() => mergePromptHistory(localHistory, props.history), [localHistory, props.history]);
   const thinkingLevelLabel = formatThinkingLevel(thinkingLevel);
   const composerRuleColor = thinkingBorderColor(thinkingLevel, props.piTheme);
+
+  useEffect(() => {
+    setPendingPrompts((current) =>
+      current.filter((prompt) => countTranscriptPromptText(props.transcriptUserTexts, prompt.text) <= prompt.transcriptBaselineCount),
+    );
+  }, [props.transcriptUserTexts]);
 
   const autosizeComposer = useCallback(() => {
     const textarea = textareaRef.current;
@@ -2890,8 +3101,8 @@ function PiHtmlComposer(props: {
     if (!api) return;
     void api.pi
       .getCommands({ threadId: props.threadId })
-      .then((result) => setCommands([...result.commands]))
-      .catch(() => undefined);
+      .then((result) => setCommands(mergePiCommands(result.commands)))
+      .catch(() => setCommands(mergePiCommands([])));
   }, [props.threadId]);
 
   useEffect(() => {
@@ -2972,7 +3183,45 @@ function PiHtmlComposer(props: {
     if (!message || submitting) return;
     const api = readNativeApi();
     if (!api) return;
+    const compactInstructions = parseCompactSlashCommand(message);
+    if (compactInstructions !== null) {
+      setSubmitting(true);
+      setError(null);
+      try {
+        await api.pi.rpcCommand({
+          threadId: props.threadId,
+          commandType: "compact",
+          ...(compactInstructions ? { payload: { customInstructions: compactInstructions } } : {}),
+        });
+        setLocalHistory((current) => addPromptHistoryEntry(current, message));
+        clearDraftValue();
+        clearPastes();
+        clearTextSelectionDraft(composerDraftKey);
+        undoStackRef.current = [];
+        historyDraftRef.current = null;
+        lastYankRef.current = null;
+        setHistoryIndex(-1);
+        valueRef.current = "";
+        setValue("");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to compact context.");
+      } finally {
+        setSubmitting(false);
+        requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
+      }
+      return;
+    }
     const behavior = streamingBehavior ?? (isBusy ? "steer" as const : undefined);
+    const pendingPromptId = ++pendingPromptIdRef.current;
+    setPendingPrompts((current) => [
+      ...current,
+      {
+        id: pendingPromptId,
+        text: message,
+        transcriptBaselineCount: countTranscriptPromptText(props.transcriptUserTexts, message)
+          + current.filter((prompt) => normalizePendingPromptText(prompt.text) === normalizePendingPromptText(message)).length,
+      },
+    ]);
     setSubmitting(true);
     setError(null);
     try {
@@ -2992,22 +3241,24 @@ function PiHtmlComposer(props: {
       valueRef.current = "";
       setValue("");
     } catch (err) {
+      setPendingPrompts((current) => current.filter((prompt) => prompt.id !== pendingPromptId));
       setError(err instanceof Error ? err.message : "Failed to send prompt.");
     } finally {
       setSubmitting(false);
       requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
     }
-  }, [clearDraftValue, clearPastes, composerDraftKey, isBusy, pastes, props.threadId, setLocalHistory, submitting]);
+  }, [clearDraftValue, clearPastes, composerDraftKey, isBusy, pastes, props.threadId, props.transcriptUserTexts, setLocalHistory, submitting]);
 
   const abort = useCallback(async () => {
     const api = readNativeApi();
     if (!api) return;
+    props.onLocalNotice("Interrupted.", { isError: true });
     try {
       await api.pi.abort({ threadId: props.threadId });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to abort.");
     }
-  }, [props.threadId]);
+  }, [props.onLocalNotice, props.threadId]);
 
   const replaceSelection = useCallback(
     (insert: string, selectionStart?: number, selectionEnd?: number) => {
@@ -3731,6 +3982,16 @@ function PiHtmlComposer(props: {
         return;
       }
 
+      if (isBusy && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c") {
+        const start = event.currentTarget.selectionStart ?? value.length;
+        const end = event.currentTarget.selectionEnd ?? start;
+        if (start === end) {
+          event.preventDefault();
+          void abort();
+          return;
+        }
+      }
+
       if (handleEditorKeymap(event)) return;
 
       if (!event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
@@ -3840,6 +4101,7 @@ function PiHtmlComposer(props: {
           ))}
         </div>
       )}
+      <PiQueuedPromptPreview prompts={pendingPrompts} theme={props.theme} piTheme={props.piTheme} />
       <div className="relative">
         <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
         {thinkingLevelLabel && (
@@ -3908,55 +4170,98 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
   const pointerStartRef = useRef<{ x: number; y: number; target: HTMLElement | null } | null>(null);
   const atBottomRef = useRef(true);
   const previousVisibleCountRef = useRef(0);
+  const localNoticeIdRef = useRef(0);
   const [showNewOutput, setShowNewOutput] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIndex, setSearchIndex] = useState(0);
   const [toolsExpanded, setToolsExpanded] = useState(false);
   const [thinkingVisible, setThinkingVisible] = useState(true);
+  const [localNotices, setLocalNotices] = useState<PiLocalNotice[]>([]);
   const visibleLiveItems = useMemo(() => {
     if (liveItems.length === 0) return [];
     const persistedSignatures = new Set(items.map(transcriptSignature));
     return liveItems.filter((item) => !persistedSignatures.has(transcriptSignature(item)));
   }, [items, liveItems]);
-  const visibleItems = useMemo(() => mergeToolResultsForDisplay([...items, ...visibleLiveItems]), [items, visibleLiveItems]);
+  const localNoticeItems = useMemo<PiTranscriptItem[]>(() => localNotices.map((notice) => ({
+    id: `local-notice:${notice.id}`,
+    role: "system",
+    text: notice.text,
+    parts: [{ type: "text", text: notice.text }],
+    createdAt: notice.createdAt,
+    ...(notice.isError ? { isError: true } : {}),
+  })), [localNotices]);
+  const visibleItems = useMemo(() => mergeToolResultsForDisplay([...items, ...visibleLiveItems, ...localNoticeItems]), [items, localNoticeItems, visibleLiveItems]);
   const showThinkingPlaceholder = thinkingVisible && thread?.hookStatus === "working" && visibleLiveItems.length === 0;
   const promptHistory = useMemo(() => transcriptPromptHistory(items), [items]);
+  const promptTranscriptUserTexts = useMemo(() => transcriptUserTexts(items), [items]);
   const searchMatches = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
     return visibleItems.flatMap((item, index) => itemText(item).toLowerCase().includes(query) ? [index] : []);
   }, [searchQuery, visibleItems]);
-  const activeSearchRowIndex = searchMatches.length > 0 ? searchMatches[searchIndex % searchMatches.length] : null;
+  const activeSearchRowIndex = searchMatches.length > 0 ? (searchMatches[searchIndex % searchMatches.length] ?? null) : null;
+  const virtualRows = useMemo<PiVirtualTranscriptRow[]>(() => {
+    const rows = visibleItems.map<PiVirtualTranscriptRow>((item, index) => ({ type: "item", key: `item:${item.id}`, item, itemIndex: index }));
+    if (showThinkingPlaceholder) rows.push({ type: "thinking", key: "thinking-placeholder" });
+    if (error) rows.push({ type: "error", key: "transcript-error", text: error });
+    return rows;
+  }, [error, showThinkingPlaceholder, visibleItems]);
+  const transcriptVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: virtualRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => estimatePiTranscriptRowHeight(virtualRows[index], settings.terminalFontSize),
+    getItemKey: (index) => virtualRows[index]?.key ?? index,
+    overscan: PI_HTML_TRANSCRIPT_OVERSCAN,
+    anchorTo: "end",
+    followOnAppend: true,
+    scrollEndThreshold: PI_HTML_SCROLL_END_THRESHOLD_PX,
+  });
+  const virtualItems = transcriptVirtualizer.getVirtualItems();
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    setLocalNotices([]);
+    localNoticeIdRef.current = 0;
+  }, [props.threadId]);
+
+  useEffect(() => {
+    transcriptVirtualizer.measure();
+  }, [settings.terminalFontSize, thinkingVisible, toolsExpanded, transcriptVirtualizer]);
+
+  useLayoutEffect(() => {
     const previousCount = previousVisibleCountRef.current;
     previousVisibleCountRef.current = visibleItems.length;
     if (atBottomRef.current) {
-      el.scrollTop = el.scrollHeight;
+      transcriptVirtualizer.scrollToEnd({ behavior: "auto" });
       setShowNewOutput(false);
       return;
     }
     if (visibleItems.length > previousCount) setShowNewOutput(true);
-  }, [showThinkingPlaceholder, visibleItems.length]);
+  }, [showThinkingPlaceholder, transcriptVirtualizer, visibleItems.length, virtualRows.length]);
 
   useEffect(() => {
     if (!searchOpen || activeSearchRowIndex === null) return;
-    const row = scrollRef.current?.querySelector(`[data-pi-row-index="${activeSearchRowIndex}"]`);
-    if (row instanceof HTMLElement) row.scrollIntoView({ block: "center" });
-  }, [activeSearchRowIndex, searchOpen]);
+    transcriptVirtualizer.scrollToIndex(activeSearchRowIndex, { align: "center", behavior: "auto" });
+  }, [activeSearchRowIndex, searchOpen, transcriptVirtualizer]);
 
   const onScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (atBottomRef.current) setShowNewOutput(false);
-  }, []);
+    const isAtEnd = transcriptVirtualizer.isAtEnd(PI_HTML_SCROLL_END_THRESHOLD_PX);
+    atBottomRef.current = isAtEnd;
+    if (isAtEnd) setShowNewOutput(false);
+  }, [transcriptVirtualizer]);
 
   const registerComposerFocus = useCallback((focus: (() => void) | null) => {
     composerFocusRef.current = focus;
+  }, []);
+
+  const addLocalNotice = useCallback((text: string, options?: { isError?: boolean }) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const id = ++localNoticeIdRef.current;
+    setLocalNotices((current) => [
+      ...current,
+      { id, text: trimmed, isError: options?.isError === true, createdAt: new Date().toISOString() },
+    ]);
   }, []);
 
   const goToSearchMatch = useCallback((direction: -1 | 1) => {
@@ -3965,12 +4270,10 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
   }, [searchMatches.length]);
 
   const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    transcriptVirtualizer.scrollToEnd({ behavior: "auto" });
     atBottomRef.current = true;
     setShowNewOutput(false);
-  }, []);
+  }, [transcriptVirtualizer]);
 
   const handleRootKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -4095,20 +4398,43 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
         </div>
       )}
       <div ref={scrollRef} role="log" aria-live="polite" onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
-        {visibleItems.length === 0 && loadState !== "error" && (
+        {virtualRows.length === 0 && loadState !== "error" && (
           <pre className="m-0" style={{ color: themeMuted(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{loadState === "loading" ? "Loading transcript…" : ""}</pre>
         )}
-        {visibleItems.map((item, index) => (
-          <div
-            key={item.id}
-            data-pi-row-index={index}
-            style={index === activeSearchRowIndex ? { outline: `1px solid ${piTheme.borderAccent}`, outlineOffset: "-1px" } : undefined}
-          >
-            <PiTranscriptRow item={item} theme={terminalTheme} piTheme={piTheme} toolsExpanded={toolsExpanded} thinkingVisible={thinkingVisible} />
-          </div>
-        ))}
-        <PiThinkingPlaceholder active={showThinkingPlaceholder} piTheme={piTheme} />
-        {error && <pre className="m-0" style={{ color: terminalTheme.red ?? themeText(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{error}</pre>}
+        <div className="relative w-full" style={{ height: `${transcriptVirtualizer.getTotalSize()}px` }}>
+          {virtualItems.map((virtualItem) => {
+            const row = virtualRows[virtualItem.index];
+            if (!row) return null;
+            const isActiveSearchRow = row.type === "item" && row.itemIndex === activeSearchRowIndex;
+            const rowMarginEm = piVirtualRowOuterMarginEm(row, toolsExpanded);
+            const previousRowMarginEm = piVirtualRowOuterMarginEm(virtualRows[virtualItem.index - 1], toolsExpanded);
+            const gapBeforeEm = virtualItem.index === 0 ? rowMarginEm : Math.max(previousRowMarginEm, rowMarginEm);
+            const gapAfterEm = virtualItem.index === virtualRows.length - 1 ? rowMarginEm : 0;
+            return (
+              <div
+                key={String(virtualItem.key)}
+                ref={transcriptVirtualizer.measureElement}
+                data-index={virtualItem.index}
+                data-pi-row-index={row.type === "item" ? row.itemIndex : undefined}
+                className="absolute left-0 top-0 flow-root w-full [&>:first-child]:mt-0 [&>:last-child]:mb-0"
+                style={{
+                  paddingTop: gapBeforeEm ? `${gapBeforeEm}em` : undefined,
+                  paddingBottom: gapAfterEm ? `${gapAfterEm}em` : undefined,
+                  transform: `translateY(${virtualItem.start}px)`,
+                  ...(isActiveSearchRow ? { outline: `1px solid ${piTheme.borderAccent}`, outlineOffset: "-1px" } : {}),
+                }}
+              >
+                {row.type === "item" ? (
+                  <MemoizedPiTranscriptRow item={row.item} theme={terminalTheme} piTheme={piTheme} toolsExpanded={toolsExpanded} thinkingVisible={thinkingVisible} />
+                ) : row.type === "thinking" ? (
+                  <PiThinkingPlaceholder active piTheme={piTheme} />
+                ) : (
+                  <pre className="m-0" style={{ color: terminalTheme.red ?? themeText(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{row.text}</pre>
+                )}
+              </div>
+            );
+          })}
+        </div>
         {showNewOutput && (
           <button
             type="button"
@@ -4131,9 +4457,11 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
           extensionUiState={extensionUiState}
           usageStats={usageStats}
           history={promptHistory}
+          transcriptUserTexts={promptTranscriptUserTexts}
           editorTextRequest={editorTextRequest}
           autoFocusEnabled
           registerFocus={registerComposerFocus}
+          onLocalNotice={addLocalNotice}
         />
       ) : showComposer ? (
         <PiHtmlFooterStatus

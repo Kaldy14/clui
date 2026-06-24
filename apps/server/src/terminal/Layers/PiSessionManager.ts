@@ -1376,10 +1376,20 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   private onRpcStderr(entry: PiSessionEntry, chunk: string): void {
     entry.scrollbackBuffer.append(chunk);
+    const createdAt = new Date().toISOString();
+    const text = chunk.toString().trim();
+    if (text) {
+      this.emitEvent({
+        type: "rpcEvent",
+        threadId: entry.threadId,
+        createdAt,
+        event: { type: "stderr", text },
+      });
+    }
     this.emitEvent({
       type: "output",
       threadId: entry.threadId,
-      createdAt: new Date().toISOString(),
+      createdAt,
       data: "",
       offset: entry.scrollbackBuffer.offset,
     });
@@ -1499,6 +1509,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       case "tool_execution_update":
       case "tool_execution_end":
       case "extension_ui_request":
+      case "extension_error":
+      case "compaction_end":
+      case "auto_retry_start":
+      case "auto_retry_end":
         return event;
       default:
         return null;

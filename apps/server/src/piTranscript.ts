@@ -135,7 +135,14 @@ function parseMessageEntry(entry: Record<string, unknown>, id: string): PiTransc
     const summary =
       typeof message.summary === "string" ? message.summary : text;
     const summaryParts: PiTranscriptPart[] = summary ? [{ type: "text", text: summary }] : [];
-    return { id, role: "summary", text: summary, parts: summaryParts, createdAt };
+    return {
+      id,
+      role: "summary",
+      text: summary,
+      parts: summaryParts,
+      createdAt,
+      summaryKind: role === "compactionSummary" ? "compaction" : "branch",
+    };
   }
 
   return null;
@@ -179,6 +186,7 @@ function parseEntryLine(line: string, id: string): PiTranscriptItem | null {
       text: summary,
       parts,
       createdAt: isoTimestampFromValue(parsed.timestamp),
+      summaryKind: parsed.type === "compaction" ? "compaction" : "branch",
     };
   }
 
