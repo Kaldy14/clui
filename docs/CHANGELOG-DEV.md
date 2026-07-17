@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-06-24 — De-duplicate live Pi HTML compaction summaries
+
+**Problem:** Completed compactions could render twice, with the live copy staying below later conversation.
+
+**Root cause:** Live compaction summaries stripped trailing `<read-files>` metadata, while persisted transcript summaries kept it, so live/persisted signature de-duplication missed the match.
+
+**Fix:** Normalize compaction summary signatures by stripping trailing `<read-files>` metadata and include `summaryKind` in the signature.
+
+**Affected files:**
+
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-23 — Virtualize Pi HTML transcript history
 
 **Problem:** Long Pi HTML transcripts rendered every row, slowing history rendering and causing composer input lag.

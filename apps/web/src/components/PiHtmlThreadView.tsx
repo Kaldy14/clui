@@ -951,7 +951,10 @@ function mergeLiveItem(current: LiveTranscriptItem[], item: LiveTranscriptItem):
 
 function transcriptSignature(item: PiTranscriptItem): string {
   if (item.role === "toolResult" && item.toolCallId) return `toolResult\u0000${item.toolCallId}`;
-  return `${item.role}\u0000${itemText(item).trim()}`;
+  const text = item.role === "summary" && item.summaryKind === "compaction"
+    ? stripTrailingReadFilesSection(itemText(item))
+    : itemText(item).trim();
+  return `${item.role}\u0000${item.summaryKind ?? ""}\u0000${text}`;
 }
 
 function themeText(theme: ITheme): string {
