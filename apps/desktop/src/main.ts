@@ -4,7 +4,17 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell, systemPreferences } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  protocol,
+  shell,
+  systemPreferences,
+} from "electron";
 import type { MenuItemConstructorOptions, WebContents } from "electron";
 import * as Effect from "effect/Effect";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@clui/contracts";
@@ -88,12 +98,11 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
 function isAppCodeSigned(): boolean {
   if (process.platform !== "darwin" || !app.isPackaged) return true;
   try {
-    ChildProcess.execFileSync("codesign", [
-      "--verify",
-      "--deep",
-      "--strict",
-      Path.join(app.getAppPath(), "..", ".."),
-    ], { stdio: "ignore" });
+    ChildProcess.execFileSync(
+      "codesign",
+      ["--verify", "--deep", "--strict", Path.join(app.getAppPath(), "..", "..")],
+      { stdio: "ignore" },
+    );
     return true;
   } catch {
     return false;
@@ -892,6 +901,12 @@ function configureAutoUpdater(): void {
   updatePollTimer.unref();
 }
 function backendEnv(): NodeJS.ProcessEnv {
+  const claudeCodeProxyPath = resolveResourcePath(
+    Path.join(
+      "claude-code-proxy",
+      process.platform === "win32" ? "claude-code-proxy.exe" : "claude-code-proxy",
+    ),
+  );
   return {
     ...process.env,
     CLUI_MODE: "desktop",
@@ -899,6 +914,7 @@ function backendEnv(): NodeJS.ProcessEnv {
     CLUI_PORT: String(backendPort),
     CLUI_STATE_DIR: STATE_DIR,
     CLUI_AUTH_TOKEN: backendAuthToken,
+    ...(claudeCodeProxyPath ? { CLUI_CLAUDE_CODE_PROXY_PATH: claudeCodeProxyPath } : {}),
   };
 }
 

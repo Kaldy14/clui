@@ -14,6 +14,7 @@ import type {
   TerminalStatus,
 } from "@clui/contracts";
 import { AGENT_ACTIVITY_LABELS, classifyAgentActivityFromPiReason } from "@clui/shared/agentActivity";
+import { encodePiTuiPrompt } from "@clui/shared/piTuiInput";
 import { hasPiWorkingStatusOutput, stripPiTerminalControls } from "@clui/shared/piTerminalStatus";
 import { Effect, Layer } from "effect";
 
@@ -45,14 +46,17 @@ import {
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
+const DEFAULT_INITIAL_PROMPT_READY_TIMEOUT_MS = 30_000;
+const TERMINAL_READY_POLL_MS = 50;
 const CLUI_PI_THREAD_ID_ENV = "CLUI_PI_THREAD_ID";
 const CLUI_PI_SESSION_SYNC_DIR_ENV = "CLUI_PI_SESSION_SYNC_DIR";
-const CLUI_PI_INITIAL_PROMPT_FILE_ENV = "CLUI_PI_INITIAL_PROMPT_FILE";
+const CLUI_PI_SESSION_SYNC_NONCE_ENV = "CLUI_PI_SESSION_SYNC_NONCE";
 const CLUI_PI_FAST_MODE_ENV = "CLUI_PI_FAST_MODE";
 const PI_RUNTIME_AGENT_DIR_NAME = "pi-agent";
 const PI_LEGACY_THREAD_SESSION_DIR_NAME = "pi-sessions";
 const PI_SESSION_SYNC_DIR_NAME = "pi-session-sync";
-const PI_INITIAL_PROMPT_DIR_NAME = "pi-initial-prompts";
+const PI_SESSION_SYNC_ARTIFACT_FILENAME_RE =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json(?:\.tmp)?$/u;
 const PI_RUNTIME_EXTENSION_DIR_NAME = "pi-runtime";
 const PI_SESSION_SYNC_EXTENSION_FILENAME = "clui-pi-session-sync.js";
 const PI_HOOK_STATUSES = new Set<ClaudeHookStatus>([
@@ -68,7 +72,6 @@ const PI_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(
 // Fallback only: pi's TUI rewrites its status line with carriage returns while
 // the runtime extension / JSONL watcher provide the authoritative status.
 const PI_STATUS_DETECTION_TAIL_LENGTH = 160;
-const INITIAL_PROMPT_FILE_CLEANUP_MS = 5 * 60 * 1000;
 
 class ScrollbackRingBuffer {
   private lines: string[] = [];
@@ -123,6 +126,7 @@ class ScrollbackRingBuffer {
 
 interface PiSessionSyncPayload {
   readonly threadId: string;
+  readonly sessionSyncNonce: string;
   readonly sessionFile: string | null;
   readonly timestamp: string;
   readonly reason?: string;
@@ -132,6 +136,29 @@ interface PiSessionSyncPayload {
   readonly toolInputDescription?: string;
   readonly toolInputAgent?: string;
   readonly activityStatus?: AgentActivityStatus | null;
+}
+
+interface TerminalReadinessWaiter {
+  readonly process: PtyProcess;
+  readonly sessionSyncNonce: string;
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+  readonly reject: (error: Error) => void;
+  readonly timeoutTimer: ReturnType<typeof setTimeout>;
+  readonly pollTimer: ReturnType<typeof setInterval>;
+  pollInFlight: boolean;
+}
+
+interface PendingTerminalPrompt {
+  readonly entry: PiSessionEntry;
+  readonly process: PtyProcess;
+  readonly sessionSyncNonce: string;
+  readonly data: string;
+}
+
+interface SessionStartResult {
+  readonly initialPromptReady: Promise<void> | null;
+  readonly pendingInitialPrompt: PendingTerminalPrompt | null;
 }
 
 interface RpcPendingRequest {
@@ -166,8 +193,11 @@ interface PiSessionEntry extends PiSessionState {
   activeSessionFile: string | null;
   jsonlHookWatcher: PiSessionJsonlHookWatcher | null;
   syncFilePath: string | null;
+  sessionSyncNonce: string | null;
   syncWatcher: FSWatcher | null;
   syncDebounceTimer: ReturnType<typeof setTimeout> | null;
+  terminalReadinessWaiter: TerminalReadinessWaiter | null;
+  pendingInitialPromptProcess: PtyProcess | null;
   statusDetectionTail: string;
 }
 
@@ -181,6 +211,7 @@ interface PiSessionManagerOptions {
   processKillGraceMs?: number;
   historyLineLimit?: number;
   maxActiveSessions?: number;
+  initialPromptReadyTimeoutMs?: number;
 }
 
 function encodePiSessionDirName(cwd: string): string {
@@ -189,12 +220,12 @@ function encodePiSessionDirName(cwd: string): string {
 
 function buildPiSessionSyncExtensionSource(): string {
   return `
-import { mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const syncDir = process.env.${CLUI_PI_SESSION_SYNC_DIR_ENV};
 const threadId = process.env.${CLUI_PI_THREAD_ID_ENV};
-const initialPromptFile = process.env.${CLUI_PI_INITIAL_PROMPT_FILE_ENV};
+const sessionSyncNonce = process.env.${CLUI_PI_SESSION_SYNC_NONCE_ENV};
 const fastModeEnabled = process.env.${CLUI_PI_FAST_MODE_ENV} === "1";
 const processRegistryDir = process.env.${CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV};
 const processRegistryOwnerPid = Number(process.env.${CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV} ?? 0);
@@ -209,7 +240,6 @@ const userInputToolNames = new Set([
   "questionnaire",
 ]);
 const pendingUserInputToolCallIds = new Set();
-let initialPromptSent = false;
 let lastHookStatus;
 
 function normalizeToolName(toolName) {
@@ -254,10 +284,11 @@ function maybeInjectFastServiceTier(payload, ctx) {
 }
 
 function writePayload(ctx, reason, hookStatus, metadata) {
-  if (!syncDir || !threadId) return;
+  if (!syncDir || !threadId || !sessionSyncNonce) return;
   mkdirSync(syncDir, { recursive: true });
   const payload = {
     threadId,
+    sessionSyncNonce,
     sessionFile: ctx.sessionManager.getSessionFile() ?? null,
     timestamp: new Date().toISOString(),
     reason,
@@ -277,7 +308,7 @@ function writePayload(ctx, reason, hookStatus, metadata) {
   if (metadata && typeof metadata.toolInputAgent === "string" && metadata.toolInputAgent.length > 0) {
     payload.toolInputAgent = metadata.toolInputAgent;
   }
-  const target = path.join(syncDir, threadId + ".json");
+  const target = path.join(syncDir, sessionSyncNonce + ".json");
   const tmp = target + ".tmp";
   writeFileSync(tmp, JSON.stringify(payload));
   renameSync(tmp, target);
@@ -300,22 +331,6 @@ function setHookStatus(ctx, hookStatus, reason, metadata) {
   }
   lastHookStatus = hookStatus;
   writePayload(ctx, reason, hookStatus, metadata);
-}
-
-function takeInitialPrompt() {
-  if (initialPromptSent || !initialPromptFile) return null;
-  initialPromptSent = true;
-  try {
-    const prompt = readFileSync(initialPromptFile, "utf8");
-    try {
-      unlinkSync(initialPromptFile);
-    } catch {
-      // Best-effort cleanup only.
-    }
-    return prompt.trim().length > 0 ? prompt : null;
-  } catch {
-    return null;
-  }
 }
 
 function isProcessAlive(pid) {
@@ -407,18 +422,6 @@ export default function (pi) {
     lastHookStatus = undefined;
     writePayload(ctx, event.reason);
     updateFastModeStatus(ctx);
-
-    const initialPrompt = takeInitialPrompt();
-    if (initialPrompt) {
-      setHookStatus(ctx, "working", "initial_prompt");
-      setTimeout(() => {
-        try {
-          pi.sendUserMessage(initialPrompt);
-        } catch {
-          // Runtime errors are surfaced through pi's extension error channel when available.
-        }
-      }, 0);
-    }
   });
 
   pi.on("model_select", async (_event, ctx) => {
@@ -584,12 +587,12 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private readonly ptyAdapter: PtyAdapterShape;
   private readonly processKillGraceMs: number;
   private readonly historyLineLimit: number;
+  private readonly initialPromptReadyTimeoutMs: number;
   private maxActiveSessions: number;
   private readonly agentRootDir: string;
   private readonly sessionsRootDir: string;
   private readonly legacySessionsRootDir: string;
   private readonly sessionSyncDir: string;
-  private readonly initialPromptDir: string;
   private readonly processRegistryDir: string;
   private readonly extensionFilePath: string;
   private runtimeFilesPromise: Promise<void> | null = null;
@@ -600,12 +603,13 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.ptyAdapter = options.ptyAdapter;
     this.processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
+    this.initialPromptReadyTimeoutMs =
+      options.initialPromptReadyTimeoutMs ?? DEFAULT_INITIAL_PROMPT_READY_TIMEOUT_MS;
     this.maxActiveSessions = options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
     this.agentRootDir = path.join(options.stateDir, PI_RUNTIME_AGENT_DIR_NAME);
     this.sessionsRootDir = path.join(this.agentRootDir, "sessions");
     this.legacySessionsRootDir = path.join(options.stateDir, PI_LEGACY_THREAD_SESSION_DIR_NAME);
     this.sessionSyncDir = path.join(options.stateDir, PI_SESSION_SYNC_DIR_NAME);
-    this.initialPromptDir = path.join(options.stateDir, PI_INITIAL_PROMPT_DIR_NAME);
     this.processRegistryDir = getSessionProcessRegistryDir(options.stateDir);
     this.extensionFilePath = path.join(
       options.stateDir,
@@ -625,136 +629,208 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     fastMode?: boolean;
     htmlMode?: boolean;
   }): Promise<void> {
-    await this.runWithThreadLock(input.threadId, async () => {
-      await this.ensureRuntimeFiles();
+    const sessionStart = await this.runWithThreadLock(
+      input.threadId,
+      async (): Promise<SessionStartResult> => {
+        await this.ensureRuntimeFiles();
 
-      const existing = this.sessions.get(input.threadId);
-      if (existing?.process || existing?.rpcProcess) {
-        this.stopProcess(existing);
-      }
-
-      const entry: PiSessionEntry = existing ?? {
-        threadId: input.threadId,
-        lastInteractedAt: Date.now(),
-        scrollbackBuffer: new ScrollbackRingBuffer(this.historyLineLimit),
-        cols: input.cols,
-        rows: input.rows,
-        status: "active" as TerminalStatus,
-        mode: input.htmlMode === true ? "rpc" : "terminal",
-        process: null,
-        rpcProcess: null,
-        rpcLineCarry: "",
-        rpcRequestSeq: 0,
-        rpcPendingRequests: new Map(),
-        pendingExtensionUiRequest: null,
-        extensionUiState: createEmptyExtensionUiState(),
-        unsubscribeData: null,
-        unsubscribeExit: null,
-        hookStatus: null,
-        activityStatus: null,
-        sessionDir: null,
-        activeSessionFile: null,
-        jsonlHookWatcher: null,
-        syncFilePath: null,
-        syncWatcher: null,
-        syncDebounceTimer: null,
-        statusDetectionTail: "",
-      };
-
-      entry.cols = input.cols;
-      entry.rows = input.rows;
-      entry.mode = input.htmlMode === true ? "rpc" : "terminal";
-      entry.status = "active";
-      entry.lastInteractedAt = Date.now();
-      if (existing) {
-        entry.scrollbackBuffer.clear();
-        entry.statusDetectionTail = "";
-        this.resetHookStatus(entry);
-      }
-      this.sessions.set(input.threadId, entry);
-
-      const sessionDir = this.getSessionDirForCwd(input.cwd);
-      entry.sessionDir = sessionDir;
-      await mkdir(sessionDir, { recursive: true });
-
-      const preferredSessionFile = input.resumeSessionFile ?? entry.activeSessionFile ?? undefined;
-      const resolvedSessionFile = input.fresh
-        ? null
-        : await this.resolveStartSessionFile(input.threadId, input.cwd, preferredSessionFile);
-      entry.activeSessionFile = resolvedSessionFile;
-
-      const args: string[] = ["--session-dir", sessionDir, "--extension", this.extensionFilePath];
-      if (resolvedSessionFile) {
-        args.push("--session", resolvedSessionFile);
-      }
-      const normalizedInitialPrompt = normalizeInitialPrompt(input.initialPrompt);
-      const initialPromptFile =
-        entry.mode === "terminal" ? await this.createInitialPromptFile(normalizedInitialPrompt) : null;
-
-      try {
-        await assertValidCwd(input.cwd);
-        await this.startSessionSyncWatcher(entry);
-        this.startJsonlHookWatcher(entry, entry.activeSessionFile);
-
-        const spawnEnv = createSpawnEnv(process.env);
-        spawnEnv[CLUI_PI_THREAD_ID_ENV] = input.threadId;
-        spawnEnv[CLUI_PI_SESSION_SYNC_DIR_ENV] = this.sessionSyncDir;
-        if (initialPromptFile) {
-          spawnEnv[CLUI_PI_INITIAL_PROMPT_FILE_ENV] = initialPromptFile;
+        const existing = this.sessions.get(input.threadId);
+        if (existing?.process || existing?.rpcProcess) {
+          this.stopProcess(
+            existing,
+            new Error("pi session replaced before its initial prompt was submitted"),
+          );
         }
-        if (input.fastMode === true) {
-          spawnEnv[CLUI_PI_FAST_MODE_ENV] = "1";
-        }
-        spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV] = this.processRegistryDir;
-        spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV] = String(process.pid);
 
-        if (entry.mode === "rpc") {
-          await this.startRpcProcess(entry, {
-            args,
-            cwd: input.cwd,
-            env: spawnEnv,
-            initialPrompt: normalizedInitialPrompt,
-            resumed: resolvedSessionFile != null,
-            sessionDir,
+        const entry: PiSessionEntry = existing ?? {
+          threadId: input.threadId,
+          lastInteractedAt: Date.now(),
+          scrollbackBuffer: new ScrollbackRingBuffer(this.historyLineLimit),
+          cols: input.cols,
+          rows: input.rows,
+          status: "active" as TerminalStatus,
+          mode: input.htmlMode === true ? "rpc" : "terminal",
+          process: null,
+          rpcProcess: null,
+          rpcLineCarry: "",
+          rpcRequestSeq: 0,
+          rpcPendingRequests: new Map(),
+          pendingExtensionUiRequest: null,
+          extensionUiState: createEmptyExtensionUiState(),
+          unsubscribeData: null,
+          unsubscribeExit: null,
+          hookStatus: null,
+          activityStatus: null,
+          sessionDir: null,
+          activeSessionFile: null,
+          jsonlHookWatcher: null,
+          syncFilePath: null,
+          sessionSyncNonce: null,
+          syncWatcher: null,
+          syncDebounceTimer: null,
+          terminalReadinessWaiter: null,
+          pendingInitialPromptProcess: null,
+          statusDetectionTail: "",
+        };
+
+        entry.cols = input.cols;
+        entry.rows = input.rows;
+        entry.mode = input.htmlMode === true ? "rpc" : "terminal";
+        entry.status = "active";
+        entry.lastInteractedAt = Date.now();
+        if (existing) {
+          entry.scrollbackBuffer.clear();
+          entry.statusDetectionTail = "";
+          this.resetHookStatus(entry);
+        }
+        this.sessions.set(input.threadId, entry);
+
+        const sessionDir = this.getSessionDirForCwd(input.cwd);
+        entry.sessionDir = sessionDir;
+        await mkdir(sessionDir, { recursive: true });
+
+        const preferredSessionFile =
+          input.resumeSessionFile ?? entry.activeSessionFile ?? undefined;
+        const resolvedSessionFile = input.fresh
+          ? null
+          : await this.resolveStartSessionFile(input.threadId, input.cwd, preferredSessionFile);
+        entry.activeSessionFile = resolvedSessionFile;
+
+        const args: string[] = ["--session-dir", sessionDir, "--extension", this.extensionFilePath];
+        if (resolvedSessionFile) {
+          args.push("--session", resolvedSessionFile);
+        }
+        const normalizedInitialPrompt = normalizeInitialPrompt(input.initialPrompt);
+        const sessionSyncNonce = randomUUID();
+
+        try {
+          await assertValidCwd(input.cwd);
+          await this.startSessionSyncWatcher(entry, sessionSyncNonce);
+          this.startJsonlHookWatcher(entry, entry.activeSessionFile);
+
+          const spawnEnv = createSpawnEnv(process.env);
+          spawnEnv[CLUI_PI_THREAD_ID_ENV] = input.threadId;
+          spawnEnv[CLUI_PI_SESSION_SYNC_DIR_ENV] = this.sessionSyncDir;
+          spawnEnv[CLUI_PI_SESSION_SYNC_NONCE_ENV] = sessionSyncNonce;
+          if (input.fastMode === true) {
+            spawnEnv[CLUI_PI_FAST_MODE_ENV] = "1";
+          }
+          spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV] = this.processRegistryDir;
+          spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV] = String(process.pid);
+
+          let terminalPrompt: PendingTerminalPrompt | null = null;
+          let initialPromptReady: Promise<void> | null = null;
+          if (entry.mode === "rpc") {
+            await this.startRpcProcess(entry, {
+              args,
+              cwd: input.cwd,
+              env: spawnEnv,
+              initialPrompt: normalizedInitialPrompt,
+              resumed: resolvedSessionFile != null,
+              sessionDir,
+            });
+          } else {
+            const terminalStart = await this.startTerminalProcess(entry, {
+              args,
+              cwd: input.cwd,
+              cols: input.cols,
+              rows: input.rows,
+              env: spawnEnv,
+              awaitReadiness: normalizedInitialPrompt !== null,
+              sessionSyncNonce,
+              resumed: resolvedSessionFile != null,
+              sessionDir,
+            });
+            if (normalizedInitialPrompt !== null && terminalStart.readiness) {
+              initialPromptReady = terminalStart.readiness;
+              terminalPrompt = {
+                entry,
+                process: terminalStart.process,
+                sessionSyncNonce,
+                data: encodePiTuiPrompt(normalizedInitialPrompt),
+              };
+            }
+          }
+
+          const refreshTimer = setTimeout(() => {
+            void this.runWithThreadLock(input.threadId, async () => {
+              const current = this.sessions.get(input.threadId);
+              if (!current) return;
+              await this.refreshSessionSyncFile(current);
+            });
+          }, 150);
+          refreshTimer.unref?.();
+
+          void this.reconcileActiveSessions(this.maxActiveSessions);
+          return { initialPromptReady, pendingInitialPrompt: terminalPrompt };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to start pi session";
+          if (entry.process || entry.rpcProcess) {
+            this.stopProcess(entry, new Error(message));
+          } else {
+            this.unregisterProcess(entry);
+            this.rejectRpcPendingRequests(entry, new Error("Failed to start pi session"));
+            entry.rpcLineCarry = "";
+            entry.pendingExtensionUiRequest = null;
+            entry.extensionUiState = createEmptyExtensionUiState();
+            this.stopSessionSyncWatcher(entry);
+          }
+          entry.status = "new";
+          this.logger.error("failed to start pi session", {
+            threadId: input.threadId,
+            error: message,
           });
-        } else {
-          await this.startTerminalProcess(entry, {
-            args,
-            cwd: input.cwd,
-            cols: input.cols,
-            rows: input.rows,
-            env: spawnEnv,
-            initialPromptFile,
-            resumed: resolvedSessionFile != null,
-            sessionDir,
+          this.emitEvent({
+            type: "error",
+            threadId: input.threadId,
+            createdAt: new Date().toISOString(),
+            message,
           });
+          throw new Error(message, { cause: error });
         }
+      },
+    );
 
-        const refreshTimer = setTimeout(() => {
-          void this.runWithThreadLock(input.threadId, async () => {
-            const current = this.sessions.get(input.threadId);
-            if (!current) return;
-            await this.refreshSessionSyncFile(current);
-          });
-        }, 150);
-        refreshTimer.unref?.();
+    const pendingPrompt = sessionStart.pendingInitialPrompt;
+    if (!sessionStart.initialPromptReady || !pendingPrompt) return;
 
-        void this.reconcileActiveSessions(this.maxActiveSessions);
-      } catch (error) {
-        if (initialPromptFile) {
-          await rm(initialPromptFile, { force: true });
+    try {
+      // Keep the per-thread lock available so lifecycle operations can reject the
+      // process-bound waiter instead of deadlocking behind pi startup.
+      await sessionStart.initialPromptReady;
+      await this.runWithThreadLock(input.threadId, async () => {
+        const current = this.sessions.get(input.threadId);
+        if (
+          current !== pendingPrompt.entry ||
+          current.process !== pendingPrompt.process ||
+          current.sessionSyncNonce !== pendingPrompt.sessionSyncNonce ||
+          current.status !== "active"
+        ) {
+          throw new Error("pi session changed before its initial prompt was submitted");
         }
-        this.unregisterProcess(entry);
-        entry.status = "new";
-        this.rejectRpcPendingRequests(entry, new Error("Failed to start pi session"));
-        entry.process = null;
-        entry.rpcProcess = null;
-        entry.rpcLineCarry = "";
-        entry.pendingExtensionUiRequest = null;
-        entry.extensionUiState = createEmptyExtensionUiState();
-        this.stopSessionSyncWatcher(entry);
-        const message = error instanceof Error ? error.message : "Failed to start pi session";
-        this.logger.error("failed to start pi session", {
+        pendingPrompt.process.write(pendingPrompt.data);
+        current.pendingInitialPromptProcess = null;
+        current.lastInteractedAt = Date.now();
+        this.applyHookStatusIfChanged(current, "working");
+        this.emitTerminalStarted(current);
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to submit initial pi prompt";
+      const cleanedUp = await this.runWithThreadLock(input.threadId, async () => {
+        const current = this.sessions.get(input.threadId);
+        if (
+          current !== pendingPrompt.entry ||
+          current.process !== pendingPrompt.process ||
+          current.sessionSyncNonce !== pendingPrompt.sessionSyncNonce
+        ) {
+          return false;
+        }
+        this.stopProcess(current, new Error(message));
+        current.status = "new";
+        return true;
+      });
+      if (cleanedUp) {
+        this.logger.error("failed to submit initial pi prompt", {
           threadId: input.threadId,
           error: message,
         });
@@ -764,9 +840,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
           createdAt: new Date().toISOString(),
           message,
         });
-        throw new Error(message, { cause: error });
       }
-    });
+      throw new Error(message, { cause: error });
+    }
   }
 
   async hibernateSession(threadId: string): Promise<void> {
@@ -776,7 +852,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         throw new Error(`No session found for thread: ${threadId}`);
       }
 
-      this.stopProcess(entry);
+      this.stopProcess(
+        entry,
+        new Error("pi session hibernated before its initial prompt was submitted"),
+      );
       entry.status = "dormant";
 
       this.logger.info("pi session hibernated", {
@@ -898,6 +977,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     const entry = this.sessions.get(threadId);
     if (!entry || !entry.process || entry.status !== "active") {
       throw new Error(`No active terminal pi session for thread: ${threadId}`);
+    }
+
+    if (entry.pendingInitialPromptProcess === entry.process) {
+      throw new Error(`Initial pi prompt is still pending for thread: ${threadId}`);
     }
 
     entry.process.write(data);
@@ -1035,7 +1118,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     await this.runWithThreadLock(threadId, async () => {
       const entry = this.sessions.get(threadId);
       if (!entry) return;
-      this.stopProcess(entry);
+      this.stopProcess(
+        entry,
+        new Error("pi session destroyed before its initial prompt was submitted"),
+      );
       this.sessions.delete(threadId);
     });
   }
@@ -1061,7 +1147,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     for (const entry of this.sessions.values()) {
       this.stopSessionSyncWatcher(entry);
       this.stopJsonlHookWatcher(entry);
-      this.stopProcess(entry);
+      this.stopProcess(
+        entry,
+        new Error("pi session disposed before its initial prompt was submitted"),
+      );
     }
     this.sessions.clear();
     for (const timer of this.killEscalationTimers.values()) clearTimeout(timer);
@@ -1074,6 +1163,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       this.runtimeFilesPromise = (async () => {
         await mkdir(this.sessionsRootDir, { recursive: true });
         await mkdir(this.sessionSyncDir, { recursive: true });
+        await this.cleanupStaleSessionSyncArtifacts();
         await mkdir(path.dirname(this.extensionFilePath), { recursive: true });
         await writeFile(this.extensionFilePath, buildPiSessionSyncExtensionSource(), "utf8");
       })();
@@ -1081,12 +1171,35 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     await this.runtimeFilesPromise;
   }
 
-  private async createInitialPromptFile(prompt: string | null): Promise<string | null> {
-    if (prompt === null) return null;
-    await mkdir(this.initialPromptDir, { recursive: true });
-    const filePath = path.join(this.initialPromptDir, `${randomUUID()}.txt`);
-    await writeFile(filePath, prompt, { encoding: "utf8", mode: 0o600 });
-    return filePath;
+  private async cleanupStaleSessionSyncArtifacts(): Promise<void> {
+    const activeNonces = new Set(
+      [...this.sessions.values()].flatMap((entry) =>
+        entry.sessionSyncNonce ? [entry.sessionSyncNonce] : [],
+      ),
+    );
+    let fileNames: string[];
+    try {
+      fileNames = await readdir(this.sessionSyncDir, { encoding: "utf8" });
+    } catch (error) {
+      this.logger.warn("failed to list stale pi session sync artifacts", {
+        syncDir: this.sessionSyncDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    for (const fileName of fileNames) {
+      const nonce = fileName.match(PI_SESSION_SYNC_ARTIFACT_FILENAME_RE)?.[1];
+      if (!nonce || activeNonces.has(nonce)) continue;
+      try {
+        await rm(path.join(this.sessionSyncDir, fileName), { force: true });
+      } catch (error) {
+        this.logger.warn("failed to remove stale pi session sync artifact", {
+          fileName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   private async startTerminalProcess(
@@ -1097,11 +1210,12 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       cols: number;
       rows: number;
       env: NodeJS.ProcessEnv;
-      initialPromptFile: string | null;
+      awaitReadiness: boolean;
+      sessionSyncNonce: string;
       resumed: boolean;
       sessionDir: string;
     },
-  ): Promise<void> {
+  ): Promise<{ process: PtyProcess; readiness: Promise<void> | null }> {
     const ptyProcess = await Effect.runPromise(
       this.ptyAdapter.spawn({
         shell: "pi",
@@ -1114,12 +1228,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     );
 
     entry.process = ptyProcess;
-    if (input.initialPromptFile) {
-      const cleanupTimer = setTimeout(() => {
-        void rm(input.initialPromptFile!, { force: true });
-      }, INITIAL_PROMPT_FILE_CLEANUP_MS);
-      cleanupTimer.unref?.();
-    }
+    entry.pendingInitialPromptProcess = input.awaitReadiness ? ptyProcess : null;
+    const readiness = input.awaitReadiness
+      ? this.createTerminalReadinessWaiter(entry, ptyProcess, input.sessionSyncNonce)
+      : null;
     this.registerProcess(entry, ptyProcess);
     const registerProcessTimer = setTimeout(() => {
       this.registerProcess(entry, ptyProcess);
@@ -1143,11 +1255,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       activeSessionFile: entry.activeSessionFile,
     });
 
-    this.emitEvent({
-      type: "started",
-      threadId: entry.threadId,
-      createdAt: new Date().toISOString(),
-    });
+    if (!input.awaitReadiness) {
+      this.emitTerminalStarted(entry);
+    }
+
+    return { process: ptyProcess, readiness };
   }
 
   private async startRpcProcess(
@@ -1588,11 +1700,109 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     entry.jsonlHookWatcher?.stop();
   }
 
-  private async startSessionSyncWatcher(entry: PiSessionEntry): Promise<void> {
+  private createTerminalReadinessWaiter(
+    entry: PiSessionEntry,
+    expectedProcess: PtyProcess,
+    sessionSyncNonce: string,
+  ): Promise<void> {
+    this.rejectTerminalReadiness(entry, new Error("pi terminal readiness waiter was replaced"));
+
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    // Lifecycle cancellation may reject before startSession reaches its await.
+    void promise.catch(() => undefined);
+
+    const syncFilePath = entry.syncFilePath;
+    let waiter!: TerminalReadinessWaiter;
+    const timeoutTimer = setTimeout(() => {
+      this.rejectTerminalReadiness(
+        entry,
+        new Error("Timed out waiting for pi terminal readiness"),
+        expectedProcess,
+        sessionSyncNonce,
+      );
+    }, this.initialPromptReadyTimeoutMs);
+    timeoutTimer.unref?.();
+
+    const pollTimer = setInterval(() => {
+      if (!syncFilePath || waiter.pollInFlight) return;
+      waiter.pollInFlight = true;
+      void this.runWithThreadLock(entry.threadId, async () => {
+        const current = this.sessions.get(entry.threadId);
+        if (
+          current !== entry ||
+          current.terminalReadinessWaiter !== waiter ||
+          current.process !== expectedProcess ||
+          current.syncFilePath !== syncFilePath
+        ) {
+          return;
+        }
+        await this.refreshSessionSyncFile(current, syncFilePath);
+      })
+        .finally(() => {
+          waiter.pollInFlight = false;
+        })
+        .catch(() => undefined);
+    }, TERMINAL_READY_POLL_MS);
+    pollTimer.unref?.();
+
+    waiter = {
+      process: expectedProcess,
+      sessionSyncNonce,
+      promise,
+      resolve,
+      reject,
+      timeoutTimer,
+      pollTimer,
+      pollInFlight: false,
+    };
+    entry.terminalReadinessWaiter = waiter;
+    return waiter.promise;
+  }
+
+  private resolveTerminalReadiness(entry: PiSessionEntry, sessionSyncNonce: string): void {
+    const waiter = entry.terminalReadinessWaiter;
+    if (!waiter || waiter.sessionSyncNonce !== sessionSyncNonce || waiter.process !== entry.process) return;
+    entry.terminalReadinessWaiter = null;
+    clearTimeout(waiter.timeoutTimer);
+    clearInterval(waiter.pollTimer);
+    waiter.resolve();
+  }
+
+  private rejectTerminalReadiness(
+    entry: PiSessionEntry,
+    error: Error,
+    expectedProcess?: PtyProcess,
+    expectedSessionSyncNonce?: string,
+  ): void {
+    const waiter = entry.terminalReadinessWaiter;
+    if (
+      !waiter ||
+      (expectedProcess &&
+        (waiter.process !== expectedProcess || entry.process !== expectedProcess)) ||
+      (expectedSessionSyncNonce &&
+        (waiter.sessionSyncNonce !== expectedSessionSyncNonce ||
+          entry.sessionSyncNonce !== expectedSessionSyncNonce))
+    ) {
+      return;
+    }
+    entry.terminalReadinessWaiter = null;
+    clearTimeout(waiter.timeoutTimer);
+    clearInterval(waiter.pollTimer);
+    waiter.reject(error);
+  }
+
+  private async startSessionSyncWatcher(entry: PiSessionEntry, sessionSyncNonce: string): Promise<void> {
     this.stopSessionSyncWatcher(entry);
-    entry.syncFilePath = path.join(this.sessionSyncDir, `${entry.threadId}.json`);
+    const syncFilePath = path.join(this.sessionSyncDir, `${sessionSyncNonce}.json`);
+    entry.syncFilePath = syncFilePath;
+    entry.sessionSyncNonce = sessionSyncNonce;
     try {
-      await rm(entry.syncFilePath, { force: true });
+      await rm(syncFilePath, { force: true });
     } catch {
       // ignore stale file cleanup failures
     }
@@ -1601,8 +1811,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         this.sessionSyncDir,
         { persistent: false },
         (_eventType, fileName) => {
-          if (fileName && fileName.toString() !== path.basename(entry.syncFilePath!)) return;
-          this.scheduleSessionSyncRefresh(entry);
+          if (entry.syncFilePath !== syncFilePath) return;
+          if (fileName && fileName.toString() !== path.basename(syncFilePath)) return;
+          this.scheduleSessionSyncRefresh(entry, syncFilePath);
         },
       );
     } catch (error) {
@@ -1621,30 +1832,59 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }
     entry.syncWatcher?.close();
     entry.syncWatcher = null;
+    const syncFilePath = entry.syncFilePath;
     entry.syncFilePath = null;
+    entry.sessionSyncNonce = null;
+    if (syncFilePath) {
+      this.removeSessionSyncFiles(syncFilePath);
+      const finalCleanupTimer = setTimeout(() => {
+        this.removeSessionSyncFiles(syncFilePath);
+      }, this.processKillGraceMs + 100);
+      finalCleanupTimer.unref?.();
+    }
   }
 
-  private scheduleSessionSyncRefresh(entry: PiSessionEntry): void {
+  private removeSessionSyncFiles(syncFilePath: string): void {
+    void rm(syncFilePath, { force: true }).catch(() => undefined);
+    void rm(`${syncFilePath}.tmp`, { force: true }).catch(() => undefined);
+  }
+
+  private scheduleSessionSyncRefresh(entry: PiSessionEntry, syncFilePath: string): void {
     if (entry.syncDebounceTimer) clearTimeout(entry.syncDebounceTimer);
     entry.syncDebounceTimer = setTimeout(() => {
       entry.syncDebounceTimer = null;
       void this.runWithThreadLock(entry.threadId, async () => {
         const current = this.sessions.get(entry.threadId);
-        if (!current) return;
-        await this.refreshSessionSyncFile(current);
+        if (current !== entry || current.syncFilePath !== syncFilePath) return;
+        await this.refreshSessionSyncFile(current, syncFilePath);
       });
     }, 80);
     entry.syncDebounceTimer.unref?.();
   }
 
-  private async refreshSessionSyncFile(entry: PiSessionEntry): Promise<void> {
-    if (!entry.syncFilePath || !existsSync(entry.syncFilePath)) return;
+  private async refreshSessionSyncFile(
+    entry: PiSessionEntry,
+    expectedSyncFilePath = entry.syncFilePath,
+  ): Promise<void> {
+    if (
+      !expectedSyncFilePath ||
+      entry.syncFilePath !== expectedSyncFilePath ||
+      !existsSync(expectedSyncFilePath)
+    ) {
+      return;
+    }
 
     let payload: PiSessionSyncPayload;
     try {
-      const raw = await readFile(entry.syncFilePath, "utf8");
+      const raw = await readFile(expectedSyncFilePath, "utf8");
       const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (parsed.threadId !== entry.threadId) return;
+      if (
+        parsed.threadId !== entry.threadId ||
+        typeof parsed.sessionSyncNonce !== "string" ||
+        parsed.sessionSyncNonce !== entry.sessionSyncNonce
+      ) {
+        return;
+      }
       const hookStatus = parsePiHookStatus(parsed.hookStatus);
       const explicitActivityStatus = parsePiActivityStatus(parsed.activityStatus);
       const reason = nonEmptyString(parsed.reason);
@@ -1665,6 +1905,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
           : undefined;
       payload = {
         threadId: entry.threadId,
+        sessionSyncNonce: parsed.sessionSyncNonce,
         sessionFile: typeof parsed.sessionFile === "string" ? parsed.sessionFile : null,
         timestamp:
           typeof parsed.timestamp === "string" ? parsed.timestamp : new Date().toISOString(),
@@ -1679,11 +1920,13 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     } catch (error) {
       this.logger.warn("failed to parse pi session sync file", {
         threadId: entry.threadId,
-        syncFilePath: entry.syncFilePath,
+        syncFilePath: expectedSyncFilePath,
         error: error instanceof Error ? error.message : String(error),
       });
       return;
     }
+
+    this.resolveTerminalReadiness(entry, payload.sessionSyncNonce);
 
     const nextSessionFile = payload.sessionFile ? path.resolve(payload.sessionFile) : null;
     if (nextSessionFile !== entry.activeSessionFile) {
@@ -1725,9 +1968,19 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   }
 
   private onProcessExit(entry: PiSessionEntry, event: PtyExitEvent): void {
+    const expectedProcess = entry.process;
+    if (expectedProcess) {
+      this.rejectTerminalReadiness(
+        entry,
+        new Error("pi terminal exited before its initial prompt was submitted"),
+        expectedProcess,
+        entry.sessionSyncNonce ?? undefined,
+      );
+    }
     this.unregisterProcess(entry);
     this.cleanupProcessHandles(entry);
-    this.clearKillEscalationTimer(entry.process);
+    this.clearKillEscalationTimer(expectedProcess);
+    entry.pendingInitialPromptProcess = null;
     entry.process = null;
     entry.status = "dormant";
     this.stopSessionSyncWatcher(entry);
@@ -1774,13 +2027,23 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     });
   }
 
-  private stopProcess(entry: PiSessionEntry): void {
+  private stopProcess(
+    entry: PiSessionEntry,
+    readinessError = new Error("pi session stopped before its initial prompt was submitted"),
+  ): void {
+    this.rejectTerminalReadiness(
+      entry,
+      readinessError,
+      entry.process ?? undefined,
+      entry.sessionSyncNonce ?? undefined,
+    );
     this.stopSessionSyncWatcher(entry);
     this.stopJsonlHookWatcher(entry);
     this.unregisterProcess(entry);
     const ptyProcess = entry.process;
     const rpcProcess = entry.rpcProcess;
     this.cleanupProcessHandles(entry);
+    entry.pendingInitialPromptProcess = null;
     entry.process = null;
     entry.rpcProcess = null;
     entry.rpcLineCarry = "";
@@ -1909,6 +2172,14 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }, this.processKillGraceMs);
     timer.unref?.();
     this.killEscalationTimers.set(ptyProcess, timer);
+  }
+
+  private emitTerminalStarted(entry: PiSessionEntry): void {
+    this.emitEvent({
+      type: "started",
+      threadId: entry.threadId,
+      createdAt: new Date().toISOString(),
+    });
   }
 
   private emitEvent(event: PiSessionEvent): void {

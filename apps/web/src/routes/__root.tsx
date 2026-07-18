@@ -16,7 +16,12 @@ import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { clearBranchUpdatePending, markArchiveUpdatePending, updateThread, useStore } from "../store";
+import {
+  clearBranchUpdatePending,
+  markArchiveUpdatePending,
+  updateThread,
+  useStore,
+} from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
@@ -290,10 +295,7 @@ function EventRouter() {
           const activity = event.payload.activity;
           useStore.setState((state) => {
             const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => {
-              const activities = [
-                ...t.activities.filter((a) => a.id !== activity.id),
-                activity,
-              ];
+              const activities = [...t.activities.filter((a) => a.id !== activity.id), activity];
               return { ...t, activities };
             });
             return threads === state.threads ? state : { threads };
@@ -348,8 +350,18 @@ function EventRouter() {
       // where a stale in-flight snapshot could overwrite an optimistic update.
       // Title/bookmarked are only patched for background threads.
       if (event.type === "thread.meta-updated") {
-        const { threadId, title, titleSource, bookmarked, branch, worktreePath, harness, archivedAt } =
-          event.payload;
+        const {
+          threadId,
+          title,
+          titleSource,
+          bookmarked,
+          branch,
+          worktreePath,
+          harness,
+          claudeCodeBackend,
+          model,
+          archivedAt,
+        } = event.payload;
 
         if (branch !== undefined || worktreePath !== undefined) {
           clearBranchUpdatePending(threadId);
@@ -359,18 +371,26 @@ function EventRouter() {
         }
 
         const hasBranchPatch = branch !== undefined || worktreePath !== undefined;
-        const hasTitlePatch =
-          !isCurrentThread && (title !== undefined || bookmarked !== undefined);
+        const hasTitlePatch = !isCurrentThread && (title !== undefined || bookmarked !== undefined);
         const hasHarnessPatch = harness !== undefined;
+        const hasClaudeBackendPatch = claudeCodeBackend !== undefined || model !== undefined;
         const hasArchivePatch = archivedAt !== undefined;
 
-        if (hasBranchPatch || hasTitlePatch || hasHarnessPatch || hasArchivePatch) {
+        if (
+          hasBranchPatch ||
+          hasTitlePatch ||
+          hasHarnessPatch ||
+          hasClaudeBackendPatch ||
+          hasArchivePatch
+        ) {
           useStore.setState((state) => {
             const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => ({
               ...t,
               ...(branch !== undefined ? { branch } : {}),
               ...(worktreePath !== undefined ? { worktreePath } : {}),
               ...(harness !== undefined ? { harness } : {}),
+              ...(claudeCodeBackend !== undefined ? { claudeCodeBackend } : {}),
+              ...(model !== undefined ? { model } : {}),
               ...(archivedAt !== undefined ? { archivedAt } : {}),
               ...(!isCurrentThread && title !== undefined ? { title } : {}),
               ...(!isCurrentThread && titleSource !== undefined ? { titleSource } : {}),
@@ -395,7 +415,10 @@ function EventRouter() {
         event.type !== "thread.meta-updated" &&
         event.type !== "thread.deleted";
 
-      if ((isExplicitUnarchiveEvent || suppressArchivedThreadSync) && event.aggregateKind === "thread") {
+      if (
+        (isExplicitUnarchiveEvent || suppressArchivedThreadSync) &&
+        event.aggregateKind === "thread"
+      ) {
         deferredThreadIdsRef.current.delete(event.aggregateId);
       }
 
@@ -439,12 +462,9 @@ function EventRouter() {
       setTerminalStatus: (rawId, status) =>
         useStore.getState().setTerminalStatus(ThreadId.makeUnsafe(rawId), status),
       setTerminalLifecycle: (rawId, status, hookStatus, dormantReason) =>
-        useStore.getState().setTerminalLifecycle(
-          ThreadId.makeUnsafe(rawId),
-          status,
-          hookStatus,
-          dormantReason,
-        ),
+        useStore
+          .getState()
+          .setTerminalLifecycle(ThreadId.makeUnsafe(rawId), status, hookStatus, dormantReason),
     });
     setGlobalSessionEventState(sessionState);
 
@@ -492,14 +512,18 @@ function EventRouter() {
 
           if (event.threadId !== currentThreadId) {
             useStore.setState((state) => {
-              const threads = updateThread(state.threads, ThreadId.makeUnsafe(event.threadId), (t) => {
-                if (!t.latestTurn?.startedAt) return t;
-                if (t.latestTurn.completedAt) return t;
-                return {
-                  ...t,
-                  latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
-                };
-              });
+              const threads = updateThread(
+                state.threads,
+                ThreadId.makeUnsafe(event.threadId),
+                (t) => {
+                  if (!t.latestTurn?.startedAt) return t;
+                  if (t.latestTurn.completedAt) return t;
+                  return {
+                    ...t,
+                    latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
+                  };
+                },
+              );
               return threads === state.threads ? state : { threads };
             });
           }
@@ -578,14 +602,18 @@ function EventRouter() {
 
           if (event.threadId !== currentThreadId) {
             useStore.setState((state) => {
-              const threads = updateThread(state.threads, ThreadId.makeUnsafe(event.threadId), (t) => {
-                if (!t.latestTurn?.startedAt) return t;
-                if (t.latestTurn.completedAt) return t;
-                return {
-                  ...t,
-                  latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
-                };
-              });
+              const threads = updateThread(
+                state.threads,
+                ThreadId.makeUnsafe(event.threadId),
+                (t) => {
+                  if (!t.latestTurn?.startedAt) return t;
+                  if (t.latestTurn.completedAt) return t;
+                  return {
+                    ...t,
+                    latestTurn: { ...t.latestTurn, completedAt: new Date().toISOString() },
+                  };
+                },
+              );
               return threads === state.threads ? state : { threads };
             });
           }

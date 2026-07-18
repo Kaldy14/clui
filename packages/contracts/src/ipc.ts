@@ -26,7 +26,7 @@ import type {
   ProjectReadFileInput,
   ProjectReadFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type { ClaudeCodeProxyStatus, ServerConfig } from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -218,7 +218,11 @@ export interface NativeApi {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     updateSettings: (input: ServerUpdateSettingsInput) => Promise<ServerSettings>;
-    purgeInactiveSessions: (input: PurgeInactiveSessionsInput) => Promise<PurgeInactiveSessionsResult>;
+    startClaudeCodeProxyLogin: () => Promise<ClaudeCodeProxyStatus>;
+    logoutClaudeCodeProxy: () => Promise<ClaudeCodeProxyStatus>;
+    purgeInactiveSessions: (
+      input: PurgeInactiveSessionsInput,
+    ) => Promise<PurgeInactiveSessionsResult>;
     setHarnessOutputSubscriptions: (
       input: ServerSetHarnessOutputSubscriptionsInput,
     ) => Promise<void>;
@@ -237,7 +241,9 @@ export interface NativeApi {
     generateDiffReview: (
       input: OrchestrationGenerateDiffReviewInput,
     ) => Promise<OrchestrationGenerateDiffReviewResult>;
-    askDiffReview: (input: OrchestrationAskDiffReviewInput) => Promise<OrchestrationAskDiffReviewResult>;
+    askDiffReview: (
+      input: OrchestrationAskDiffReviewInput,
+    ) => Promise<OrchestrationAskDiffReviewResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     getSessionMetrics: (
       input: OrchestrationGetSessionMetricsInput,

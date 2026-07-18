@@ -26,6 +26,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           title,
           model,
           harness,
+          claude_code_backend,
           pi_render_mode,
           runtime_mode,
           interaction_mode,
@@ -50,6 +51,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.title},
           ${row.model},
           ${row.harness},
+          ${row.claudeCodeBackend},
           ${row.piRenderMode},
           ${row.runtimeMode},
           ${row.interactionMode},
@@ -74,6 +76,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           title = excluded.title,
           model = excluded.model,
           harness = excluded.harness,
+          claude_code_backend = excluded.claude_code_backend,
           pi_render_mode = excluded.pi_render_mode,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
@@ -105,6 +108,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           title,
           model,
           harness,
+          claude_code_backend AS "claudeCodeBackend",
           pi_render_mode AS "piRenderMode",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -150,6 +154,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           title,
           model,
           harness,
+          claude_code_backend AS "claudeCodeBackend",
           pi_render_mode AS "piRenderMode",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -214,44 +219,46 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const clearScrollbackSnapshotBulk: ProjectionThreadRepositoryShape["clearScrollbackSnapshotBulk"] =
     (input) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          if (input.excludeThreadIds.length === 0) {
-            yield* sql`
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            if (input.excludeThreadIds.length === 0) {
+              yield* sql`
               UPDATE projection_threads
               SET scrollback_snapshot = NULL
               WHERE deleted_at IS NULL
                 AND scrollback_snapshot IS NOT NULL
             `;
-            // changes() must run on the same connection as the UPDATE — transaction ensures this
-            const [row] = yield* sql<{ count: number }>`SELECT changes() AS count`;
-            return row?.count ?? 0;
-          }
+              // changes() must run on the same connection as the UPDATE — transaction ensures this
+              const [row] = yield* sql<{ count: number }>`SELECT changes() AS count`;
+              return row?.count ?? 0;
+            }
 
-          const excludedThreadIds = new Set(input.excludeThreadIds);
-          const rows = yield* sql<{ thread_id: string }>`
+            const excludedThreadIds = new Set(input.excludeThreadIds);
+            const rows = yield* sql<{ thread_id: string }>`
             SELECT thread_id
             FROM projection_threads
             WHERE deleted_at IS NULL
               AND scrollback_snapshot IS NOT NULL
           `;
-          const threadIdsToClear = rows
-            .map((row) => row.thread_id)
-            .filter((threadId) => !excludedThreadIds.has(threadId));
-          for (const threadId of threadIdsToClear) {
-            yield* sql`
+            const threadIdsToClear = rows
+              .map((row) => row.thread_id)
+              .filter((threadId) => !excludedThreadIds.has(threadId));
+            for (const threadId of threadIdsToClear) {
+              yield* sql`
               UPDATE projection_threads
               SET scrollback_snapshot = NULL
               WHERE thread_id = ${threadId}
             `;
-          }
-          return threadIdsToClear.length;
-        }),
-      ).pipe(
-        Effect.mapError(
-          toPersistenceSqlError("ProjectionThreadRepository.clearScrollbackSnapshotBulk:query"),
-        ),
-      );
+            }
+            return threadIdsToClear.length;
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            toPersistenceSqlError("ProjectionThreadRepository.clearScrollbackSnapshotBulk:query"),
+          ),
+        );
 
   return {
     upsert,

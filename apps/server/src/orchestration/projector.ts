@@ -1,5 +1,6 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@clui/contracts";
 import {
+  DEFAULT_CLAUDE_CODE_BACKEND,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -259,6 +260,7 @@ export function projectEvent(
             title: payload.title,
             model: payload.model,
             harness: payload.harness,
+            claudeCodeBackend: payload.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
             piRenderMode: payload.piRenderMode ?? "terminal",
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
@@ -318,10 +320,15 @@ export function projectEvent(
               ...(!skipTitle && payload.title !== undefined ? { title: payload.title } : {}),
               ...(payload.model !== undefined ? { model: payload.model } : {}),
               ...(payload.harness !== undefined ? { harness: payload.harness } : {}),
+              ...(payload.claudeCodeBackend !== undefined
+                ? { claudeCodeBackend: payload.claudeCodeBackend }
+                : {}),
               ...(payload.piRenderMode !== undefined ? { piRenderMode: payload.piRenderMode } : {}),
               ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
               ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-              ...(!skipTitle && payload.titleSource !== undefined ? { titleSource: payload.titleSource } : {}),
+              ...(!skipTitle && payload.titleSource !== undefined
+                ? { titleSource: payload.titleSource }
+                : {}),
               ...(payload.bookmarked !== undefined ? { bookmarked: payload.bookmarked } : {}),
               ...(payload.archivedAt !== undefined ? { archivedAt: payload.archivedAt } : {}),
               updatedAt: payload.updatedAt,

@@ -29,10 +29,7 @@ function makeLatestTurn(overrides?: {
   };
 }
 
-function makeHarnessSessionStatsThread(
-  harness: CodingHarness,
-  terminalStatus: TerminalStatus,
-) {
+function makeHarnessSessionStatsThread(harness: CodingHarness, terminalStatus: TerminalStatus) {
   return { harness, terminalStatus };
 }
 
@@ -62,9 +59,7 @@ describe("getActiveHarnessSessionStats", () => {
   });
 
   it("does not clamp over-cap active session counts", () => {
-    const threads = Array.from({ length: 25 }, () =>
-      makeHarnessSessionStatsThread("pi", "active"),
-    );
+    const threads = Array.from({ length: 25 }, () => makeHarnessSessionStatsThread("pi", "active"));
 
     expect(getActiveHarnessSessionStats({ maxActivePerHarness: 20, threads })).toMatchObject({
       activeByHarness: { claudeCode: 0, pi: 25 },
@@ -111,8 +106,9 @@ describe("createThreadAndNavigate", () => {
       commandId: CommandId.makeUnsafe("cmd-thread-create"),
       threadId: ThreadId.makeUnsafe("thread-1"),
       projectId: ProjectId.makeUnsafe("project-1"),
-      model: "gpt-5-codex",
+      model: "gpt-5.6-sol",
       harness: "claudeCode",
+      claudeCodeBackend: "codex",
       createdAt: "2026-04-23T10:00:00.000Z",
       branch: null,
       worktreePath: null,
@@ -126,6 +122,18 @@ describe("createThreadAndNavigate", () => {
     await pending;
 
     expect(events).toEqual(["dispatch:start", "dispatch:resolved", "optimistic", "navigate"]);
+    expect(api.orchestration.dispatchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+        claudeCodeBackend: "codex",
+      }),
+    );
+    expect(addOptimisticThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+        claudeCodeBackend: "codex",
+      }),
+    );
   });
 
   it("does not add local state or navigate when thread.create fails", async () => {

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -38,6 +39,61 @@ describe("decider project scripts", () => {
     const event = Array.isArray(result) ? result[0] : result;
     expect(event.type).toBe("project.created");
     expect((event.payload as { scripts: unknown[] }).scripts).toEqual([]);
+  });
+
+  it("defaults historical thread.create commands to the Anthropic backend", async () => {
+    const now = new Date().toISOString();
+    const projectId = asProjectId("project-thread-backend-default");
+    const readModel = await Effect.runPromise(
+      projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-thread-backend-default"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-thread-backend-default"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-thread-backend-default"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Backend Default",
+          workspaceRoot: "/tmp/backend-default",
+          defaultModel: null,
+          scripts: [],
+          prompts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-backend-default"),
+          threadId: ThreadId.makeUnsafe("thread-backend-default"),
+          projectId,
+          title: "Thread",
+          model: "claude-opus-4-6",
+          harness: "claudeCode",
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("thread.created");
+    expect(event.payload).toMatchObject({
+      claudeCodeBackend: DEFAULT_CLAUDE_CODE_BACKEND,
+    });
   });
 
   it("propagates scripts in project.meta.update payload", async () => {

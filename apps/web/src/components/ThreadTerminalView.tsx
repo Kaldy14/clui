@@ -1,4 +1,16 @@
-import { type NativeApi, type PiRenderMode, type ThreadId } from "@clui/contracts";
+import {
+  DEFAULT_CLAUDE_CODE_PROXY_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
+  type ClaudeCodeBackend,
+  type ClaudeCodeProxyModel,
+  type NativeApi,
+  type PiRenderMode,
+  type ThreadId,
+} from "@clui/contracts";
+import {
+  CLAUDE_CODE_PROXY_MODEL_OPTIONS,
+  isClaudeCodeProxyModel,
+} from "@clui/shared/claudeCodeProxy";
 import type { ClaudeSessionEvent, PiSessionEvent } from "@clui/contracts";
 import { PlayIcon, TerminalIcon } from "lucide-react";
 
@@ -7,6 +19,7 @@ import { Kbd } from "./ui/kbd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAppSettings } from "../appSettings";
+import { isElectron } from "../env";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import {
   clipboardImageFiles,
@@ -30,6 +43,7 @@ import { requestTerminalRepaint } from "../lib/terminalPtyRepaint";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { THREAD_SELECTED_EVENT, isThreadSelectedEventFor } from "../lib/threadSelectionEvent";
 import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
+import { shouldConvertWheelToArrowKeys } from "../lib/terminalWheelRouting";
 import { restoreTerminalInputModesForHarness } from "../lib/terminalReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import { submitThreadPrompt } from "../lib/threadInput";
@@ -57,12 +71,11 @@ import {
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
 type HarnessKind = Thread["harness"];
 
-const PI_IMAGE_PASTE_KEYSTROKE = "\x16";
+const IMAGE_PASTE_KEYSTROKE = "\x16";
 const ALT_BUFFER_WHEEL_PIXELS_PER_LINE = 50;
 const ALT_BUFFER_WHEEL_DELTA_LINE_PIXELS = 40;
 const ALT_BUFFER_WHEEL_MAX_STEPS_PER_FRAME = 24;
 const TERMINAL_RECOVERY_TIMEOUT_MS = [120, 350, 900] as const;
-
 function scheduleTerminalRecoveryPasses(runPass: () => void): () => void {
   const rafIds = new Set<number>();
   const timeoutIds = new Set<number>();
@@ -180,6 +193,7 @@ function resizeHarnessSession(
 // ── NewThreadView ─────────────────────────────────────────────────────
 
 function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Thread }) {
+  const { updateSettings } = useAppSettings();
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dangerouslySkipPermissions = useTerminalStateStore(
@@ -194,9 +208,11 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piFastMode,
   );
   const draftPiRenderMode = useTerminalStateStore(
-    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode ?? "terminal",
+    (s) =>
+      selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode ?? "terminal",
   );
-  const piRenderMode = thread.piRenderMode === "html" || draftPiRenderMode === "html" ? "html" : "terminal";
+  const piRenderMode =
+    thread.piRenderMode === "html" || draftPiRenderMode === "html" ? "html" : "terminal";
   const setPiFastMode = useTerminalStateStore((s) => s.setPiFastMode);
   const setDraftPiRenderMode = useTerminalStateStore((s) => s.setPiRenderMode);
   const setThreadPiRenderMode = useStore((s) => s.setThreadPiRenderMode);
@@ -209,6 +225,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   const activeProjectCwd = branchToolbar.activeProjectCwd ?? project?.cwd ?? null;
   const setThreadBranchMetadata = branchToolbar.setThreadBranch;
   const setThreadHarness = useStore((s) => s.setThreadHarness);
+  const setThreadClaudeCodeBackend = useStore((s) => s.setThreadClaudeCodeBackend);
   const cwd = thread.worktreePath ?? project?.cwd ?? "";
   const initialPrompt = useTerminalStateStore(
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).newThreadPromptDraft,
@@ -429,6 +446,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   const handleHarnessChange = useCallback(
     (harness: Thread["harness"]) => {
       if (thread.terminalStatus !== "new") return;
+      updateSettings({ defaultCodingHarness: harness });
       const api = readNativeApi();
       setThreadHarness(threadId, harness);
       requestAnimationFrame(() => initialPromptRef.current?.focus({ preventScroll: true }));
@@ -440,7 +458,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         harness,
       });
     },
-    [setThreadHarness, thread.terminalStatus, threadId],
+    [setThreadHarness, thread.terminalStatus, threadId, updateSettings],
   );
 
   const handlePiRenderModeChange = useCallback(
@@ -459,7 +477,55 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         piRenderMode: renderMode,
       });
     },
-    [activeProjectCwd, setDraftPiRenderMode, setThreadPiRenderMode, thread.terminalStatus, threadId],
+    [
+      activeProjectCwd,
+      setDraftPiRenderMode,
+      setThreadPiRenderMode,
+      thread.terminalStatus,
+      threadId,
+    ],
+  );
+
+  const handleClaudeCodeBackendChange = useCallback(
+    (claudeCodeBackend: ClaudeCodeBackend) => {
+      if (thread.terminalStatus !== "new") return;
+      const api = readNativeApi();
+      const model =
+        claudeCodeBackend === "codex"
+          ? isClaudeCodeProxyModel(thread.model)
+            ? thread.model
+            : DEFAULT_CLAUDE_CODE_PROXY_MODEL
+          : isClaudeCodeProxyModel(thread.model)
+            ? DEFAULT_MODEL_BY_PROVIDER.claudeCode
+            : thread.model;
+      setThreadClaudeCodeBackend(threadId, claudeCodeBackend, model);
+      requestAnimationFrame(() => initialPromptRef.current?.focus({ preventScroll: true }));
+      if (!api) return;
+      void api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: newCommandId(),
+        threadId,
+        claudeCodeBackend,
+        model,
+      });
+    },
+    [setThreadClaudeCodeBackend, thread.model, thread.terminalStatus, threadId],
+  );
+
+  const handleClaudeCodeProxyModelChange = useCallback(
+    (model: ClaudeCodeProxyModel) => {
+      if (thread.terminalStatus !== "new" || thread.claudeCodeBackend !== "codex") return;
+      const api = readNativeApi();
+      setThreadClaudeCodeBackend(threadId, "codex", model);
+      if (!api) return;
+      void api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: newCommandId(),
+        threadId,
+        model,
+      });
+    },
+    [setThreadClaudeCodeBackend, thread.claudeCodeBackend, thread.terminalStatus, threadId],
   );
 
   // Auto-focus the first-prompt textarea so new threads are keyboard-first.
@@ -664,6 +730,51 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                   ))}
                 </div>
               )}
+              {thread.harness === "claudeCode" && (
+                <div
+                  role="group"
+                  aria-label="Claude Code backend"
+                  className="flex items-center rounded-md bg-muted/60 p-0.5"
+                >
+                  {[
+                    { value: "anthropic" as const, label: "Anthropic" },
+                    { value: "codex" as const, label: "Codex" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleClaudeCodeBackendChange(option.value)}
+                      className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors ${
+                        thread.claudeCodeBackend === option.value
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground/70 hover:text-foreground"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {thread.harness === "claudeCode" && thread.claudeCodeBackend === "codex" && (
+                <select
+                  aria-label="Codex model"
+                  value={
+                    isClaudeCodeProxyModel(thread.model)
+                      ? thread.model
+                      : DEFAULT_CLAUDE_CODE_PROXY_MODEL
+                  }
+                  onChange={(event) =>
+                    handleClaudeCodeProxyModelChange(event.target.value as ClaudeCodeProxyModel)
+                  }
+                  className="h-7 rounded-md border border-border/40 bg-background px-2 text-xs font-medium text-foreground outline-none focus:border-primary/50 dark:border-border/20"
+                >
+                  {CLAUDE_CODE_PROXY_MODEL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              )}
               {thread.harness === "pi" && activeProjectCwd && (
                 <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs font-medium text-muted-foreground/70 transition-colors hover:text-foreground dark:border-border/20">
                   <Checkbox
@@ -717,13 +828,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
               ) : (
                 <>
                   <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
-                  {hasInitialPrompt
-                    ? thread.harness === "pi"
-                      ? "Start pi & send"
-                      : "Start Claude Code & send"
-                    : thread.harness === "pi"
-                      ? "Start pi"
-                      : "Start Claude Code"}
+                  {thread.harness === "pi" ? "Start pi" : "Start Claude Code"}
                 </>
               )}
             </button>
@@ -1595,12 +1700,13 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     });
 
     const onPaste = (event: ClipboardEvent) => {
-      if (disposed || harness !== "pi") return;
+      if (disposed) return;
       if (!clipboardItemsContainImageFile(event.clipboardData?.items)) return;
+      if (harness === "claudeCode" && !(isElectron && isMacPlatform(navigator.platform))) return;
 
       event.preventDefault();
       event.stopPropagation();
-      void writeHarnessData(api, "pi", threadId, PI_IMAGE_PASTE_KEYSTROKE).catch(() => undefined);
+      void writeHarnessData(api, harness, threadId, IMAGE_PASTE_KEYSTROKE).catch(() => undefined);
     };
     el.addEventListener("paste", onPaste, { capture: true });
 
@@ -1678,17 +1784,11 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       );
     }, 30_000);
 
-    // ── Alternate-buffer scroll: convert wheel → arrow keys ──────────
-    // Claude Code runs in alternate screen buffer (TUI mode). xterm.js has
-    // no scrollback in alt-buffer and its internal wheel→arrow fallback
-    // (CoreBrowserTerminal.ts:806-842) silently eats events when render
-    // dimensions are unavailable — consumeWheelEvent returns 0 → event
-    // canceled with no input sent. We intercept wheel in capture phase
-    // and reliably forward arrow keys to the PTY so the user can scroll
-    // within Claude Code's conversation view.
-    //
-    // We always intercept wheel in alternate buffer and send arrow keys,
-    // even when mouse tracking is active — see note inside the handler.
+    // ── Alternate-buffer scroll fallback: convert wheel → arrow keys ────
+    // xterm has no scrollback in the alternate buffer, so when the TUI has not
+    // enabled a wheel-capable mouse protocol we provide a reliable key fallback.
+    // When mouse reporting is active, xterm must receive the wheel event so it
+    // can encode the pointer coordinates for the TUI instead of editing input.
     let wheelPartialScroll = 0;
     let queuedWheelUpLines = 0;
     let queuedWheelDownLines = 0;
@@ -1733,7 +1833,12 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         resetQueuedAltBufferWheel();
         return;
       }
-      if (terminal.buffer.active.type !== "alternate") {
+      if (
+        !shouldConvertWheelToArrowKeys(
+          terminal.buffer.active.type,
+          terminal.modes.mouseTrackingMode,
+        )
+      ) {
         resetQueuedAltBufferWheel();
         return;
       }
@@ -1762,16 +1867,18 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
     const onAltBufferWheel = (ev: WheelEvent) => {
       if (disposed) return;
-      if (terminal.buffer.active.type !== "alternate") return;
+      if (
+        !shouldConvertWheelToArrowKeys(
+          terminal.buffer.active.type,
+          terminal.modes.mouseTrackingMode,
+        )
+      ) {
+        return;
+      }
       // Shift+scroll = horizontal intent — don't convert to vertical arrows
       if (ev.shiftKey) return;
       let deltaY = ev.deltaY;
       if (deltaY === 0) return;
-      // NOTE: We intentionally do NOT bail out when xterm.js has mouse tracking
-      // active (enable-mouse-events class). xterm.js's internal wheel→mouse
-      // handler silently eats events when render dimensions are unavailable,
-      // leaving scroll completely dead. Arrow keys are universally understood
-      // by terminal TUIs for vertical navigation, so we always intercept.
 
       ev.preventDefault();
       ev.stopPropagation();
@@ -2005,7 +2112,8 @@ export default function ThreadTerminalView({ threadId }: { threadId: ThreadId })
   const thread = useStore((s) => s.threads.find((t) => t.id === threadId));
   const setThreadPiRenderMode = useStore((s) => s.setThreadPiRenderMode);
   const localPiRenderMode = useTerminalStateStore(
-    (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode ?? "terminal",
+    (s) =>
+      selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode ?? "terminal",
   );
 
   useEffect(() => {
@@ -2024,7 +2132,8 @@ export default function ThreadTerminalView({ threadId }: { threadId: ThreadId })
 
   if (!thread) return null;
 
-  const piRenderMode = thread.piRenderMode === "html" || localPiRenderMode === "html" ? "html" : "terminal";
+  const piRenderMode =
+    thread.piRenderMode === "html" || localPiRenderMode === "html" ? "html" : "terminal";
   const usePiHtml = thread.harness === "pi" && piRenderMode === "html";
 
   switch (thread.terminalStatus) {

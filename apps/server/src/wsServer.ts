@@ -160,11 +160,14 @@ function latestCacheHitRateFromPiTranscriptBuffer(buffer: Buffer): number | unde
     } catch {
       continue;
     }
-    if (!isRecordValue(parsed) || parsed.type !== "message" || !isRecordValue(parsed.message)) continue;
+    if (!isRecordValue(parsed) || parsed.type !== "message" || !isRecordValue(parsed.message))
+      continue;
     if (parsed.message.role !== "assistant" || !isRecordValue(parsed.message.usage)) continue;
     const input = typeof parsed.message.usage.input === "number" ? parsed.message.usage.input : 0;
-    const cacheRead = typeof parsed.message.usage.cacheRead === "number" ? parsed.message.usage.cacheRead : 0;
-    const cacheWrite = typeof parsed.message.usage.cacheWrite === "number" ? parsed.message.usage.cacheWrite : 0;
+    const cacheRead =
+      typeof parsed.message.usage.cacheRead === "number" ? parsed.message.usage.cacheRead : 0;
+    const cacheWrite =
+      typeof parsed.message.usage.cacheWrite === "number" ? parsed.message.usage.cacheWrite : 0;
     const promptTokens = input + cacheRead + cacheWrite;
     return promptTokens > 0 ? (cacheRead / promptTokens) * 100 : undefined;
   }
@@ -1193,7 +1196,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const readPiTranscript = (threadId: string, sinceOffset?: number) =>
     Effect.gen(function* () {
       const sessionFile = yield* resolvePiTranscriptSessionFile(threadId);
-      const pendingExtensionUiRequest = yield* piSessionManager.getPendingExtensionUiRequest(threadId);
+      const pendingExtensionUiRequest =
+        yield* piSessionManager.getPendingExtensionUiRequest(threadId);
       const extensionUiState = yield* piSessionManager.getExtensionUiState(threadId);
       const activeUsageStats = yield* piSessionManager
         .getSessionUsageStats(threadId)
@@ -1809,6 +1813,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         } = stripRequestTag(request.body);
 
         const resolvedCwd = yield* resolveHarnessSessionCwd(requestedCwd, threadId);
+        const threadRow = yield* projectionThreadRepository.getById({
+          threadId: ThreadId.makeUnsafe(threadId),
+        });
+        if (Option.isNone(threadRow)) {
+          return yield* new RouteRequestError({
+            message: `Thread not found: ${threadId}`,
+          });
+        }
 
         return yield* claudeSessionManager.startSession({
           threadId,
@@ -1817,6 +1829,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           rows,
           ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
           ...(dangerouslySkipPermissions !== undefined ? { dangerouslySkipPermissions } : {}),
+          claudeCodeBackend: threadRow.value.claudeCodeBackend,
+          model: threadRow.value.model,
         });
       }
 
@@ -2001,6 +2015,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.serverGetConfig: {
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         const settings = yield* Effect.promise(() => loadServerSettings(stateDir));
+        const claudeCodeProxy = yield* claudeSessionManager.getClaudeCodeProxyStatus();
         return {
           cwd,
           keybindingsConfigPath,
@@ -2008,6 +2023,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: buildProviderStatuses(),
           availableEditors,
+          claudeCodeProxy,
           settings,
         };
       }
@@ -2035,6 +2051,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         return settings;
       }
+
+      case WS_METHODS.serverStartClaudeCodeProxyLogin:
+        return yield* claudeSessionManager.startClaudeCodeProxyLogin();
+
+      case WS_METHODS.serverLogoutClaudeCodeProxy:
+        return yield* claudeSessionManager.logoutClaudeCodeProxy();
 
       case WS_METHODS.serverSetHarnessOutputSubscriptions: {
         const body = stripRequestTag(request.body);

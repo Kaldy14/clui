@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { join } from "node:path";
 import waitOn from "wait-on";
 
@@ -19,6 +19,22 @@ const watchedDirectories = [
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
+const proxyBinaryName =
+  process.platform === "win32" ? "claude-code-proxy.exe" : "claude-code-proxy";
+const proxyBinaryPath = join(desktopDir, "resources", "claude-code-proxy", proxyBinaryName);
+
+if (!existsSync(proxyBinaryPath)) {
+  const prepareProxy = spawnSync("bun", ["run", "prepare:claude-code-proxy"], {
+    cwd: join(desktopDir, "../.."),
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
+  if (prepareProxy.status !== 0) {
+    console.warn(
+      "Claude Code proxy could not be prepared; Codex-backed sessions will be unavailable.",
+    );
+  }
+}
 
 await waitOn({
   resources: [`tcp:${port}`, ...requiredFiles.map((filePath) => `file:${filePath}`)],

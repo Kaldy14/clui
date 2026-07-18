@@ -15,6 +15,8 @@ import { getServerSettingsPath } from "./serverSettings";
 import {
   DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
   DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
+  DEFAULT_CLAUDE_CODE_BACKEND,
+  DEFAULT_CLAUDE_CODE_PROXY_MODEL,
   DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
   DEFAULT_TERMINAL_ID,
   DEFAULT_TITLE_GENERATION_PROVIDER,
@@ -26,6 +28,7 @@ import {
   type AgentActivityStatus,
   type ClaudeHookStatus,
   type ClaudeSessionEvent,
+  type ClaudeCodeProxyStatus,
   type KeybindingsConfig,
   type OrchestrationReadModel,
   type PiSessionEvent,
@@ -73,6 +76,22 @@ const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
   openInEditor: () => Effect.void,
+};
+
+const DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS = {
+  available: false,
+  authenticated: false,
+  running: false,
+  authInProgress: false,
+} satisfies ClaudeCodeProxyStatus;
+
+const DEFAULT_TEST_SERVER_SETTINGS = {
+  titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
+  maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
+  preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
+  autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
+  defaultClaudeCodeBackend: DEFAULT_CLAUDE_CODE_BACKEND,
+  defaultClaudeCodeProxyModel: DEFAULT_CLAUDE_CODE_PROXY_MODEL,
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -221,6 +240,21 @@ const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   getClaudeSessionId: () => Effect.succeed(null),
   destroySession: () => Effect.void,
   purgeInactiveSessions: () => Effect.succeed(0),
+  getClaudeCodeProxyStatus: () => Effect.succeed(DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS),
+  startClaudeCodeProxyLogin: () =>
+    Effect.succeed({
+      available: true,
+      authenticated: false,
+      running: false,
+      authInProgress: true,
+    }),
+  logoutClaudeCodeProxy: () =>
+    Effect.succeed({
+      available: true,
+      authenticated: false,
+      running: false,
+      authInProgress: false,
+    }),
   dispose: Effect.void,
 };
 
@@ -524,6 +558,7 @@ describe("WebSocket Server", () => {
       autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
       logWebSocketEvents: options.logWebSocketEvents ?? Boolean(options.devUrl),
       dangerouslySkipPermissions: false,
+      claudeCodeProxyBinaryPath: undefined,
     } satisfies ServerConfigShape);
     const runtimeOverrides = Layer.mergeAll(
       options.gitManager ? Layer.succeed(GitManager, options.gitManager) : Layer.empty,
@@ -891,12 +926,8 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: expect.any(Array),
       availableEditors: expect.any(Array),
-      settings: {
-        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
-        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
-        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
-      },
+      claudeCodeProxy: DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS,
+      settings: DEFAULT_TEST_SERVER_SETTINGS,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expectCliProviderStatuses((response.result as { providers: unknown }).providers);
@@ -925,7 +956,8 @@ describe("WebSocket Server", () => {
 
       const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
       expect(response.error).toBeUndefined();
-      const providers = (response.result as { providers: Array<Record<string, unknown>> }).providers;
+      const providers = (response.result as { providers: Array<Record<string, unknown>> })
+        .providers;
       expect(providers.find((provider) => provider.provider === "codex")).toMatchObject({
         provider: "codex",
         available: true,
@@ -971,12 +1003,8 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: expect.any(Array),
       availableEditors: expect.any(Array),
-      settings: {
-        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
-        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
-        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
-      },
+      claudeCodeProxy: DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS,
+      settings: DEFAULT_TEST_SERVER_SETTINGS,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
@@ -1013,12 +1041,8 @@ describe("WebSocket Server", () => {
       ],
       providers: expect.any(Array),
       availableEditors: expect.any(Array),
-      settings: {
-        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
-        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
-        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
-      },
+      claudeCodeProxy: DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS,
+      settings: DEFAULT_TEST_SERVER_SETTINGS,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
@@ -1078,12 +1102,7 @@ describe("WebSocket Server", () => {
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
     expect(result.providers).toEqual(expect.any(Array));
-    expect(result.settings).toEqual({
-      titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
-      maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-      preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
-      autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
-    });
+    expect(result.settings).toEqual(DEFAULT_TEST_SERVER_SETTINGS);
     expectAvailableEditors(result.availableEditors);
   });
 
@@ -1162,6 +1181,8 @@ describe("WebSocket Server", () => {
       maxActiveHarnessSessions: 7,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
+      defaultClaudeCodeBackend: DEFAULT_CLAUDE_CODE_BACKEND,
+      defaultClaudeCodeProxyModel: DEFAULT_CLAUDE_CODE_PROXY_MODEL,
     });
     expect(claudeCaps).toEqual([7]);
     expect(piCaps).toEqual([7]);
@@ -1178,6 +1199,8 @@ describe("WebSocket Server", () => {
       maxActiveHarnessSessions: 7,
       preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
       autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
+      defaultClaudeCodeBackend: DEFAULT_CLAUDE_CODE_BACKEND,
+      defaultClaudeCodeProxyModel: DEFAULT_CLAUDE_CODE_PROXY_MODEL,
     });
   });
 
@@ -1256,11 +1279,17 @@ describe("WebSocket Server", () => {
       piSessionManager: {
         ...defaultPiSessionManager,
         hibernateActiveSessions: (excludeThreadIds) => {
-          piCalls.push({ method: "hibernateActiveSessions", excludeThreadIds: [...excludeThreadIds] });
+          piCalls.push({
+            method: "hibernateActiveSessions",
+            excludeThreadIds: [...excludeThreadIds],
+          });
           return Effect.succeed(["pi-old-1", "pi-old-2"]);
         },
         purgeInactiveSessions: (excludeThreadIds) => {
-          piCalls.push({ method: "purgeInactiveSessions", excludeThreadIds: [...excludeThreadIds] });
+          piCalls.push({
+            method: "purgeInactiveSessions",
+            excludeThreadIds: [...excludeThreadIds],
+          });
           return Effect.succeed(2);
         },
       },
@@ -1293,23 +1322,11 @@ describe("WebSocket Server", () => {
     });
     expect(claudeCalls[1]).toEqual({
       method: "purgeInactiveSessions",
-      excludeThreadIds: [
-        "current-thread",
-        "busy-thread",
-        "claude-old",
-        "pi-old-1",
-        "pi-old-2",
-      ],
+      excludeThreadIds: ["current-thread", "busy-thread", "claude-old", "pi-old-1", "pi-old-2"],
     });
     expect(piCalls[1]).toEqual({
       method: "purgeInactiveSessions",
-      excludeThreadIds: [
-        "current-thread",
-        "busy-thread",
-        "claude-old",
-        "pi-old-1",
-        "pi-old-2",
-      ],
+      excludeThreadIds: ["current-thread", "busy-thread", "claude-old", "pi-old-1", "pi-old-2"],
     });
   });
 
@@ -1411,12 +1428,8 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: expect.any(Array),
       availableEditors: expect.any(Array),
-      settings: {
-        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
-        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
-        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
-      },
+      claudeCodeProxy: DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS,
+      settings: DEFAULT_TEST_SERVER_SETTINGS,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -1465,12 +1478,8 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: expect.any(Array),
       availableEditors: expect.any(Array),
-      settings: {
-        titleGenerationProvider: DEFAULT_TITLE_GENERATION_PROVIDER,
-        maxActiveHarnessSessions: DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
-        preventMacosSleepWhenThreadInProgress: DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
-        autoArchiveInactiveThreadDays: DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
-      },
+      claudeCodeProxy: DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS,
+      settings: DEFAULT_TEST_SERVER_SETTINGS,
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,
@@ -2210,6 +2219,8 @@ describe("WebSocket Server", () => {
       workspaceRoot: string;
       worktreePath: string | null;
       harness?: "claudeCode" | "pi";
+      claudeCodeBackend?: "anthropic" | "codex";
+      model?: string;
     },
   ): Promise<void> {
     const createdAt = new Date().toISOString();
@@ -2230,8 +2241,9 @@ describe("WebSocket Server", () => {
       threadId: input.threadId,
       projectId: input.projectId,
       title: "Thread",
-      model: "claude-opus-4-6",
+      model: input.model ?? "claude-opus-4-6",
       harness: input.harness ?? "claudeCode",
+      claudeCodeBackend: input.claudeCodeBackend ?? "anthropic",
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -2435,6 +2447,28 @@ describe("WebSocket Server", () => {
         getClaudeSessionId: () => Effect.succeed(null),
         destroySession: () => Effect.void,
         purgeInactiveSessions: () => Effect.succeed(0),
+        getClaudeCodeProxyStatus: () => {
+          calls.push({ method: "getClaudeCodeProxyStatus", args: [] });
+          return Effect.succeed(DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS);
+        },
+        startClaudeCodeProxyLogin: () => {
+          calls.push({ method: "startClaudeCodeProxyLogin", args: [] });
+          return Effect.succeed({
+            available: true,
+            authenticated: false,
+            running: false,
+            authInProgress: true,
+          });
+        },
+        logoutClaudeCodeProxy: () => {
+          calls.push({ method: "logoutClaudeCodeProxy", args: [] });
+          return Effect.succeed({
+            available: true,
+            authenticated: false,
+            running: false,
+            authInProgress: false,
+          });
+        },
         dispose: Effect.void,
       };
       return { calls, shape };
@@ -2442,7 +2476,8 @@ describe("WebSocket Server", () => {
 
     it("claude.start calls startSession with correct params and returns success", async () => {
       const { calls, shape } = makeMockClaudeSession();
-      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const workspaceRoot = makeTempDir("clui-ws-claude-start-");
+      server = await createTestServer({ cwd: workspaceRoot, claudeSessionManager: shape });
       const addr = server.address();
       const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
@@ -2450,9 +2485,18 @@ describe("WebSocket Server", () => {
       connections.push(ws);
       await waitForMessage(ws); // welcome
 
+      await createProjectedThread(ws, {
+        projectId: "project-1",
+        threadId: "thread-1",
+        workspaceRoot,
+        worktreePath: null,
+        claudeCodeBackend: "codex",
+        model: "gpt-5.6-sol",
+      });
+
       const response = await sendRequest(ws, WS_METHODS.claudeStart, {
         threadId: "thread-1",
-        cwd: "/test/project",
+        cwd: workspaceRoot,
         cols: 80,
         rows: 24,
       });
@@ -2462,10 +2506,35 @@ describe("WebSocket Server", () => {
       expect(calls[0]!.method).toBe("startSession");
       expect(calls[0]!.args[0]).toMatchObject({
         threadId: "thread-1",
-        cwd: "/test/project",
+        cwd: workspaceRoot,
         cols: 80,
         rows: 24,
+        claudeCodeBackend: "codex",
+        model: "gpt-5.6-sol",
       });
+    });
+
+    it("routes managed Codex proxy login and logout", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws);
+
+      const loginResponse = await sendRequest(ws, WS_METHODS.serverStartClaudeCodeProxyLogin);
+      const logoutResponse = await sendRequest(ws, WS_METHODS.serverLogoutClaudeCodeProxy);
+
+      expect(loginResponse.error).toBeUndefined();
+      expect(loginResponse.result).toMatchObject({ authInProgress: true });
+      expect(logoutResponse.error).toBeUndefined();
+      expect(logoutResponse.result).toMatchObject({ authInProgress: false });
+      expect(calls.map((call) => call.method)).toEqual([
+        "startClaudeCodeProxyLogin",
+        "logoutClaudeCodeProxy",
+      ]);
     });
 
     it("claude.hibernate calls hibernateSession and returns no payload", async () => {
@@ -2608,7 +2677,8 @@ describe("WebSocket Server", () => {
 
     it("claude.start passes resumeSessionId when provided", async () => {
       const { calls, shape } = makeMockClaudeSession();
-      server = await createTestServer({ cwd: "/test/project", claudeSessionManager: shape });
+      const workspaceRoot = makeTempDir("clui-ws-claude-resume-");
+      server = await createTestServer({ cwd: workspaceRoot, claudeSessionManager: shape });
       const addr = server.address();
       const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
@@ -2616,9 +2686,16 @@ describe("WebSocket Server", () => {
       connections.push(ws);
       await waitForMessage(ws); // welcome
 
+      await createProjectedThread(ws, {
+        projectId: "project-resume",
+        threadId: "thread-resume",
+        workspaceRoot,
+        worktreePath: null,
+      });
+
       const response = await sendRequest(ws, WS_METHODS.claudeStart, {
         threadId: "thread-resume",
-        cwd: "/test/project",
+        cwd: workspaceRoot,
         cols: 80,
         rows: 24,
         resumeSessionId: "existing-session-id",
@@ -2629,10 +2706,12 @@ describe("WebSocket Server", () => {
       expect(calls[0]!.method).toBe("startSession");
       expect(calls[0]!.args[0]).toMatchObject({
         threadId: "thread-resume",
-        cwd: "/test/project",
+        cwd: workspaceRoot,
         cols: 80,
         rows: 24,
         resumeSessionId: "existing-session-id",
+        claudeCodeBackend: "anthropic",
+        model: "claude-opus-4-6",
       });
     });
   });

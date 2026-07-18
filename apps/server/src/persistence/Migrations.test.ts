@@ -15,6 +15,12 @@ layer("Migrations", (it) => {
       yield* sql`
         CREATE TABLE projection_threads (
           thread_id TEXT PRIMARY KEY,
+          project_id TEXT,
+          created_at TEXT,
+          updated_at TEXT,
+          last_interacted_at TEXT,
+          archived_at TEXT,
+          deleted_at TEXT,
           scrollback_snapshot TEXT
         )
       `;
@@ -55,12 +61,25 @@ layer("Migrations", (it) => {
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)
       `;
-      assert.equal(columns.some((column) => column.name === "pi_render_mode"), true);
+      assert.equal(
+        columns.some((column) => column.name === "pi_render_mode"),
+        true,
+      );
+      assert.equal(
+        columns.some((column) => column.name === "claude_code_backend"),
+        true,
+      );
 
-      const threads = yield* sql<{ readonly scrollback_snapshot: string | null }>`
-        SELECT scrollback_snapshot FROM projection_threads WHERE thread_id = ${"thread-1"}
+      const threads = yield* sql<{
+        readonly scrollback_snapshot: string | null;
+        readonly claude_code_backend: string;
+      }>`
+        SELECT scrollback_snapshot, claude_code_backend
+        FROM projection_threads
+        WHERE thread_id = ${"thread-1"}
       `;
       assert.equal(threads[0]?.scrollback_snapshot, null);
+      assert.equal(threads[0]?.claude_code_backend, "anthropic");
 
       const events = yield* sql<{ readonly payload_json: string }>`
         SELECT payload_json FROM orchestration_events WHERE event_id = ${"event-1"}
@@ -71,6 +90,11 @@ layer("Migrations", (it) => {
         SELECT name FROM effect_sql_migrations WHERE migration_id = 29
       `;
       assert.equal(migrationRows[0]?.name, "ProjectionThreadsCollisionRepair");
+
+      const proxyMigrationRows = yield* sql<{ readonly name: string }>`
+        SELECT name FROM effect_sql_migrations WHERE migration_id = 30
+      `;
+      assert.equal(proxyMigrationRows[0]?.name, "ProjectionThreadsClaudeCodeBackend");
     }),
   );
 });

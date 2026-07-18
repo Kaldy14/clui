@@ -31,6 +31,14 @@
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
+    },
+    "./claudeCodeProxy": {
+      "types": "./src/claudeCodeProxy.ts",
+      "import": "./src/claudeCodeProxy.ts"
+    },
+    "./piTuiInput": {
+      "types": "./src/piTuiInput.ts",
+      "import": "./src/piTuiInput.ts"
     }
   },
   "scripts": {

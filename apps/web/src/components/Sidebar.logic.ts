@@ -1,9 +1,11 @@
-import type {
-  CodingHarness,
-  CommandId,
-  NativeApi,
-  ProjectId,
-  ThreadId,
+import {
+  DEFAULT_CLAUDE_CODE_BACKEND,
+  type ClaudeCodeBackend,
+  type CodingHarness,
+  type CommandId,
+  type NativeApi,
+  type ProjectId,
+  type ThreadId,
 } from "@clui/contracts";
 import { AGENT_ACTIVITY_LABELS } from "@clui/shared/agentActivity";
 
@@ -62,8 +64,7 @@ export function getActiveHarnessSessionStats(input: {
     activeByHarness[thread.harness] += 1;
   }
 
-  const busiestHarness =
-    activeByHarness.claudeCode >= activeByHarness.pi ? "claudeCode" : "pi";
+  const busiestHarness = activeByHarness.claudeCode >= activeByHarness.pi ? "claudeCode" : "pi";
 
   return {
     activeByHarness,
@@ -83,7 +84,9 @@ export async function createThreadAndNavigate(input: {
     id: ThreadId;
     projectId: ProjectId;
     title: string;
+    model: string;
     harness: CodingHarness;
+    claudeCodeBackend: ClaudeCodeBackend;
     branch: string | null;
     worktreePath: string | null;
     createdAt: string;
@@ -93,12 +96,14 @@ export async function createThreadAndNavigate(input: {
   projectId: ProjectId;
   model: string;
   harness: CodingHarness;
+  claudeCodeBackend?: ClaudeCodeBackend;
   createdAt: string;
   branch?: string | null;
   worktreePath?: string | null;
 }): Promise<ThreadId> {
   const branch = input.branch ?? null;
   const worktreePath = input.worktreePath ?? null;
+  const claudeCodeBackend = input.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND;
 
   await input.api.orchestration.dispatchCommand({
     type: "thread.create",
@@ -108,6 +113,7 @@ export async function createThreadAndNavigate(input: {
     title: "New thread",
     model: input.model,
     harness: input.harness,
+    claudeCodeBackend,
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: "default",
     branch,
@@ -122,7 +128,9 @@ export async function createThreadAndNavigate(input: {
     id: input.threadId,
     projectId: input.projectId,
     title: "New thread",
+    model: input.model,
     harness: input.harness,
+    claudeCodeBackend,
     branch,
     worktreePath,
     createdAt: input.createdAt,

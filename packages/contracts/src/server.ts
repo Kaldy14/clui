@@ -8,7 +8,14 @@ import {
 } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, ProviderKind } from "./orchestration";
+import {
+  ClaudeCodeBackend,
+  ClaudeCodeProxyModel,
+  DEFAULT_CLAUDE_CODE_BACKEND,
+  DEFAULT_CLAUDE_CODE_PROXY_MODEL,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ProviderKind,
+} from "./orchestration";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -51,6 +58,16 @@ export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
 const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 
+export const ClaudeCodeProxyStatus = Schema.Struct({
+  available: Schema.Boolean,
+  authenticated: Schema.Boolean,
+  running: Schema.Boolean,
+  authInProgress: Schema.Boolean,
+  version: Schema.optional(TrimmedNonEmptyString),
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type ClaudeCodeProxyStatus = typeof ClaudeCodeProxyStatus.Type;
+
 export const TitleGenerationProvider = Schema.Literals(["claudeCode", "codex"]);
 export type TitleGenerationProvider = typeof TitleGenerationProvider.Type;
 
@@ -90,6 +107,14 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(() => DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS),
     Schema.withConstructorDefault(() => Option.some(DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS)),
   ),
+  defaultClaudeCodeBackend: ClaudeCodeBackend.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_CLAUDE_CODE_BACKEND),
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_CLAUDE_CODE_BACKEND)),
+  ),
+  defaultClaudeCodeProxyModel: ClaudeCodeProxyModel.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_CLAUDE_CODE_PROXY_MODEL),
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_CLAUDE_CODE_PROXY_MODEL)),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -100,6 +125,7 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  claudeCodeProxy: ClaudeCodeProxyStatus,
   settings: ServerSettings,
 });
 export type ServerConfig = typeof ServerConfig.Type;
@@ -109,6 +135,8 @@ export const ServerUpdateSettingsInput = Schema.Struct({
   maxActiveHarnessSessions: Schema.optional(MaxActiveHarnessSessions),
   preventMacosSleepWhenThreadInProgress: Schema.optional(Schema.Boolean),
   autoArchiveInactiveThreadDays: Schema.optional(AutoArchiveInactiveThreadDays),
+  defaultClaudeCodeBackend: Schema.optional(ClaudeCodeBackend),
+  defaultClaudeCodeProxyModel: Schema.optional(ClaudeCodeProxyModel),
 });
 export type ServerUpdateSettingsInput = typeof ServerUpdateSettingsInput.Type;
 

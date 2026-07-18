@@ -3,6 +3,7 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationEvent,
@@ -281,6 +282,7 @@ it.effect("decodes OrchestrationThread with missing claudeSessionId to null", ()
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationThread(baseThread);
     assert.strictEqual(parsed.claudeSessionId, null);
+    assert.strictEqual(parsed.claudeCodeBackend, DEFAULT_CLAUDE_CODE_BACKEND);
   }),
 );
 

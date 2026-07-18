@@ -4,6 +4,212 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-18 — Submit Pi terminal startup prompts after process-bound readiness
+
+**Problem:** A Pi terminal launched with an initial prompt could acknowledge `pi.start` without reliably entering and submitting that prompt in the TUI. Interrupted or overlapping launches could wait on stale synchronization state, leave a spawned child behind after startup failure, or allow terminal control bytes to be injected into the programmatic prompt stream.
+
+**Root cause:** Initial prompts were handed to the generated Pi extension through a temporary file and `pi.sendUserMessage()`, bypassing the terminal input path. The sync filename combined the raw thread ID with shared launch state, readiness polling could queue duplicate lock refreshes, and the shared encoder did not reject control characters that could be interpreted as keystrokes.
+
+**Fix:** Added a shared Pi TUI encoder that rejects every C0/C1 control except CR/LF, encodes embedded newlines as CSI-u Shift+Enter, and submits with CSI-u Enter. Each launch now writes to a traversal-safe nonce-only sync basename, validates thread ID plus nonce in the payload, removes only strict stale nonce artifacts at runtime startup, and coalesces readiness polling to one in-flight lock refresh. Terminal startup waits outside the per-thread lock for the exact PTY, rejects normal writes while its prompt is pending, sets hook status to working and emits `started` only after the exact prompt write succeeds, then resolves `pi.start`; exit, timeout, replacement, hibernate, destroy/dispose, PTY write errors, and post-spawn terminal/RPC startup errors reject and clean up only the matching launch. HTML/RPC prompt submission and WebSocket auto-title behavior remain unchanged.
+
+**Affected files:**
+
+- `packages/shared/src/piTuiInput.ts`
+- `packages/shared/src/piTuiInput.test.ts`
+- `packages/shared/package.json`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/web/src/lib/threadInput.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Sign and notarize macOS release artifacts fail closed
+
+**Problem:** The desktop release workflow could publish unsigned macOS DMG and ZIP updater artifacts whenever Apple credentials were missing, so a successful release did not guarantee Developer ID signing, notarization, stapling, or Gatekeeper verification.
+
+**Root cause:** macOS signing was optional and depended on electron-builder's implicit credential discovery; the workflow had no mandatory five-secret preflight, isolated certificate import, explicit hardened-runtime signing identity, direct notarization/stapling hook, or packaged-app verification gate.
+
+**Fix:** Require the base64 Developer ID certificate/password and App Store Connect Team API key/ID/issuer for both macOS architectures, import the identity into a temporary keychain, and recursively sign with electron-builder and `@electron/osx-sign`. The direct `xcrun notarytool` `afterSign` path verifies the signature, submits, polls with bounded retries for transient status lookup failures, and staples before DMG/ZIP creation; a separate post-build workflow gate then extracts the ZIP, verifies the packaged app, staple, Gatekeeper assessment, bundled proxy signature/architecture, and DMG before retaining the arm64 and x64 assets. Keep local builds unsigned unless signing is explicitly configured, preserve optional Windows Azure signing, pin the desktop builder dependency, add focused helper/bridge regression coverage, and document credential setup and release verification.
+
+**Affected files:**
+
+- `.github/workflows/release.yml`
+- `package.json`
+- `bun.lock`
+- `scripts/build-desktop-artifact.ts`
+- `scripts/notarize-macos-app.mjs`
+- `scripts/after-sign-macos.cjs`
+- `scripts/notarize-macos-app.test.ts`
+- `scripts/after-sign-macos.test.ts`
+- `docs/release.md`
+- `docs/RELEASING.md`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Route macOS desktop Cmd+V image paste to Claude Code
+
+**Problem:** Cmd+V image paste in an active Claude Code terminal did not invoke Claude Code's image-paste handling in the macOS desktop app.
+
+**Root cause:** The capture-phase image paste handler was limited to Pi and hardcoded the Pi write path, so Claude Code never received its Ctrl+V image-paste keystroke.
+
+**Fix:** Keep Pi image paste unchanged on every platform and text-only paste untouched. For image-bearing Claude Code paste, send the image-paste keystroke through the shared harness writer only in Electron on macOS; this desktop/platform guard avoids applying Ctrl+V semantics to Windows or WSL and avoids assuming browser and server clipboards share a host in remote web deployments.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Keep the new-thread composer stable while typing
+
+**Problem:** Entering a first prompt on the new-thread screen moved the launch button onto a new footer row and shifted the centered composer layout.
+
+**Root cause:** A non-empty prompt lengthened the launch button label with “& send.” Combined with the Claude Code backend, model, and YOLO controls, that extra width exceeded the composer footer and triggered its wrapping layout.
+
+**Fix:** Keep the launch button label stable for each harness while the existing keyboard hint continues to explain that starting with a prompt also sends it.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Restore thread sorting handle and tighten title size
+
+**Problem:** Sidebar thread rows no longer revealed the manual sorting handle when hovered, thread titles felt slightly oversized, and the hover action rail left excessive space after Archive while its tooltip sat too far above the button with uneven vertical padding.
+
+**Root cause:** The compact row styling limited the drag handle to direct-handle hover or keyboard focus, kept titles at 14px, positioned actions inside the row's 9px right inset, and left tooltip content in a full-height viewport with the larger default trigger gap.
+
+**Fix:** Restore the left drag handle on thread-row hover while retaining direct-hover and keyboard focus behavior, reduce thread titles and their inline rename editor to 13px, move the hover actions flush with the row's right edge, and center compact tooltips closer to their buttons.
+
+**Affected files:**
+
+- `apps/web/src/components/Sidebar.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Version 0.0.30 Apple Silicon build
+
+**Problem:** The remembered harness preference needed to ship in a new Apple Silicon desktop build, while release metadata still identified the app as `0.0.29`.
+
+**Root cause:** The four release package manifests and lockfile had not been advanced, and the release smoke fixture still referenced the previously removed marketing workspace.
+
+**Fix:** Bumped the Clui release packages and lockfile to `0.0.30`, removed the stale marketing fixture, passed release smoke validation, and generated the unsigned macOS arm64 DMG/ZIP artifacts.
+
+**Affected files:**
+
+- `apps/desktop/package.json`
+- `apps/server/package.json`
+- `apps/web/package.json`
+- `packages/contracts/package.json`
+- `bun.lock`
+- `scripts/release-smoke.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Remember the last new-thread coding harness
+
+**Problem:** Choosing Claude Code or Pi on the new-thread page applied only to that draft, so the next thread reverted to the previous default and required another manual selection.
+
+**Root cause:** The harness selector updated thread metadata but did not update the existing persisted `defaultCodingHarness` app setting that seeds subsequent threads.
+
+**Fix:** Persist explicit new-thread harness selections through the existing app-settings store so following threads—and future reloads—start with the last selected harness.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Preserve Claude Code mouse-wheel scrolling in fullscreen mode
+
+**Problem:** Scrolling inside Claude Code's alternate-screen TUI moved or edited the prompt input instead of scrolling the conversation output.
+
+**Root cause:** Clui's capture-phase wheel handler converted every alternate-buffer wheel event into Up/Down key sequences, including when Claude Code had enabled a wheel-capable terminal mouse protocol. That prevented xterm from sending native mouse-wheel reports to Claude Code, so the generated arrow keys were handled by its input editor.
+
+**Fix:** Route wheel events through xterm when VT200, drag, or any-event mouse tracking is active, while retaining Clui's arrow-key fallback for alternate-screen programs with no wheel-capable mouse protocol. Added focused routing regression coverage.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/terminalWheelRouting.ts`
+- `apps/web/src/lib/terminalWheelRouting.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Match sidebar thread rows to the compact reference style
+
+**Problem:** Sidebar thread rows used a leading tree icon, small titles, trailing timestamps, and context-menu-only bookmark/archive commands instead of the requested compact worktree row and right-aligned hover controls.
+
+**Root cause:** Live rows and drag previews had separate presentation markup, while worktree, status, timestamp, and action affordances had accumulated in different parts of the row without one shared layout for normal and hover states.
+
+**Fix:** Unified thread-row presentation, matched the reference spacing, typography, hover surface, title fade, and worktree glyph, and added accessible Pin/Archive actions on the right for hover, keyboard focus, and touch while preserving left-side status and existing thread lifecycle behavior. Hardened interaction isolation, active/selected styling, selection cleanup on archive, and optimistic Pin reconciliation against stale server snapshots.
+
+**Affected files:**
+
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/WorktreeIndicator.tsx`
+- `apps/web/src/index.css`
+- `apps/web/src/store.ts`
+- `apps/web/src/store.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-17 — Route Claude Code through a managed Codex subscription proxy
+
+**Problem:** Clui could launch Claude Code only with its normal Anthropic connection; users could not persistently select a Codex-subscription backend or a GPT-5.6 model for new Claude Code threads.
+
+**Root cause:** Thread metadata and server settings had no Claude Code backend field, and Clui did not own the proxy lifecycle, Codex OAuth flow, model mapping, or desktop sidecar packaging needed to bridge Claude Code's Anthropic protocol to Codex.
+
+**Fix:** Added persisted Anthropic/Codex backend and GPT-5.6 model settings, per-new-thread controls, authoritative server-side routing, managed browser-based Codex login/logout, and a loopback-only proxy lifecycle. Desktop builds now download, checksum, license, and package pinned `claude-code-proxy` v0.1.21 binaries for each supported architecture.
+
+**Affected files:**
+
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/server.ts`
+- `packages/contracts/src/ws.ts`
+- `packages/contracts/src/ipc.ts`
+- `packages/shared/src/claudeCodeProxy.ts`
+- `apps/server/src/terminal/claudeCodeProxy.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Services/ClaudeSession.ts`
+- `apps/server/src/config.ts`
+- `apps/server/src/main.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/server/src/persistence/Services/ProjectionThreads.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations/030_ProjectionThreadsClaudeCodeBackend.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/store.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/routes/__root.tsx`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `apps/desktop/src/main.ts`
+- `apps/desktop/scripts/dev-electron.mjs`
+- `apps/desktop/resources/THIRD_PARTY_NOTICES.md`
+- `scripts/{prepare-claude-code-proxy,build-desktop-artifact}.ts`
+- `scripts/lib/claude-code-proxy-release.ts`
+- Related regression tests, `.gitignore`, `package.json`, and `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-06-24 — De-duplicate live Pi HTML compaction summaries
 
 **Problem:** Completed compactions could render twice, with the live copy staying below later conversation.
@@ -3683,4 +3889,3 @@ Session-by-session log of changes, fixes, and decisions made during development.
 **Root cause:** `setupProjectScript()` was defined and tested in `projectScripts.ts` but never imported or called in the worktree creation flow. `ThreadTerminalView.tsx`'s `handleStart` created the worktree and started the Claude session without checking for setup scripts.
 
 [Showing lines 1-648 of 661 (50.0KB limit). Use offset=649 to continue.]
-

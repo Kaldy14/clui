@@ -1,9 +1,10 @@
 import * as os from "node:os";
 import * as path from "node:path";
-import type {
-  OrchestrationCommand,
-  OrchestrationEvent,
-  OrchestrationReadModel,
+import {
+  DEFAULT_CLAUDE_CODE_BACKEND,
+  type OrchestrationCommand,
+  type OrchestrationEvent,
+  type OrchestrationReadModel,
 } from "@clui/contracts";
 import { Effect } from "effect";
 
@@ -185,6 +186,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           title: command.title,
           model: command.model,
           harness: command.harness,
+          claudeCodeBackend: command.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
           piRenderMode: command.piRenderMode ?? "terminal",
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
@@ -230,6 +232,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: "Harness can only be changed before the thread has started.",
         });
       }
+      if (command.claudeCodeBackend !== undefined && thread.terminalStatus !== "new") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Claude Code backend can only be changed before the thread has started.",
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -244,6 +252,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.harness !== undefined ? { harness: command.harness } : {}),
+          ...(command.claudeCodeBackend !== undefined
+            ? { claudeCodeBackend: command.claudeCodeBackend }
+            : {}),
           ...(command.piRenderMode !== undefined ? { piRenderMode: command.piRenderMode } : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),

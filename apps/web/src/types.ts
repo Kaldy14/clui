@@ -17,6 +17,7 @@ import type {
   TitleSource,
   ClaudeHookStatus,
   AgentActivityStatus,
+  ClaudeCodeBackend,
   CodingHarness,
   PiRenderMode,
 } from "@clui/contracts";
@@ -112,6 +113,7 @@ export interface Thread {
   title: string;
   model: string;
   harness: CodingHarness;
+  claudeCodeBackend: ClaudeCodeBackend;
   piRenderMode: PiRenderMode;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;

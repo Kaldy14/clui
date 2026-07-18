@@ -29,6 +29,7 @@ export interface ServerConfigShape {
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
   readonly dangerouslySkipPermissions: boolean;
+  readonly claudeCodeProxyBinaryPath: string | undefined;
 }
 
 /**
@@ -56,6 +57,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           devUrl: undefined,
           noBrowser: false,
           dangerouslySkipPermissions: false,
+          claudeCodeProxyBinaryPath: undefined,
         };
       }),
     );

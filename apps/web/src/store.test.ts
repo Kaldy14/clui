@@ -11,6 +11,7 @@ import {
   markThreadUnread,
   reorderProjects,
   setThreadArchived,
+  setThreadBookmarked,
   syncServerReadModel,
   setTerminalStatus,
   setTerminalLifecycle,
@@ -27,6 +28,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     title: "Thread",
     model: "gpt-5-codex",
     harness: "claudeCode",
+    claudeCodeBackend: "anthropic",
     piRenderMode: "terminal",
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
@@ -81,6 +83,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     title: "Thread",
     model: "gpt-5.3-codex",
     harness: "claudeCode",
+    claudeCodeBackend: "anthropic",
     piRenderMode: "terminal",
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
@@ -516,11 +519,7 @@ describe("archivedAt", () => {
   it("syncServerReadModel preserves a pending local archivedAt update against a stale snapshot", () => {
     const initialState = makeState(makeThread({ archivedAt: null }));
     const threadId = initialState.threads[0]!.id;
-    const optimisticState = setThreadArchived(
-      initialState,
-      threadId,
-      "2026-04-19T10:00:00.000Z",
-    );
+    const optimisticState = setThreadArchived(initialState, threadId, "2026-04-19T10:00:00.000Z");
     const staleReadModel = makeReadModel(makeReadModelThread({ archivedAt: null }));
 
     const next = syncServerReadModel(optimisticState, staleReadModel);
@@ -531,11 +530,7 @@ describe("archivedAt", () => {
   it("syncServerReadModel accepts server archivedAt once the snapshot catches up", () => {
     const initialState = makeState(makeThread({ archivedAt: null }));
     const threadId = initialState.threads[0]!.id;
-    const optimisticState = setThreadArchived(
-      initialState,
-      threadId,
-      "2026-04-19T10:00:00.000Z",
-    );
+    const optimisticState = setThreadArchived(initialState, threadId, "2026-04-19T10:00:00.000Z");
     const caughtUpReadModel = makeReadModel(
       makeReadModelThread({ archivedAt: "2026-04-19T10:00:00.000Z" }),
     );
@@ -543,6 +538,42 @@ describe("archivedAt", () => {
     const next = syncServerReadModel(optimisticState, caughtUpReadModel);
 
     expect(next.threads[0]?.archivedAt).toBe("2026-04-19T10:00:00.000Z");
+  });
+});
+
+describe("bookmarked", () => {
+  it("syncServerReadModel preserves a pending local bookmark update against a stale snapshot", () => {
+    const initialState = makeState(makeThread({ bookmarked: false }));
+    const threadId = initialState.threads[0]!.id;
+    const optimisticState = setThreadBookmarked(initialState, threadId, true);
+    const staleReadModel = makeReadModel(makeReadModelThread({ bookmarked: false }));
+
+    const next = syncServerReadModel(optimisticState, staleReadModel);
+
+    expect(next.threads[0]?.bookmarked).toBe(true);
+  });
+
+  it("syncServerReadModel accepts the bookmark once the snapshot catches up", () => {
+    const initialState = makeState(makeThread({ bookmarked: false }));
+    const threadId = initialState.threads[0]!.id;
+    const optimisticState = setThreadBookmarked(initialState, threadId, true);
+    const caughtUpReadModel = makeReadModel(makeReadModelThread({ bookmarked: true }));
+
+    const caughtUp = syncServerReadModel(optimisticState, caughtUpReadModel);
+    const subsequent = syncServerReadModel(
+      caughtUp,
+      makeReadModel(makeReadModelThread({ bookmarked: false })),
+    );
+
+    expect(caughtUp.threads[0]?.bookmarked).toBe(true);
+    expect(subsequent.threads[0]?.bookmarked).toBe(false);
+  });
+
+  it("setThreadBookmarked preserves state identity when the value is unchanged", () => {
+    const initialState = makeState(makeThread({ bookmarked: true }));
+    const threadId = initialState.threads[0]!.id;
+
+    expect(setThreadBookmarked(initialState, threadId, true)).toBe(initialState);
   });
 });
 

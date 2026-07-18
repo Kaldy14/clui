@@ -99,10 +99,7 @@ const CliEnvConfig = Config.all({
   ),
   port: Config.port("CLUI_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("CLUI_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  stateDir: Config.string("CLUI_STATE_DIR").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
+  stateDir: Config.string("CLUI_STATE_DIR").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   noBrowser: Config.boolean("CLUI_NO_BROWSER").pipe(
     Config.option,
@@ -121,6 +118,10 @@ const CliEnvConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   dangerouslySkipPermissions: Config.boolean("CLUI_DANGEROUSLY_SKIP_PERMISSIONS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  claudeCodeProxyBinaryPath: Config.string("CLUI_CLAUDE_CODE_PROXY_PATH").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -196,6 +197,7 @@ const ServerConfigLive = (input: CliInput) =>
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
         dangerouslySkipPermissions,
+        claudeCodeProxyBinaryPath: env.claudeCodeProxyBinaryPath,
       } satisfies ServerConfigShape;
 
       return config;

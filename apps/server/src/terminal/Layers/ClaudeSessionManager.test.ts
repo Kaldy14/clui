@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
 
-import type { ClaudeSessionEvent } from "@clui/contracts";
+import type { ClaudeCodeProxyStatus, ClaudeSessionEvent } from "@clui/contracts";
 import {
   PtySpawnError,
   type PtyAdapterShape,
@@ -87,6 +87,43 @@ class FakePtyAdapter implements PtyAdapterShape {
   }
 }
 
+class FakeClaudeCodeProxyManager {
+  readonly modelRequests: string[] = [];
+  disposed = false;
+  environmentError: Error | null = null;
+
+  async getClaudeEnvironment(model: string): Promise<Record<string, string>> {
+    this.modelRequests.push(model);
+    if (this.environmentError) throw this.environmentError;
+    return {
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:43123",
+      ANTHROPIC_AUTH_TOKEN: "unused",
+      ANTHROPIC_MODEL: `${model}[1m]`,
+    };
+  }
+
+  async getStatus(): Promise<ClaudeCodeProxyStatus> {
+    return {
+      available: true,
+      authenticated: true,
+      running: true,
+      authInProgress: false,
+    };
+  }
+
+  startLogin(): Promise<ClaudeCodeProxyStatus> {
+    return this.getStatus();
+  }
+
+  logout(): Promise<ClaudeCodeProxyStatus> {
+    return this.getStatus();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+  }
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function makeRuntime(
@@ -95,6 +132,7 @@ function makeRuntime(
     historyLineLimit?: number;
     maxActiveSessions?: number;
     ptyAdapter?: FakePtyAdapter;
+    claudeCodeProxyManager?: FakeClaudeCodeProxyManager;
   } = {},
 ) {
   const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
@@ -107,6 +145,9 @@ function makeRuntime(
     ...(options.maxActiveSessions !== undefined && {
       maxActiveSessions: options.maxActiveSessions,
     }),
+    ...(options.claudeCodeProxyManager && {
+      claudeCodeProxyManager: options.claudeCodeProxyManager,
+    }),
   });
   return { ptyAdapter, runtime };
 }
@@ -118,6 +159,8 @@ function defaultInput(
     resumeSessionId: string;
     cols: number;
     rows: number;
+    claudeCodeBackend: "anthropic" | "codex";
+    model: string;
   }> = {},
 ) {
   return {
@@ -174,6 +217,56 @@ describe("ClaudeSessionManagerRuntime", () => {
 
       const spawnInput = result.ptyAdapter.spawnInputs[0]!;
       expect(spawnInput.args).toEqual(["--resume", "sess-abc-123"]);
+    });
+
+    it("injects the managed proxy environment for Codex-backed Claude Code", async () => {
+      const claudeCodeProxyManager = new FakeClaudeCodeProxyManager();
+      const result = makeRuntime({ claudeCodeProxyManager });
+      runtime = result.runtime;
+
+      await runtime.startSession(
+        defaultInput({ claudeCodeBackend: "codex", model: "gpt-5.6-sol" }),
+      );
+
+      expect(claudeCodeProxyManager.modelRequests).toEqual(["gpt-5.6-sol"]);
+      expect(result.ptyAdapter.spawnInputs[0]?.env).toMatchObject({
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:43123",
+        ANTHROPIC_AUTH_TOKEN: "unused",
+        ANTHROPIC_MODEL: "gpt-5.6-sol[1m]",
+      });
+    });
+
+    it("does not start the proxy for Anthropic-backed Claude Code", async () => {
+      const claudeCodeProxyManager = new FakeClaudeCodeProxyManager();
+      const result = makeRuntime({ claudeCodeProxyManager });
+      runtime = result.runtime;
+
+      await runtime.startSession(
+        defaultInput({ claudeCodeBackend: "anthropic", model: "claude-opus-4-6" }),
+      );
+
+      expect(claudeCodeProxyManager.modelRequests).toEqual([]);
+      expect(result.ptyAdapter.spawnInputs[0]?.env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+    });
+
+    it("surfaces proxy authentication errors before spawning Claude Code", async () => {
+      const claudeCodeProxyManager = new FakeClaudeCodeProxyManager();
+      claudeCodeProxyManager.environmentError = new Error("Codex subscription is not connected");
+      const result = makeRuntime({ claudeCodeProxyManager });
+      runtime = result.runtime;
+      const events = collectEvents(runtime);
+
+      await expect(
+        runtime.startSession(defaultInput({ claudeCodeBackend: "codex", model: "gpt-5.6-sol" })),
+      ).rejects.toThrow("Codex subscription is not connected");
+
+      expect(result.ptyAdapter.spawnInputs).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "error",
+          message: "Codex subscription is not connected",
+        }),
+      );
     });
 
     it("emits error event and reverts status on spawn failure", async () => {

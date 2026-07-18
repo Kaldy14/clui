@@ -12,6 +12,7 @@ packages/*/dist
 build/
 .logs/
 release/
+apps/desktop/resources/claude-code-proxy/
 .t3
 apps/web/.playwright
 apps/web/playwright-report
@@ -19,3 +20,5 @@ apps/web/src/components/__screenshots__
 .omc/
 .omx/
 .pi/
+
+.claude/

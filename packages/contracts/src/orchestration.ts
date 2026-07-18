@@ -40,6 +40,16 @@ export const ProviderKind = Schema.Literals(["codex", "claudeCode", "cursor"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const CodingHarness = Schema.Literals(["claudeCode", "pi"]);
 export type CodingHarness = typeof CodingHarness.Type;
+export const ClaudeCodeBackend = Schema.Literals(["anthropic", "codex"]);
+export type ClaudeCodeBackend = typeof ClaudeCodeBackend.Type;
+export const DEFAULT_CLAUDE_CODE_BACKEND: ClaudeCodeBackend = "anthropic";
+export const ClaudeCodeProxyModel = Schema.Literals([
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+]);
+export type ClaudeCodeProxyModel = typeof ClaudeCodeProxyModel.Type;
+export const DEFAULT_CLAUDE_CODE_PROXY_MODEL: ClaudeCodeProxyModel = "gpt-5.6-sol";
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
@@ -144,9 +154,7 @@ export const ProjectScript = Schema.Struct({
   command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
-  openTerminalOnWorktreeCreate: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(() => true),
-  ),
+  openTerminalOnWorktreeCreate: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   terminalTarget: ProjectScriptTerminalTarget.pipe(
     Schema.withDecodingDefault(() => "thread" as const),
   ),
@@ -327,6 +335,9 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
+  claudeCodeBackend: ClaudeCodeBackend.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_CLAUDE_CODE_BACKEND),
+  ),
   piRenderMode: Schema.optional(PiRenderMode),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -334,27 +345,17 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
-  claudeSessionId: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
-  piSessionFile: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
-  terminalStatus: TerminalStatus.pipe(
-    Schema.withDecodingDefault(() => "new" as const),
-  ),
+  claudeSessionId: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  piSessionFile: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  terminalStatus: TerminalStatus.pipe(Schema.withDecodingDefault(() => "new" as const)),
   /**
    * Ephemeral live terminal hook status for harnesses that can expose it in
    * snapshots (currently pi). `null` means no active hook status.
    */
   hookStatus: Schema.optional(Schema.NullOr(ClaudeHookStatus)),
   activityStatus: Schema.optional(Schema.NullOr(AgentActivityStatus)),
-  scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
-  titleSource: TitleSource.pipe(
-    Schema.withDecodingDefault(() => "auto" as const),
-  ),
+  scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  titleSource: TitleSource.pipe(Schema.withDecodingDefault(() => "auto" as const)),
   bookmarked: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -415,6 +416,7 @@ const ThreadCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
+  claudeCodeBackend: Schema.optional(ClaudeCodeBackend),
   piRenderMode: Schema.optional(PiRenderMode),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -438,6 +440,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   harness: Schema.optional(CodingHarness),
+  claudeCodeBackend: Schema.optional(ClaudeCodeBackend),
   piRenderMode: Schema.optional(PiRenderMode),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -652,12 +655,8 @@ const ThreadTerminalStatusChangedCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   terminalStatus: TerminalStatus,
-  claudeSessionId: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
-  piSessionFile: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
+  claudeSessionId: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  piSessionFile: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
   updatedAt: IsoDateTime,
 });
 
@@ -757,6 +756,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
+  claudeCodeBackend: Schema.optional(ClaudeCodeBackend),
   piRenderMode: Schema.optional(PiRenderMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
@@ -778,6 +778,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   harness: Schema.optional(CodingHarness),
+  claudeCodeBackend: Schema.optional(ClaudeCodeBackend),
   piRenderMode: Schema.optional(PiRenderMode),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -893,12 +894,8 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
 export const ThreadTerminalStatusChangedPayload = Schema.Struct({
   threadId: ThreadId,
   terminalStatus: TerminalStatus,
-  claudeSessionId: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
-  piSessionFile: Schema.NullOr(Schema.String).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
+  claudeSessionId: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  piSessionFile: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
   updatedAt: IsoDateTime,
 });
 export type ThreadTerminalStatusChangedPayload = typeof ThreadTerminalStatusChangedPayload.Type;
@@ -1152,7 +1149,8 @@ export const OrchestrationGetWorkingTreeDiffResult = Schema.Struct({
   threadId: ThreadId,
   diff: Schema.String,
 });
-export type OrchestrationGetWorkingTreeDiffResult = typeof OrchestrationGetWorkingTreeDiffResult.Type;
+export type OrchestrationGetWorkingTreeDiffResult =
+  typeof OrchestrationGetWorkingTreeDiffResult.Type;
 
 export const OrchestrationDiffReviewScope = Schema.Union([
   Schema.Struct({ type: Schema.Literal("branch") }),
@@ -1180,8 +1178,7 @@ export const OrchestrationDiffReviewAnchor = Schema.Struct({
 export type OrchestrationDiffReviewAnchor = typeof OrchestrationDiffReviewAnchor.Type;
 
 export const OrchestrationDiffReviewSignificance = Schema.Literals(["high", "medium", "low"]);
-export type OrchestrationDiffReviewSignificance =
-  typeof OrchestrationDiffReviewSignificance.Type;
+export type OrchestrationDiffReviewSignificance = typeof OrchestrationDiffReviewSignificance.Type;
 
 export const OrchestrationDiffReviewChange = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -1201,8 +1198,7 @@ export const OrchestrationGenerateDiffReviewInput = Schema.Struct({
   threadId: ThreadId,
   scope: OrchestrationDiffReviewScope,
 });
-export type OrchestrationGenerateDiffReviewInput =
-  typeof OrchestrationGenerateDiffReviewInput.Type;
+export type OrchestrationGenerateDiffReviewInput = typeof OrchestrationGenerateDiffReviewInput.Type;
 
 export const OrchestrationGenerateDiffReviewResult = Schema.Struct({
   threadId: ThreadId,

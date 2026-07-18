@@ -1,10 +1,4 @@
-import {
-  CommandId,
-  EventId,
-  ProjectId,
-  ThreadId,
-  type OrchestrationEvent,
-} from "@clui/contracts";
+import { CommandId, EventId, ProjectId, ThreadId, type OrchestrationEvent } from "@clui/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -137,6 +131,7 @@ describe("orchestration projector", () => {
         projectId: "project-1",
         title: "demo",
         model: "gpt-5-codex",
+        claudeCodeBackend: "anthropic",
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,

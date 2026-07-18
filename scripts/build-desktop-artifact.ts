@@ -10,6 +10,7 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import { stageClaudeCodeProxy } from "./lib/claude-code-proxy-release.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -193,6 +194,39 @@ const AzureTrustedSigningOptionsConfig = Config.all({
     Config.withDefault("http://timestamp.acs.microsoft.com"),
   ),
 });
+
+const MAC_SIGNING_ENVIRONMENT_VARIABLES = [
+  "MACOS_SIGNING_IDENTITY",
+  "MACOS_SIGNING_KEYCHAIN",
+  "APPLE_API_KEY_PATH",
+  "APPLE_API_KEY_ID",
+  "APPLE_API_ISSUER",
+] as const;
+
+interface MacSigningEnvironment {
+  readonly identityQualifier: string;
+  readonly keychain: string;
+}
+
+function resolveMacSigningEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): MacSigningEnvironment {
+  const missing = MAC_SIGNING_ENVIRONMENT_VARIABLES.filter((name) => !environment[name]?.trim());
+  if (missing.length > 0) {
+    throw new Error(`Missing required macOS signing variables: ${missing.join(", ")}`);
+  }
+
+  const identity = environment.MACOS_SIGNING_IDENTITY!.trim();
+  const identityQualifier = identity.replace(/^Developer ID Application:\s*/, "");
+  if (identityQualifier === identity || !identityQualifier) {
+    throw new Error("MACOS_SIGNING_IDENTITY must identify a Developer ID Application certificate.");
+  }
+
+  return {
+    identityQualifier,
+    keychain: environment.MACOS_SIGNING_KEYCHAIN!.trim(),
+  };
+}
 
 const BuildEnvConfig = Config.all({
   platform: Config.schema(BuildPlatform, "CLUI_DESKTOP_PLATFORM").pipe(Config.option),
@@ -447,7 +481,10 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   target: string,
   productName: string,
   signed: boolean,
+  macSigningEnvironment: MacSigningEnvironment | undefined,
 ) {
+  const path = yield* Path.Path;
+  const repoRoot = yield* RepoRoot;
   const buildConfig: Record<string, unknown> = {
     appId: "com.clui.app",
     productName,
@@ -455,6 +492,16 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
+    extraResources: [
+      {
+        from: "apps/desktop/resources/claude-code-proxy",
+        to: "claude-code-proxy",
+      },
+      {
+        from: "apps/desktop/resources/THIRD_PARTY_NOTICES.md",
+        to: "THIRD_PARTY_NOTICES.md",
+      },
+    ],
   };
   const publishConfig = resolveGitHubPublishConfig();
   if (publishConfig) {
@@ -466,7 +513,18 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      identity: macSigningEnvironment?.identityQualifier ?? null,
+      ...(macSigningEnvironment
+        ? {
+            hardenedRuntime: true,
+            notarize: false,
+          }
+        : {}),
     };
+    if (macSigningEnvironment) {
+      buildConfig.forceCodeSigning = true;
+      buildConfig.afterSign = path.join(repoRoot, "scripts", "after-sign-macos.cjs");
+    }
   }
 
   if (platform === "linux") {
@@ -517,6 +575,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const repoRoot = yield* RepoRoot;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
+  const macSigningEnvironment =
+    options.platform === "mac" && options.signed
+      ? yield* Effect.try({
+          try: () => resolveMacSigningEnvironment(),
+          catch: (cause) =>
+            new BuildScriptError({
+              message:
+                cause instanceof Error ? cause.message : "Invalid macOS signing environment.",
+              cause,
+            }),
+        })
+      : undefined;
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -612,6 +682,27 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
+  if (options.arch === "universal") {
+    return yield* new BuildScriptError({
+      message:
+        "claude-code-proxy does not publish a universal macOS binary; build arm64 and x64 separately.",
+    });
+  }
+  yield* Effect.log("[desktop-artifact] Downloading pinned Claude Code proxy...");
+  yield* Effect.tryPromise({
+    try: () =>
+      stageClaudeCodeProxy({
+        platform: options.platform,
+        arch: options.arch as "arm64" | "x64",
+        destinationDir: path.join(stageResourcesDir, "claude-code-proxy"),
+      }),
+    catch: (cause) =>
+      new BuildScriptError({
+        message: "Could not stage the pinned Claude Code proxy binary.",
+        cause,
+      }),
+  });
+
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
 
   const stagePackageJson: StagePackageJson = {
@@ -628,6 +719,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.target,
       desktopPackageJson.productName ?? "Clui",
       options.signed,
+      macSigningEnvironment,
     ),
     dependencies: {
       ...resolvedServerDependencies,
@@ -659,13 +751,42 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       delete buildEnv[key];
     }
   }
-  if (!options.signed) {
-    buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
+
+  const clearAppleSigningEnvironment = () => {
+    delete buildEnv.APPLE_API_KEY;
+    delete buildEnv.APPLE_API_KEY_PATH;
+    delete buildEnv.APPLE_API_KEY_ID;
+    delete buildEnv.APPLE_API_ISSUER;
+    delete buildEnv.APPLE_ID;
+    delete buildEnv.APPLE_APP_SPECIFIC_PASSWORD;
+    delete buildEnv.APPLE_TEAM_ID;
+    delete buildEnv.APPLE_KEYCHAIN;
+    delete buildEnv.APPLE_KEYCHAIN_PROFILE;
+    delete buildEnv.MACOS_SIGNING_IDENTITY;
+    delete buildEnv.MACOS_SIGNING_KEYCHAIN;
+    delete buildEnv.MACOS_CERTIFICATE_PATH;
+  };
+
+  if (options.platform === "mac" && macSigningEnvironment) {
+    buildEnv.CSC_NAME = macSigningEnvironment.identityQualifier;
+    buildEnv.CSC_KEYCHAIN = macSigningEnvironment.keychain;
     delete buildEnv.CSC_LINK;
     delete buildEnv.CSC_KEY_PASSWORD;
     delete buildEnv.APPLE_API_KEY;
-    delete buildEnv.APPLE_API_KEY_ID;
-    delete buildEnv.APPLE_API_ISSUER;
+    delete buildEnv.APPLE_ID;
+    delete buildEnv.APPLE_APP_SPECIFIC_PASSWORD;
+    delete buildEnv.APPLE_TEAM_ID;
+    delete buildEnv.APPLE_KEYCHAIN;
+    delete buildEnv.APPLE_KEYCHAIN_PROFILE;
+  } else {
+    clearAppleSigningEnvironment();
+    if (!options.signed) {
+      buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
+      delete buildEnv.CSC_LINK;
+      delete buildEnv.CSC_KEY_PASSWORD;
+      delete buildEnv.CSC_NAME;
+      delete buildEnv.CSC_KEYCHAIN;
+    }
   }
 
   if (process.platform === "win32") {
@@ -678,17 +799,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
   }
 
+  const electronBuilderCliPath = path.join(repoRoot, "node_modules", "electron-builder", "cli.js");
+  if (!(yield* fs.exists(electronBuilderCliPath))) {
+    return yield* new BuildScriptError({
+      message: `Pinned electron-builder CLI is missing at ${electronBuilderCliPath}. Run 'bun install' first.`,
+    });
+  }
+
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
   yield* runCommand(
     ChildProcess.make({
-      cwd: stageAppDir,
+      cwd: repoRoot,
       env: buildEnv,
       ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims.
+      // Windows needs shell mode to resolve the Node executable shim.
       shell: process.platform === "win32",
-    })`bunx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`node ${electronBuilderCliPath} --projectDir ${stageAppDir} ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");

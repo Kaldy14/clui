@@ -52,6 +52,7 @@ function makeSnapshot(input: {
         title: "Thread",
         model: "gpt-5-codex",
         harness: "claudeCode",
+        claudeCodeBackend: "anthropic",
         piRenderMode: "terminal",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",

@@ -1,9 +1,11 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
   DEFAULT_CODING_HARNESS,
+  DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PI_RENDER_MODE,
   type CodingHarness,
+  type ClaudeCodeBackend,
   type ProviderKind,
   ProjectId,
   ThreadId,
@@ -344,6 +346,7 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.title !== incoming.title) return true;
   if (existing.model !== incoming.model) return true;
   if (existing.harness !== incoming.harness) return true;
+  if (existing.claudeCodeBackend !== incoming.claudeCodeBackend) return true;
   if (existing.piRenderMode !== incoming.piRenderMode) return true;
   if (existing.branch !== incoming.branch) return true;
   if (existing.worktreePath !== incoming.worktreePath) return true;
@@ -430,8 +433,10 @@ function projectChanged(existing: Project, incoming: Project): boolean {
 
 const pendingBranchUpdates = new Map<string, number>();
 const pendingArchiveUpdates = new Map<string, number>();
+const pendingBookmarkUpdates = new Map<string, number>();
 const BRANCH_UPDATE_GUARD_MS = 5_000;
 const ARCHIVE_UPDATE_GUARD_MS = 5_000;
+const BOOKMARK_UPDATE_GUARD_MS = 5_000;
 
 export function markBranchUpdatePending(threadId: string): void {
   pendingBranchUpdates.set(threadId, Date.now());
@@ -460,6 +465,20 @@ function hasPendingArchiveUpdate(threadId: string): boolean {
   if (ts === undefined) return false;
   if (Date.now() - ts > ARCHIVE_UPDATE_GUARD_MS) {
     pendingArchiveUpdates.delete(threadId);
+    return false;
+  }
+  return true;
+}
+
+function markBookmarkUpdatePending(threadId: string): void {
+  pendingBookmarkUpdates.set(threadId, Date.now());
+}
+
+function hasPendingBookmarkUpdate(threadId: string): boolean {
+  const ts = pendingBookmarkUpdates.get(threadId);
+  if (ts === undefined) return false;
+  if (Date.now() - ts > BOOKMARK_UPDATE_GUARD_MS) {
+    pendingBookmarkUpdates.delete(threadId);
     return false;
   }
   return true;
@@ -504,6 +523,15 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         pendingArchiveUpdates.delete(thread.id);
       }
       const preserveLocalArchivedAt = existing != null && hasPendingArchiveUpdate(thread.id);
+
+      if (
+        existing &&
+        pendingBookmarkUpdates.has(thread.id) &&
+        (thread.bookmarked ?? false) === existing.bookmarked
+      ) {
+        pendingBookmarkUpdates.delete(thread.id);
+      }
+      const preserveLocalBookmark = existing != null && hasPendingBookmarkUpdate(thread.id);
       const hasSnapshotHookStatus = thread.hookStatus !== undefined;
       const hasSnapshotActivityStatus = thread.activityStatus !== undefined;
       const terminalStatus = hasSnapshotHookStatus
@@ -522,6 +550,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           thread.model,
         ),
         harness: thread.harness ?? DEFAULT_CODING_HARNESS,
+        claudeCodeBackend: thread.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
         piRenderMode: thread.piRenderMode ?? DEFAULT_PI_RENDER_MODE,
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
@@ -589,13 +618,14 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         piSessionFile: thread.piSessionFile ?? null,
         scrollbackSnapshot: thread.scrollbackSnapshot ?? null,
         titleSource: thread.titleSource ?? "auto",
-        bookmarked: thread.bookmarked ?? false,
+        bookmarked: preserveLocalBookmark ? existing.bookmarked : (thread.bookmarked ?? false),
         hookStatus: hasSnapshotHookStatus ? thread.hookStatus : (existing?.hookStatus ?? null),
-        activityStatus: terminalStatus === "active"
-          ? hasSnapshotActivityStatus
-            ? thread.activityStatus
-            : (existing?.activityStatus ?? null)
-          : null,
+        activityStatus:
+          terminalStatus === "active"
+            ? hasSnapshotActivityStatus
+              ? thread.activityStatus
+              : (existing?.activityStatus ?? null)
+            : null,
       };
       if (existing && !threadChanged(existing, newThread)) {
         return existing;
@@ -717,7 +747,9 @@ export function addOptimisticThread(
     id: ThreadId;
     projectId: Project["id"];
     title: string;
+    model: string;
     harness: CodingHarness;
+    claudeCodeBackend: ClaudeCodeBackend;
     branch: string | null;
     worktreePath: string | null;
     createdAt: string;
@@ -729,8 +761,9 @@ export function addOptimisticThread(
     id: input.id,
     projectId: input.projectId,
     title: input.title,
-    model: "",
+    model: input.model,
     harness: input.harness,
+    claudeCodeBackend: input.claudeCodeBackend,
     piRenderMode: DEFAULT_PI_RENDER_MODE,
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -796,6 +829,20 @@ export function setThreadArchived(
   return threads === state.threads ? state : { ...state, threads };
 }
 
+export function setThreadBookmarked(
+  state: AppState,
+  threadId: ThreadId,
+  bookmarked: boolean,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.bookmarked === bookmarked) return thread;
+    return { ...thread, bookmarked };
+  });
+  if (threads === state.threads) return state;
+  markBookmarkUpdatePending(threadId);
+  return { ...state, threads };
+}
+
 export function setThreadHarness(
   state: AppState,
   threadId: ThreadId,
@@ -804,6 +851,23 @@ export function setThreadHarness(
   const threads = updateThread(state.threads, threadId, (thread) => {
     if (thread.harness === harness) return thread;
     return { ...thread, harness };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setThreadClaudeCodeBackend(
+  state: AppState,
+  threadId: ThreadId,
+  claudeCodeBackend: ClaudeCodeBackend,
+  model?: string,
+): AppState {
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.claudeCodeBackend === claudeCodeBackend && model === undefined) return thread;
+    return {
+      ...thread,
+      claudeCodeBackend,
+      ...(model !== undefined ? { model } : {}),
+    };
   });
   return threads === state.threads ? state : { ...state, threads };
 }
@@ -941,10 +1005,16 @@ interface AppStore extends AppState {
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
   setThreadHarness: (threadId: ThreadId, harness: CodingHarness) => void;
+  setThreadClaudeCodeBackend: (
+    threadId: ThreadId,
+    claudeCodeBackend: ClaudeCodeBackend,
+    model?: string,
+  ) => void;
   setThreadPiRenderMode: (threadId: ThreadId, piRenderMode: PiRenderMode) => void;
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
   setThreadArchived: (threadId: ThreadId, archivedAt: string | null) => void;
+  setThreadBookmarked: (threadId: ThreadId, bookmarked: boolean) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
   setActivityStatus: (threadId: ThreadId, activityStatus: AgentActivityStatus | null) => void;
   /** Bump lastInteractedAt to now. Called once on turnStart (user sent a message). */
@@ -963,7 +1033,9 @@ interface AppStore extends AppState {
     id: ThreadId;
     projectId: Project["id"];
     title: string;
+    model: string;
     harness: CodingHarness;
+    claudeCodeBackend: ClaudeCodeBackend;
     branch: string | null;
     worktreePath: string | null;
     createdAt: string;
@@ -988,6 +1060,8 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
   setThreadHarness: (threadId, harness) =>
     set((state) => setThreadHarness(state, threadId, harness)),
+  setThreadClaudeCodeBackend: (threadId, claudeCodeBackend, model) =>
+    set((state) => setThreadClaudeCodeBackend(state, threadId, claudeCodeBackend, model)),
   setThreadPiRenderMode: (threadId, piRenderMode) =>
     set((state) => setThreadPiRenderMode(state, threadId, piRenderMode)),
   setProjectOrder: (order) => set((state) => setProjectOrder(state, order)),
@@ -1004,6 +1078,8 @@ export const useStore = create<AppStore>((set) => ({
     }),
   setThreadArchived: (threadId, archivedAt) =>
     set((state) => setThreadArchived(state, threadId, archivedAt)),
+  setThreadBookmarked: (threadId, bookmarked) =>
+    set((state) => setThreadBookmarked(state, threadId, bookmarked)),
   setHookStatus: (threadId, hookStatus) =>
     set((state) => setThreadHookStatus(state, threadId, hookStatus)),
   setActivityStatus: (threadId, activityStatus) =>

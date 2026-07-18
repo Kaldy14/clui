@@ -32,9 +32,11 @@ jobs:
       - id: release_meta
         name: Resolve release version
         shell: bash
+        env:
+          WORKFLOW_DISPATCH_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            raw="${{ github.event.inputs.version }}"
+            raw="$WORKFLOW_DISPATCH_VERSION"
           else
             raw="${GITHUB_REF_NAME}"
           fi
@@ -81,6 +83,7 @@ jobs:
     name: Build ${{ matrix.label }}
     needs: preflight
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -125,14 +128,95 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Validate Apple signing secrets
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          required_secrets=(
+            MACOS_CERTIFICATE_P12_BASE64
+            MACOS_CERTIFICATE_PASSWORD
+            APPLE_API_KEY_P8_BASE64
+            APPLE_API_KEY_ID
+            APPLE_API_ISSUER
+          )
+          missing_secrets=()
+
+          for secret_name in "${required_secrets[@]}"; do
+            if [[ -z "${!secret_name}" ]]; then
+              missing_secrets+=("$secret_name")
+            fi
+          done
+
+          if (( ${#missing_secrets[@]} > 0 )); then
+            printf 'Missing required GitHub Actions secrets: %s\n' "${missing_secrets[*]}"
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/developer-id-application.p12"
+          keychain_path="$RUNNER_TEMP/clui-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          signing_identity="$(
+            security find-identity -v -p codesigning "$keychain_path" \
+              | awk -F '"' '/Developer ID Application:/ { print $2; exit }'
+          )"
+          if [[ -z "$signing_identity" ]]; then
+            echo 'The certificate does not contain a valid Developer ID Application identity.'
+            exit 1
+          fi
+
+          echo "MACOS_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
+          echo "MACOS_SIGNING_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+          echo "MACOS_CERTIFICATE_PATH=$certificate_path" >> "$GITHUB_ENV"
+
+      - name: Prepare App Store Connect API key
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$api_key_path"
+          chmod 600 "$api_key_path"
+          echo "APPLE_API_KEY_PATH=$api_key_path" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
+
       - name: Build desktop artifact
         shell: bash
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -159,15 +243,8 @@ jobs:
           }
 
           if [[ "${{ matrix.platform }}" == "mac" ]]; then
-            if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
-              key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-              printf '%s' "$APPLE_API_KEY" > "$key_path"
-              export APPLE_API_KEY="$key_path"
-              echo "macOS signing enabled."
-              args+=(--signed)
-            else
-              echo "macOS signing disabled (missing one or more Apple signing secrets)."
-            fi
+            echo "macOS signing and notarization enabled."
+            args+=(--signed)
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
             if has_all \
               "$AZURE_TENANT_ID" \
@@ -187,6 +264,66 @@ jobs:
           fi
 
           bun run dist:desktop:artifact -- "${args[@]}"
+
+      - name: Verify signed and notarized macOS artifacts
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zip_files=(release/*.zip)
+          dmg_files=(release/*.dmg)
+
+          if (( ${#zip_files[@]} != 1 )); then
+            echo "Expected exactly one macOS ZIP artifact, found ${#zip_files[@]}." >&2
+            exit 1
+          fi
+          if (( ${#dmg_files[@]} != 1 )); then
+            echo "Expected exactly one macOS DMG artifact, found ${#dmg_files[@]}." >&2
+            exit 1
+          fi
+
+          verify_dir="$(mktemp -d)"
+          trap 'rm -rf "$verify_dir"' EXIT
+          ditto -x -k "${zip_files[0]}" "$verify_dir"
+
+          app_paths=("$verify_dir"/*.app)
+          if (( ${#app_paths[@]} != 1 )); then
+            echo "Expected exactly one application in the updater ZIP, found ${#app_paths[@]}." >&2
+            exit 1
+          fi
+          app_path="${app_paths[0]}"
+          proxy_path="$app_path/Contents/Resources/claude-code-proxy/claude-code-proxy"
+
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=4 "$app_path"
+
+          if [[ ! -x "$proxy_path" ]]; then
+            echo "Bundled Claude Code proxy is missing or not executable at $proxy_path." >&2
+            exit 1
+          fi
+          codesign --verify --strict --verbose=2 "$proxy_path"
+          proxy_signature="$(codesign --display --verbose=4 "$proxy_path" 2>&1)"
+          if ! grep -Fq "Authority=$MACOS_SIGNING_IDENTITY" <<< "$proxy_signature"; then
+            echo "Bundled Claude Code proxy was not signed with $MACOS_SIGNING_IDENTITY." >&2
+            printf '%s\n' "$proxy_signature" >&2
+            exit 1
+          fi
+
+          expected_binary_arch="$EXPECTED_ARCH"
+          if [[ "$expected_binary_arch" == "x64" ]]; then
+            expected_binary_arch="x86_64"
+          fi
+          proxy_archs="$(lipo -archs "$proxy_path")"
+          if [[ " $proxy_archs " != *" $expected_binary_arch "* ]]; then
+            echo "Bundled Claude Code proxy has architectures '$proxy_archs'; expected '$expected_binary_arch'." >&2
+            exit 1
+          fi
+
+          hdiutil verify "${dmg_files[0]}"
 
       - name: Collect release assets
         shell: bash
@@ -219,6 +356,19 @@ jobs:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
           if-no-files-found: error
+
+      - name: Remove temporary Apple credentials
+        if: ${{ always() && matrix.platform == 'mac' }}
+        shell: bash
+        run: |
+          keychain_path="${MACOS_SIGNING_KEYCHAIN:-$RUNNER_TEMP/clui-signing.keychain-db}"
+          if [[ -e "$keychain_path" ]]; then
+            security delete-keychain "$keychain_path" || true
+          fi
+          rm -f \
+            "${MACOS_CERTIFICATE_PATH:-$RUNNER_TEMP/developer-id-application.p12}" \
+            "${APPLE_API_KEY_PATH:-}" \
+            "$RUNNER_TEMP"/AuthKey_*.p8
 
   release:
     name: Publish GitHub Release

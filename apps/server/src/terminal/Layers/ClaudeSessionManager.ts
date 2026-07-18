@@ -1,9 +1,15 @@
 import { EventEmitter } from "node:events";
 
-import type { ClaudeSessionEvent, TerminalStatus } from "@clui/contracts";
+import type {
+  ClaudeCodeBackend,
+  ClaudeCodeProxyStatus,
+  ClaudeSessionEvent,
+  TerminalStatus,
+} from "@clui/contracts";
 import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
+import { Open } from "../../open";
 import { buildHookSettingsJson } from "../../hooks/hookSettings";
 import { loadServerSettings } from "../../serverSettings";
 import {
@@ -25,6 +31,7 @@ import {
   writeSessionProcessRegistryEntry,
 } from "../sessionProcessRegistry";
 import { ServerConfig } from "../../config";
+import { ClaudeCodeProxyManager } from "../claudeCodeProxy";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -125,6 +132,10 @@ interface ClaudeSessionManagerOptions {
   hookConfig?: HookConfig | undefined;
   dangerouslySkipPermissions?: boolean;
   stateDir?: string;
+  claudeCodeProxyManager?: Pick<
+    ClaudeCodeProxyManager,
+    "dispose" | "getClaudeEnvironment" | "getStatus" | "logout" | "startLogin"
+  >;
 }
 
 export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManagerEvents> {
@@ -138,6 +149,9 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private readonly hookConfig: HookConfig | null;
   private readonly dangerouslySkipPermissions: boolean;
   private readonly processRegistryDir: string | null;
+  private readonly claudeCodeProxyManager: NonNullable<
+    ClaudeSessionManagerOptions["claudeCodeProxyManager"]
+  >;
   private readonly logger = createLogger("claude-session");
 
   constructor(options: ClaudeSessionManagerOptions) {
@@ -151,6 +165,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     this.processRegistryDir = options.stateDir
       ? getSessionProcessRegistryDir(options.stateDir)
       : null;
+    this.claudeCodeProxyManager = options.claudeCodeProxyManager ?? new ClaudeCodeProxyManager();
   }
 
   async startSession(input: {
@@ -160,6 +175,8 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     cols: number;
     rows: number;
     dangerouslySkipPermissions?: boolean;
+    claudeCodeBackend?: ClaudeCodeBackend;
+    model?: string;
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
       const existing = this.sessions.get(input.threadId);
@@ -227,7 +244,11 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       try {
         await assertValidCwd(input.cwd);
 
-        const spawnEnv = createSpawnEnv(process.env);
+        const runtimeEnv =
+          input.claudeCodeBackend === "codex"
+            ? await this.claudeCodeProxyManager.getClaudeEnvironment(input.model ?? "")
+            : undefined;
+        const spawnEnv = createSpawnEnv(process.env, runtimeEnv);
 
         const ptyProcess = await Effect.runPromise(
           this.ptyAdapter.spawn({
@@ -299,6 +320,18 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         throw new Error(message, { cause: error });
       }
     });
+  }
+
+  getClaudeCodeProxyStatus(): Promise<ClaudeCodeProxyStatus> {
+    return this.claudeCodeProxyManager.getStatus();
+  }
+
+  startClaudeCodeProxyLogin(): Promise<ClaudeCodeProxyStatus> {
+    return this.claudeCodeProxyManager.startLogin();
+  }
+
+  logoutClaudeCodeProxy(): Promise<ClaudeCodeProxyStatus> {
+    return this.claudeCodeProxyManager.logout();
   }
 
   async hibernateSession(threadId: string): Promise<void> {
@@ -482,6 +515,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   }
 
   dispose(): void {
+    this.claudeCodeProxyManager.dispose();
     for (const entry of this.sessions.values()) {
       this.stopProcess(entry);
     }
@@ -624,6 +658,7 @@ export const ClaudeSessionManagerLive = Layer.effect(
   ClaudeSessionManager,
   Effect.gen(function* () {
     const ptyAdapter = yield* PtyAdapter;
+    const open = yield* Open;
 
     // Resolve hook config from ServerConfig
     const serverConfig = yield* ServerConfig;
@@ -641,6 +676,10 @@ export const ClaudeSessionManagerLive = Layer.effect(
             maxActiveSessions: settings.maxActiveHarnessSessions,
             dangerouslySkipPermissions: serverConfig.dangerouslySkipPermissions,
             stateDir: serverConfig.stateDir,
+            claudeCodeProxyManager: new ClaudeCodeProxyManager(
+              serverConfig.claudeCodeProxyBinaryPath,
+              (url) => Effect.runPromise(open.openBrowser(url)),
+            ),
           }),
       ),
       (r) => Effect.sync(() => r.dispose()),
@@ -651,7 +690,29 @@ export const ClaudeSessionManagerLive = Layer.effect(
         Effect.tryPromise({
           try: () => runtime.startSession(input),
           catch: (cause) =>
-            new ClaudeSessionError({ message: "Failed to start claude session", cause }),
+            new ClaudeSessionError({
+              message: cause instanceof Error ? cause.message : "Failed to start claude session",
+              cause,
+            }),
+        }),
+      getClaudeCodeProxyStatus: () => Effect.promise(() => runtime.getClaudeCodeProxyStatus()),
+      startClaudeCodeProxyLogin: () =>
+        Effect.tryPromise({
+          try: () => runtime.startClaudeCodeProxyLogin(),
+          catch: (cause) =>
+            new ClaudeSessionError({
+              message: cause instanceof Error ? cause.message : "Could not start Codex sign-in",
+              cause,
+            }),
+        }),
+      logoutClaudeCodeProxy: () =>
+        Effect.tryPromise({
+          try: () => runtime.logoutClaudeCodeProxy(),
+          catch: (cause) =>
+            new ClaudeSessionError({
+              message: cause instanceof Error ? cause.message : "Could not disconnect Codex",
+              cause,
+            }),
         }),
       hibernateSession: (threadId) =>
         Effect.tryPromise({

@@ -1,109 +1,110 @@
 # Release Checklist
 
-This document covers how to run desktop releases from one tag, first without signing, then with signing.
+This document covers production desktop releases from `.github/workflows/release.yml`. A release may be started by pushing a `v*.*.*` tag or with the **Release Desktop** workflow's manual dispatch.
 
 ## What the workflow does
 
-- Trigger: push tag matching `v*.*.*`.
-- Runs quality gates first: lint, typecheck, test.
-- Builds four artifacts in parallel:
-  - macOS `arm64` DMG
-  - macOS `x64` DMG
+- Runs lint, typecheck, and tests before building.
+- Builds four targets in parallel:
+  - macOS `arm64` DMG and ZIP
+  - macOS `x64` DMG and ZIP
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
-- Publishes one GitHub Release with all produced files.
-  - Versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
-  - Only plain `X.Y.Z` releases are marked as the repository's latest release.
-- Includes Electron auto-update metadata (for example `latest*.yml` and `*.blockmap`) in release assets.
-- Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
-- Signing is optional and auto-detected per platform from secrets.
+- Requires every macOS release build to be Developer ID signed and notarized. Missing or invalid Apple credentials fail the macOS job; the workflow never publishes unsigned macOS release artifacts.
+- Optionally signs Windows artifacts with Azure Trusted Signing when the existing Azure secret set is complete. Missing Azure credentials still leave the Windows build unsigned.
+- Publishes one GitHub Release with the desktop artifacts and updater metadata. The workflow does not publish a CLI package to npm.
+- Marks versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) as prereleases. Only plain `X.Y.Z` releases become the repository's latest release.
+- Finalizes the release by updating the release package versions on `main` when needed.
 
 ## Desktop auto-update notes
 
 - Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
 - Update UX:
-  - Background checks run on startup delay + interval.
-  - No automatic download or install.
-  - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
+  - Background checks run on startup delay and then on an interval.
+  - Downloads and installs are not automatic.
+  - The desktop UI shows an update button when an update is available; click once to download, then again to restart and install.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
-  - `CLUI_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
-  - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
-- Temporary private-repo auth workaround:
-  - set `CLUI_DESKTOP_UPDATE_GITHUB_TOKEN` (or `GH_TOKEN`) in the desktop app runtime environment.
-  - the app forwards it as an `Authorization: Bearer <token>` request header for updater HTTP calls.
-- Required release assets for updater:
-  - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
-  - `latest*.yml` metadata
-  - `*.blockmap` files (used for differential downloads)
-- macOS metadata note:
-  - `electron-updater` reads `latest-mac.yml` for both Intel and Apple Silicon.
-  - The workflow merges the per-arch mac manifests into one `latest-mac.yml` before publishing the GitHub Release.
+  - `CLUI_DESKTOP_UPDATE_REPOSITORY` (`owner/repo`), if set.
+  - Otherwise `GITHUB_REPOSITORY` from GitHub Actions.
+- Temporary private-repository auth workaround:
+  - Set `CLUI_DESKTOP_UPDATE_GITHUB_TOKEN` or `GH_TOKEN` in the desktop app's runtime environment.
+  - The app forwards it as an `Authorization: Bearer <token>` header for updater requests.
+- Required updater assets include the installers, macOS ZIP files, `latest*.yml`, and `*.blockmap` files.
+- `electron-updater` reads one `latest-mac.yml` for both Intel and Apple Silicon. The workflow merges the per-architecture manifests before publishing the release.
 
-## 0) npm OIDC trusted publishing setup (CLI)
+## 1) Configure required macOS credentials
 
-The workflow publishes the CLI with `bun publish` from `apps/server` after bumping
-the package version to the release tag version.
+All five of these GitHub Actions secrets are required for every release:
 
-Checklist:
+| Secret                         | Value                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `MACOS_CERTIFICATE_P12_BASE64` | Base64-encoded `.p12` containing a Developer ID Application certificate and its private key |
+| `MACOS_CERTIFICATE_PASSWORD`   | Password used when exporting the `.p12`                                                     |
+| `APPLE_API_KEY_P8_BASE64`      | Base64-encoded App Store Connect Team API `.p8` key                                         |
+| `APPLE_API_KEY_ID`             | App Store Connect API Key ID                                                                |
+| `APPLE_API_ISSUER`             | App Store Connect API Issuer ID                                                             |
 
-1. Confirm npm org/user owns package `t3` (or rename package first if needed).
-2. In npm package settings, configure Trusted Publisher:
-   - Provider: GitHub Actions
-   - Repository: this repo
-   - Workflow file: `.github/workflows/release.yml`
-   - Environment (if used): match your npm trusted publishing config
-3. Ensure npm account and org policies allow trusted publishing for the package.
-4. Create release tag `vX.Y.Z` and push; workflow will:
-   - set `apps/server/package.json` version to `X.Y.Z`
-   - build web + server
-   - run `bun publish --access public`
+Add them at **GitHub repository > Settings > Secrets and variables > Actions > Repository secrets**. The workflow has no unsigned macOS release mode: an absent/empty secret fails credential preflight, and an invalid certificate, password, key, or Apple identifier fails signing or notarization before artifacts can be uploaded.
 
-## 1) Dry-run release without signing
+### Create and encode the certificate
 
-Use this first to validate the release pipeline.
+1. Ensure the Apple Developer team can create Developer ID certificates.
+2. Create a **Developer ID Application** certificate. Do not substitute a Mac App Distribution or installer certificate.
+3. In Keychain Access, export the certificate together with its private key as a password-protected `.p12`.
+4. On macOS, copy a single-line base64 value without writing a second unencrypted copy:
 
-1. Confirm no signing secrets are required for this test.
-2. Create a test tag:
-   - `git tag v0.0.0-test.1`
-   - `git push origin v0.0.0-test.1`
-3. Wait for `.github/workflows/release.yml` to finish.
-4. Verify the GitHub Release contains all platform artifacts.
-5. Download each artifact and sanity-check installation on each OS.
+   ```bash
+   base64 < DeveloperIDApplication.p12 | tr -d '\n' | pbcopy
+   ```
 
-## 2) Apple signing + notarization setup (macOS)
+5. Save the copied value as `MACOS_CERTIFICATE_P12_BASE64` and the export password as `MACOS_CERTIFICATE_PASSWORD`.
 
-Required secrets used by the workflow:
+### Create and encode the notarization key
 
-- `CSC_LINK`
-- `CSC_KEY_PASSWORD`
-- `APPLE_API_KEY`
-- `APPLE_API_KEY_ID`
-- `APPLE_API_ISSUER`
+1. In **App Store Connect > Users and Access > Integrations**, create a **Team API key** with **App Manager** access. Do not use an individual API key.
+2. Download the `.p8` when Apple offers it; it can be downloaded only once. Record its Key ID and the Team key's Issuer ID.
+3. On macOS, copy its single-line base64 value:
 
-Checklist:
+   ```bash
+   base64 < AuthKey_ABC123DEFG.p8 | tr -d '\n' | pbcopy
+   ```
 
-1. Apple Developer account access:
-   - Team has rights to create Developer ID certificates.
-2. Create `Developer ID Application` certificate.
-3. Export certificate + private key as `.p12` from Keychain.
-4. Base64-encode the `.p12` and store as `CSC_LINK`.
-5. Store the `.p12` export password as `CSC_KEY_PASSWORD`.
-6. In App Store Connect, create an API key (Team key).
-7. Add API key values:
-   - `APPLE_API_KEY`: contents of the downloaded `.p8`
-   - `APPLE_API_KEY_ID`: Key ID
-   - `APPLE_API_ISSUER`: Issuer ID
-8. Re-run a tag release and confirm macOS artifacts are signed/notarized.
+4. Save the copied value as `APPLE_API_KEY_P8_BASE64`, the Key ID as `APPLE_API_KEY_ID`, and the Issuer ID as `APPLE_API_ISSUER`.
+5. Store the original `.p12` and `.p8` securely. Never commit either file or a decoded value.
 
-Notes:
+## 2) Understand the fail-closed macOS path
 
-- `APPLE_API_KEY` is stored as raw key text in secrets.
-- The workflow writes it to a temporary `AuthKey_<id>.p8` file at runtime.
+For each macOS architecture, CI:
 
-## 3) Azure Trusted Signing setup (Windows)
+1. Validates that all five required secrets are non-empty and base64-decodes the `.p12` and `.p8` into runner-temporary files.
+2. Creates a temporary keychain, imports the Developer ID Application certificate and private key, configures non-interactive `codesign` access, and derives the signing environment used by the build.
+3. Runs electron-builder, whose `@electron/osx-sign` integration recursively signs the app, nested helpers/frameworks, and native executables with hardened runtime enabled.
+4. Runs the repository's direct `xcrun notarytool` `afterSign` hook against the packaged app. The hook first verifies the signature with `codesign`, submits and polls the notarization request, fails on a rejected/invalid response, and staples the accepted ticket.
+5. Produces both DMG and ZIP updater assets for that architecture.
+6. Extracts the produced ZIP and verifies the packaged app with `codesign`, `stapler validate`, and Gatekeeper's `spctl`; it also verifies the bundled Claude Code proxy's signature and architecture and checks the DMG with `hdiutil verify`. Asset collection and upload run only after this post-build gate succeeds.
 
-Required secrets used by the workflow:
+There is no ad-hoc signature and no catch-and-continue unsigned fallback. Because the release job depends on every matrix build, either macOS architecture failing prevents the GitHub Release from being published.
+
+### Local builds
+
+Local macOS builds remain unsigned by default. The artifact script disables signing discovery unless signed mode is explicitly requested, so a locally installed identity is not selected accidentally and there is no ad-hoc fallback.
+
+A deliberate local signed build must pass `--signed` or set `CLUI_DESKTOP_SIGNED=true`, then provide the derived environment that CI normally prepares:
+
+- `MACOS_SIGNING_IDENTITY` — the exact Developer ID Application identity name.
+- `MACOS_SIGNING_KEYCHAIN` — the keychain containing that identity and private key.
+- `APPLE_API_KEY_PATH` — a filesystem path to the decoded App Store Connect Team API `.p8`.
+- `APPLE_API_KEY_ID` — the matching Team API Key ID.
+- `APPLE_API_ISSUER` — the matching Team API Issuer ID.
+
+Before starting the build, import the Developer ID identity and private key into that keychain and make it available to `codesign`. The local build script does not import a `.p12`. The five base64 GitHub secret names are CI inputs, not local build variables.
+
+Use unsigned local builds only for development. They are not a supported way to dry-run or publish a macOS release.
+
+## 3) Configure optional Windows signing
+
+Windows Azure Trusted Signing remains optional and continues to use:
 
 - `AZURE_TENANT_ID`
 - `AZURE_CLIENT_ID`
@@ -113,38 +114,52 @@ Required secrets used by the workflow:
 - `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`
 - `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`
 
-Checklist:
+Create the Azure Trusted Signing account/profile and an Entra service principal with the required permissions, then add the values under the same GitHub Actions secrets page. When the complete set is present the Windows artifact is signed; otherwise the existing optional unsigned Windows path is used.
 
-1. Create Azure Trusted Signing account and certificate profile.
-2. Record ATS values:
-   - Endpoint
-   - Account name
-   - Certificate profile name
-   - Publisher name
-3. Create/choose an Entra app registration (service principal).
-4. Grant service principal permissions required by Trusted Signing.
-5. Create a client secret for the service principal.
-6. Add Azure secrets listed above in GitHub Actions secrets.
-7. Re-run a tag release and confirm Windows installer is signed.
+## 4) Run a release
 
-## 4) Ongoing release checklist
+1. Ensure `main` is green and the five required Apple secrets are configured.
+2. Create and push a tag:
 
-1. Ensure `main` is green in CI.
-2. Bump app version as needed.
-3. Create release tag: `vX.Y.Z`.
-4. Push tag.
-5. Verify workflow steps:
-   - preflight passes
-   - all matrix builds pass
-   - release job uploads expected files
-6. Smoke test downloaded artifacts.
+   ```bash
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
 
-## 5) Troubleshooting
+   Alternatively, go to **Actions > Release Desktop > Run workflow** and enter `1.2.3` or `v1.2.3`.
 
-- macOS build unsigned when expected signed:
-  - Check all Apple secrets are populated and non-empty.
-- Windows build unsigned when expected signed:
-  - Check all Azure ATS and auth secrets are populated and non-empty.
-- Build fails with signing error:
-  - Retry with secrets removed to confirm unsigned path still works.
-  - Re-check certificate/profile names and tenant/client credentials.
+3. Confirm these stages complete:
+   - Preflight quality gates
+   - Both signed/notarized macOS matrix builds
+   - Linux and Windows matrix builds
+   - GitHub Release publication and macOS manifest merge
+   - Version finalization, when a bump is needed
+4. Confirm the GitHub Release contains two `.dmg` files, two `.zip` files, one `.AppImage`, one `.exe`, their applicable `*.blockmap` files, and `latest-mac.yml`, `latest-linux.yml`, and `latest.yml`.
+5. Smoke-test downloaded artifacts on their target operating systems.
+
+## 5) Verify downloaded macOS artifacts
+
+Verify the files from the GitHub Release, not only CI's staging directory.
+
+1. Mount each DMG, copy the packaged `.app` to a temporary directory, and run:
+
+   ```bash
+   APP="/path/to/Clui (Alpha).app"
+   codesign --verify --deep --strict --verbose=2 "$APP"
+   spctl --assess --type execute --verbose=4 "$APP"
+   xcrun stapler validate "$APP"
+   ```
+
+2. Confirm `codesign` reports a valid sealed signature, `spctl` reports `accepted` with a notarized Developer ID origin, and `stapler` validates the ticket.
+3. Launch both Apple Silicon and Intel builds on representative machines, then check that the updater discovers the expected architecture from the merged `latest-mac.yml`.
+
+## 6) Troubleshooting
+
+- **Required secret reported missing:** Check the five exact names above under the repository's Actions secrets. Empty values are treated as missing.
+- **Certificate base64 or import failure:** Re-encode with `base64 < file | tr -d '\n'`; ensure the `.p12` includes the private key and `MACOS_CERTIFICATE_PASSWORD` is the export password.
+- **No Developer ID identity found:** On a diagnostic Mac, run `security find-identity -v -p codesigning` and confirm the identity is **Developer ID Application** for the intended team. Do not weaken CI to ad-hoc signing.
+- **Notarization authentication failure:** Confirm the key is an App Store Connect Team API key with App Manager access and that `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` belong to that same key/team. Re-encode the original `.p8`; do not encode a filename or pasted escape sequences.
+- **Notarization rejected:** Inspect the submission ID and `notarytool` log in the failed job, fix every reported unsigned or invalid nested executable, and rerun. Do not bypass the `afterSign` hook or verification.
+- **Stapling or Gatekeeper verification failure:** Treat it as a failed release even if notarization was accepted. Check the CI log and downloaded app with the commands above.
+- **Windows artifact is unsigned:** Check the complete Azure secret set. This remains optional and does not relax the macOS requirement.
+- **Auto-update does not discover the release:** Confirm the release contains both architecture ZIPs, both DMGs, blockmaps, and the merged `latest-mac.yml` plus the Linux/Windows manifests.

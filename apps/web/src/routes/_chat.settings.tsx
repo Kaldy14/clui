@@ -4,12 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_ACTIVE_HARNESS_SESSION_CAP,
   DEFAULT_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
+  DEFAULT_CLAUDE_CODE_BACKEND,
+  DEFAULT_CLAUDE_CODE_PROXY_MODEL,
   DEFAULT_PREVENT_MACOS_SLEEP_WHEN_THREAD_IN_PROGRESS,
   MAX_ACTIVE_HARNESS_SESSION_CAP,
   MAX_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   MIN_ACTIVE_HARNESS_SESSION_CAP,
   MIN_AUTO_ARCHIVE_INACTIVE_THREAD_DAYS,
   type CodingHarness,
+  type ClaudeCodeBackend,
+  type ClaudeCodeProxyModel,
   type ProviderKind,
   type ServerConfig,
   type ServerUpdateSettingsInput,
@@ -17,6 +21,7 @@ import {
   type TitleGenerationProvider,
 } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
+import { CLAUDE_CODE_PROXY_MODEL_OPTIONS } from "@clui/shared/claudeCodeProxy";
 
 import {
   CODING_HARNESS_OPTIONS,
@@ -161,6 +166,9 @@ function SettingsRouteView() {
   const { settings, defaults, updateSettings } = useAppSettings();
   const queryClient = useQueryClient();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const refetchServerConfig = serverConfigQuery.refetch;
+  const isClaudeCodeProxyAuthInProgress =
+    serverConfigQuery.data?.claudeCodeProxy.authInProgress ?? false;
   const navigate = useNavigate();
   const projects = useStore((state) => state.projects);
   const threads = useStore((state) => state.threads);
@@ -171,9 +179,12 @@ function SettingsRouteView() {
   const [autoArchiveInactiveThreadDaysInput, setAutoArchiveInactiveThreadDaysInput] = useState("");
   const [serverSettingsError, setServerSettingsError] = useState<string | null>(null);
   const [serverSettingsErrorSource, setServerSettingsErrorSource] = useState<
-    "titleGeneration" | "sessionHibernation" | "chatHistory" | null
+    "titleGeneration" | "sessionHibernation" | "chatHistory" | "claudeCodeProxy" | null
   >(null);
   const [isSavingServerSettings, setIsSavingServerSettings] = useState(false);
+  const [claudeCodeProxyAuthAction, setClaudeCodeProxyAuthAction] = useState<
+    "login" | "logout" | null
+  >(null);
   const [archivedThreadQuery, setArchivedThreadQuery] = useState("");
   const [archivedThreadsError, setArchivedThreadsError] = useState<string | null>(null);
   const [restoringArchivedThreadIds, setRestoringArchivedThreadIds] = useState<
@@ -213,6 +224,14 @@ function SettingsRouteView() {
       setServerSettingsErrorSource(null);
     }
   }, [serverConfigQuery.data?.settings.autoArchiveInactiveThreadDays]);
+
+  useEffect(() => {
+    if (!isClaudeCodeProxyAuthInProgress) return;
+    const interval = window.setInterval(() => {
+      void refetchServerConfig();
+    }, 1_500);
+    return () => window.clearInterval(interval);
+  }, [isClaudeCodeProxyAuthInProgress, refetchServerConfig]);
 
   // Scroll to section when navigated with hash (e.g. /settings#speech-to-text)
   useEffect(() => {
@@ -268,7 +287,7 @@ function SettingsRouteView() {
   const persistServerSettings = useCallback(
     (
       patch: ServerUpdateSettingsInput,
-      source: "titleGeneration" | "sessionHibernation" | "chatHistory",
+      source: "titleGeneration" | "sessionHibernation" | "chatHistory" | "claudeCodeProxy",
     ) => {
       setServerSettingsError(null);
       setServerSettingsErrorSource(null);
@@ -289,6 +308,11 @@ function SettingsRouteView() {
                 autoArchiveInactiveThreadDays:
                   patch.autoArchiveInactiveThreadDays ??
                   previous.settings.autoArchiveInactiveThreadDays,
+                defaultClaudeCodeBackend:
+                  patch.defaultClaudeCodeBackend ?? previous.settings.defaultClaudeCodeBackend,
+                defaultClaudeCodeProxyModel:
+                  patch.defaultClaudeCodeProxyModel ??
+                  previous.settings.defaultClaudeCodeProxyModel,
               },
             }
           : previous,
@@ -312,6 +336,33 @@ function SettingsRouteView() {
         .finally(() => {
           setIsSavingServerSettings(false);
         });
+    },
+    [queryClient],
+  );
+
+  const runClaudeCodeProxyAuthAction = useCallback(
+    (action: "login" | "logout") => {
+      setServerSettingsError(null);
+      setServerSettingsErrorSource(null);
+      setClaudeCodeProxyAuthAction(action);
+      const api = ensureNativeApi();
+      const request =
+        action === "login"
+          ? api.server.startClaudeCodeProxyLogin()
+          : api.server.logoutClaudeCodeProxy();
+      void request
+        .then((claudeCodeProxy) => {
+          queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), (previous) =>
+            previous ? { ...previous, claudeCodeProxy } : previous,
+          );
+        })
+        .catch((error) => {
+          setServerSettingsErrorSource("claudeCodeProxy");
+          setServerSettingsError(
+            error instanceof Error ? error.message : "Unable to update Codex authentication.",
+          );
+        })
+        .finally(() => setClaudeCodeProxyAuthAction(null));
     },
     [queryClient],
   );
@@ -662,6 +713,151 @@ function SettingsRouteView() {
                     </button>
                   );
                 })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Claude Code via Codex</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Route Claude Code through Clui&apos;s bundled local proxy and use models included
+                  with your ChatGPT Plus or Pro Codex subscription. New threads keep their selected
+                  backend and model when resumed.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-foreground">
+                        {serverConfigQuery.data?.claudeCodeProxy.authenticated
+                          ? "Codex connected"
+                          : "Codex not connected"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {serverConfigQuery.data?.claudeCodeProxy.message ??
+                          "Checking the bundled proxy..."}
+                      </p>
+                    </div>
+                    {serverConfigQuery.data?.claudeCodeProxy.authenticated ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={claudeCodeProxyAuthAction !== null}
+                        onClick={() => runClaudeCodeProxyAuthAction("logout")}
+                      >
+                        {claudeCodeProxyAuthAction === "logout" ? "Disconnecting..." : "Disconnect"}
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={
+                          claudeCodeProxyAuthAction !== null ||
+                          serverConfigQuery.data?.claudeCodeProxy.authInProgress === true ||
+                          serverConfigQuery.data?.claudeCodeProxy.available === false
+                        }
+                        onClick={() => runClaudeCodeProxyAuthAction("login")}
+                      >
+                        {serverConfigQuery.data?.claudeCodeProxy.authInProgress ||
+                        claudeCodeProxyAuthAction === "login"
+                          ? "Waiting for sign-in..."
+                          : "Connect Codex"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-medium text-foreground">
+                    Default backend for new Claude Code threads
+                  </p>
+                  <div className="space-y-2" role="radiogroup" aria-label="Claude Code backend">
+                    {[
+                      {
+                        value: "anthropic" as const,
+                        label: "Anthropic",
+                        description: "Use your normal Claude Code authentication and models.",
+                      },
+                      {
+                        value: "codex" as const,
+                        label: "Codex subscription",
+                        description: "Use GPT-5.6 through the bundled loopback proxy.",
+                      },
+                    ].map((option) => {
+                      const selected =
+                        (serverConfigQuery.data?.settings.defaultClaudeCodeBackend ??
+                          DEFAULT_CLAUDE_CODE_BACKEND) === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          disabled={serverConfigQuery.isLoading || isSavingServerSettings}
+                          className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                            selected
+                              ? "border-primary/60 bg-primary/8 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-accent"
+                          }`}
+                          onClick={() =>
+                            persistServerSettings(
+                              { defaultClaudeCodeBackend: option.value as ClaudeCodeBackend },
+                              "claudeCodeProxy",
+                            )
+                          }
+                        >
+                          <span className="flex flex-col">
+                            <span className="text-sm font-medium">{option.label}</span>
+                            <span className="text-xs">{option.description}</span>
+                          </span>
+                          {selected ? (
+                            <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                              Selected
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <label htmlFor="default-claude-code-proxy-model" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Default Codex model</span>
+                  <select
+                    id="default-claude-code-proxy-model"
+                    value={
+                      serverConfigQuery.data?.settings.defaultClaudeCodeProxyModel ??
+                      DEFAULT_CLAUDE_CODE_PROXY_MODEL
+                    }
+                    disabled={serverConfigQuery.isLoading || isSavingServerSettings}
+                    onChange={(event) =>
+                      persistServerSettings(
+                        {
+                          defaultClaudeCodeProxyModel: event.target.value as ClaudeCodeProxyModel,
+                        },
+                        "claudeCodeProxy",
+                      )
+                    }
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-primary/60"
+                  >
+                    {CLAUDE_CODE_PROXY_MODEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {serverSettingsError && serverSettingsErrorSource === "claudeCodeProxy" ? (
+                  <p className="text-xs text-destructive">{serverSettingsError}</p>
+                ) : null}
+                <p className="text-[11px] text-muted-foreground">
+                  The proxy listens only on a dynamic 127.0.0.1 port. Clui never sends OAuth tokens
+                  to the renderer or stores them in thread data.
+                </p>
               </div>
             </section>
 

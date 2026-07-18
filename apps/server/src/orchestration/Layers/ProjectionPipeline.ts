@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  DEFAULT_CLAUDE_CODE_BACKEND,
   type ChatAttachment,
   type OrchestrationEvent,
 } from "@clui/contracts";
@@ -426,6 +427,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             title: event.payload.title,
             model: event.payload.model,
             harness: event.payload.harness,
+            claudeCodeBackend: event.payload.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
             piRenderMode: event.payload.piRenderMode ?? "terminal",
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
@@ -460,17 +462,30 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             event.payload.title !== undefined;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            ...(!skipTitle && event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(!skipTitle && event.payload.title !== undefined
+              ? { title: event.payload.title }
+              : {}),
             ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
             ...(event.payload.harness !== undefined ? { harness: event.payload.harness } : {}),
-            ...(event.payload.piRenderMode !== undefined ? { piRenderMode: event.payload.piRenderMode } : {}),
+            ...(event.payload.claudeCodeBackend !== undefined
+              ? { claudeCodeBackend: event.payload.claudeCodeBackend }
+              : {}),
+            ...(event.payload.piRenderMode !== undefined
+              ? { piRenderMode: event.payload.piRenderMode }
+              : {}),
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
-            ...(!skipTitle && event.payload.titleSource !== undefined ? { titleSource: event.payload.titleSource } : {}),
-            ...(event.payload.bookmarked !== undefined ? { bookmarked: event.payload.bookmarked } : {}),
-            ...(event.payload.archivedAt !== undefined ? { archivedAt: event.payload.archivedAt } : {}),
+            ...(!skipTitle && event.payload.titleSource !== undefined
+              ? { titleSource: event.payload.titleSource }
+              : {}),
+            ...(event.payload.bookmarked !== undefined
+              ? { bookmarked: event.payload.bookmarked }
+              : {}),
+            ...(event.payload.archivedAt !== undefined
+              ? { archivedAt: event.payload.archivedAt }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -548,7 +563,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadProposedPlanRepository.deleteByThreadId({ threadId });
           yield* projectionPendingApprovalRepository.deleteByThreadId({ threadId });
           yield* sql`DELETE FROM checkpoint_diff_blobs WHERE thread_id = ${threadId}`.pipe(
-            Effect.mapError(toPersistenceSqlError("ProjectionPipeline.thread.deleted:checkpoint_diff_blobs")),
+            Effect.mapError(
+              toPersistenceSqlError("ProjectionPipeline.thread.deleted:checkpoint_diff_blobs"),
+            ),
           );
           return;
         }
@@ -587,7 +604,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             latestTurnId: newTurnId,
-            ...(isNewTurn ? { updatedAt: event.occurredAt, lastInteractedAt: event.occurredAt } : {}),
+            ...(isNewTurn
+              ? { updatedAt: event.occurredAt, lastInteractedAt: event.occurredAt }
+              : {}),
           });
           return;
         }

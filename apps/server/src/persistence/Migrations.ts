@@ -41,6 +41,7 @@ import Migration0026 from "./Migrations/026_ProjectionProjectsHiddenAt.ts";
 import Migration0027 from "./Migrations/027_RedactTerminalScrollback.ts";
 import Migration0028 from "./Migrations/028_ProjectionThreadsPiRenderMode.ts";
 import Migration0029 from "./Migrations/029_ProjectionThreadsCollisionRepair.ts";
+import Migration0030 from "./Migrations/030_ProjectionThreadsClaudeCodeBackend.ts";
 import { Effect } from "effect";
 
 /**
@@ -83,6 +84,7 @@ const loader = Migrator.fromRecord({
   "27_RedactTerminalScrollback": Migration0027,
   "28_ProjectionThreadsPiRenderMode": Migration0028,
   "29_ProjectionThreadsCollisionRepair": Migration0029,
+  "30_ProjectionThreadsClaudeCodeBackend": Migration0030,
 });
 
 /**

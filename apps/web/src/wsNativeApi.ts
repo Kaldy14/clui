@@ -203,6 +203,9 @@ export function createWsNativeApi(): NativeApi {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
       updateSettings: (input) => transport.request(WS_METHODS.serverUpdateSettings, input),
+      startClaudeCodeProxyLogin: () =>
+        transport.request(WS_METHODS.serverStartClaudeCodeProxyLogin),
+      logoutClaudeCodeProxy: () => transport.request(WS_METHODS.serverLogoutClaudeCodeProxy),
       purgeInactiveSessions: (input) =>
         transport.request(WS_METHODS.serverPurgeInactiveSessions, input),
       setHarnessOutputSubscriptions: (input) =>

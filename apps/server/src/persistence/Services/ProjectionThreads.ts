@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  ClaudeCodeBackend,
   CodingHarness,
   IsoDateTime,
   PiRenderMode,
@@ -29,6 +30,7 @@ export const ProjectionThread = Schema.Struct({
   title: Schema.String,
   model: Schema.String,
   harness: CodingHarness,
+  claudeCodeBackend: ClaudeCodeBackend,
   piRenderMode: PiRenderMode,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -112,9 +114,9 @@ export interface ProjectionThreadRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /** Clear scrollback_snapshot for all non-deleted threads except the excluded set. Returns count of rows updated. */
-  readonly clearScrollbackSnapshotBulk: (
-    input: { readonly excludeThreadIds: ReadonlyArray<string> },
-  ) => Effect.Effect<number, ProjectionRepositoryError>;
+  readonly clearScrollbackSnapshotBulk: (input: {
+    readonly excludeThreadIds: ReadonlyArray<string>;
+  }) => Effect.Effect<number, ProjectionRepositoryError>;
 }
 
 /**

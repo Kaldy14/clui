@@ -131,6 +131,8 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverUpdateSettings: "server.updateSettings",
+  serverStartClaudeCodeProxyLogin: "server.startClaudeCodeProxyLogin",
+  serverLogoutClaudeCodeProxy: "server.logoutClaudeCodeProxy",
   serverPurgeInactiveSessions: "server.purgeInactiveSessions",
   serverSetHarnessOutputSubscriptions: "server.setHarnessOutputSubscriptions",
   serverWriteTempImage: "server.writeTempImage",
@@ -238,6 +240,8 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
   tagRequestBody(WS_METHODS.serverUpdateSettings, ServerUpdateSettingsInput),
+  tagRequestBody(WS_METHODS.serverStartClaudeCodeProxyLogin, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverLogoutClaudeCodeProxy, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverPurgeInactiveSessions, PurgeInactiveSessionsInput),
   tagRequestBody(
     WS_METHODS.serverSetHarnessOutputSubscriptions,

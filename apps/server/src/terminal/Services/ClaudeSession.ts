@@ -7,7 +7,7 @@
  * @module ClaudeSessionManager
  */
 import { Effect, Schema, ServiceMap } from "effect";
-import type { TerminalStatus } from "@clui/contracts";
+import type { ClaudeCodeBackend, ClaudeCodeProxyStatus, TerminalStatus } from "@clui/contracts";
 import type { ClaudeSessionEvent } from "@clui/contracts";
 
 export class ClaudeSessionError extends Schema.TaggedErrorClass<ClaudeSessionError>()(
@@ -35,10 +35,16 @@ export interface ClaudeSessionManagerShape {
     cols: number;
     rows: number;
     dangerouslySkipPermissions?: boolean;
+    claudeCodeBackend?: ClaudeCodeBackend;
+    model?: string;
   }) => Effect.Effect<void, ClaudeSessionError>;
-  readonly hibernateSession: (
-    threadId: string,
-  ) => Effect.Effect<void, ClaudeSessionError>;
+  readonly getClaudeCodeProxyStatus: () => Effect.Effect<ClaudeCodeProxyStatus>;
+  readonly startClaudeCodeProxyLogin: () => Effect.Effect<
+    ClaudeCodeProxyStatus,
+    ClaudeSessionError
+  >;
+  readonly logoutClaudeCodeProxy: () => Effect.Effect<ClaudeCodeProxyStatus, ClaudeSessionError>;
+  readonly hibernateSession: (threadId: string) => Effect.Effect<void, ClaudeSessionError>;
   readonly getScrollback: (
     threadId: string,
     sinceOffset?: number,
@@ -52,32 +58,20 @@ export interface ClaudeSessionManagerShape {
     cols: number,
     rows: number,
   ) => Effect.Effect<void, ClaudeSessionError>;
-  readonly getSessionStatus: (
-    threadId: string,
-  ) => Effect.Effect<TerminalStatus>;
-  readonly reconcileActiveSessions: (
-    maxActive: number,
-  ) => Effect.Effect<void>;
+  readonly getSessionStatus: (threadId: string) => Effect.Effect<TerminalStatus>;
+  readonly reconcileActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;
   /** Hibernate active sessions except the excluded thread IDs. Returns hibernated thread IDs. */
   readonly hibernateActiveSessions: (
     excludeThreadIds: ReadonlySet<string>,
   ) => Effect.Effect<ReadonlyArray<string>>;
-  readonly subscribe: (
-    listener: (event: ClaudeSessionEvent) => void,
-  ) => Effect.Effect<() => void>;
-  readonly getClaudeSessionId: (
-    threadId: string,
-  ) => Effect.Effect<string | null>;
+  readonly subscribe: (listener: (event: ClaudeSessionEvent) => void) => Effect.Effect<() => void>;
+  readonly getClaudeSessionId: (threadId: string) => Effect.Effect<string | null>;
   /** Kill PTY and remove session from map without emitting lifecycle events. Used for thread deletion. */
-  readonly destroySession: (
-    threadId: string,
-  ) => Effect.Effect<void>;
+  readonly destroySession: (threadId: string) => Effect.Effect<void>;
   /** Kill all dormant sessions except the excluded thread IDs. Returns count of sessions killed. */
-  readonly purgeInactiveSessions: (
-    excludeThreadIds: ReadonlySet<string>,
-  ) => Effect.Effect<number>;
+  readonly purgeInactiveSessions: (excludeThreadIds: ReadonlySet<string>) => Effect.Effect<number>;
   readonly dispose: Effect.Effect<void>;
 }
 

@@ -11,6 +11,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     title: "Thread",
     model: "gpt-5.3-codex",
     harness: "claudeCode",
+    claudeCodeBackend: "anthropic",
     piRenderMode: "terminal",
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
