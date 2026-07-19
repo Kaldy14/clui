@@ -4,6 +4,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-19 — Restore browser test discovery after ChatView removal
+
+**Problem:** The GitHub Actions browser-test step exited with code 1 because Vitest could not find the configured `src/components/ChatView.browser.tsx` test file.
+
+**Root cause:** The Agent SDK removal deleted `ChatView` and its browser test, but `vitest.browser.config.ts` continued to include that single obsolete file explicitly.
+
+**Fix:** Discover browser tests through a conventional `*.browser.ts` / `*.browser.tsx` glob and add browser-level interaction coverage for the current shared terminal search bar, including initial focus, forward and reverse search, and closing behavior.
+
+**Affected files:**
+
+- `apps/web/vitest.browser.config.ts`
+- `apps/web/src/components/TerminalSearchBar.browser.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-19 — Prevent fake Claude CLI stdin pipe failures in CI
 
 **Problem:** The CI test step failed even though all 526 server tests passed because Vitest reported three unhandled `write EPIPE` exceptions from the harness text-generation tests.
