@@ -34,6 +34,7 @@ function makeFakeTitleCliBin(): string {
     path.join(binDir, "claude"),
     [
       "#!/bin/sh",
+      "cat >/dev/null",
       'if [ "${T3_FAKE_CLAUDE_EXIT_CODE:-0}" != "0" ]; then',
       '  printf "%s\\n" "claude failed" >&2',
       '  exit "$T3_FAKE_CLAUDE_EXIT_CODE"',

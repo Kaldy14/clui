@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-19 — Prevent fake Claude CLI stdin pipe failures in CI
+
+**Problem:** The CI test step failed even though all 526 server tests passed because Vitest reported three unhandled `write EPIPE` exceptions from the harness text-generation tests.
+
+**Root cause:** The fake Claude CLI used by `HarnessTextGeneration.test.ts` exited without consuming the prompt piped to stdin. On the standard GitHub-hosted runner, the child could close the pipe before Effect's asynchronous stdin writer completed, producing an unhandled broken-pipe error.
+
+**Fix:** Make the fake Claude CLI consume its complete stdin stream before returning either its configured success output or failure exit code, matching the stdin behavior expected by the text-generation integration.
+
+**Affected files:**
+
+- `apps/server/src/git/Layers/HarnessTextGeneration.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-19 — Normalize repository formatting
 
 **Problem:** `bun run fmt:check` failed in CI because `oxfmt --check` reported formatting issues in 94 tracked files.
