@@ -93,18 +93,13 @@ jobs:
             platform: mac
             target: dmg
             arch: arm64
-          - label: macOS x64
-            runner: macos-15-intel
-            platform: mac
-            target: dmg
-            arch: x64
           - label: Linux x64
             runner: ubuntu-24.04
             platform: linux
             target: AppImage
             arch: x64
           - label: Windows x64
-            runner: windows-2022
+            runner: ubuntu-24.04
             platform: win
             target: nsis
             arch: x64
@@ -124,6 +119,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: package.json
+
+      - name: Install Wine for Windows packaging
+        if: matrix.platform == 'win'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes wine
+          wine --version
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -344,12 +346,6 @@ jobs:
             done
           done
 
-          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" != "arm64" ]]; then
-            if [[ -f release-publish/latest-mac.yml ]]; then
-              mv release-publish/latest-mac.yml "release-publish/latest-mac-${{ matrix.arch }}.yml"
-            fi
-          fi
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -380,24 +376,12 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: package.json
-
-      - name: Download all desktop artifacts
+      - name: Download desktop artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
           merge-multiple: true
           path: release-assets
-
-      - name: Merge macOS updater manifests
-        run: |
-          node scripts/merge-mac-update-manifests.ts \
-            release-assets/latest-mac.yml \
-            release-assets/latest-mac-x64.yml
-          rm -f release-assets/latest-mac-x64.yml
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

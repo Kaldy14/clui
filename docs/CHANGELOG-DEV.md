@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-19 — Use standard GitHub-hosted runners and limit macOS to arm64
+
+**Problem:** CI depended on a third-party Blacksmith runner, and desktop releases built an unnecessary macOS Intel artifact alongside macOS arm64, Linux x64, and Windows x64.
+
+**Root cause:** The CI workflow named a Blacksmith runner directly, while the release workflow retained macOS x64 as a separate matrix target and required a post-build macOS manifest merge.
+
+**Fix:** Moved CI to the standard `ubuntu-24.04` GitHub-hosted runner, kept the signed and notarized macOS arm64 build on the standard `macos-14` M1 runner, and removed macOS x64 plus the now-unneeded manifest merge. Linux x64 and Windows x64 remain release targets and now both run on `ubuntu-24.04`; the Windows job installs Wine for NSIS cross-packaging. Publishing continues to include all three supported platforms.
+
+**Affected files:**
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
+- `docs/RELEASING.md`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-18 — Submit Pi terminal startup prompts after process-bound readiness
 
 **Problem:** A Pi terminal launched with an initial prompt could acknowledge `pi.start` without reliably entering and submitting that prompt in the TUI. Interrupted or overlapping launches could wait on stale synchronization state, leave a spawned child behind after startup failure, or allow terminal control bytes to be injected into the programmatic prompt stream.

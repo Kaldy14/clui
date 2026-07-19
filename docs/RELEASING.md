@@ -2,9 +2,9 @@
 
 ## Overview
 
-The **Release Desktop** GitHub Actions workflow (`.github/workflows/release.yml`) builds and publishes Clui's desktop artifacts from a `v*.*.*` tag or manual dispatch. It builds macOS arm64 and x64, Linux x64, and Windows x64, creates one GitHub Release with updater assets, and finalizes release package versions on `main` when needed. It does not publish a CLI package to npm.
+The **Release Desktop** GitHub Actions workflow (`.github/workflows/release.yml`) builds and publishes Clui's macOS arm64, Linux x64, and Windows x64 desktop artifacts from a `v*.*.*` tag or manual dispatch. It uses standard GitHub-hosted runners, creates one GitHub Release with updater assets, and finalizes release package versions on `main` when needed. It does not publish a CLI package to npm.
 
-macOS release signing is fail-closed: both macOS builds must be Developer ID signed, notarized, stapled, and verified before upload. All five Apple credentials below are mandatory. Windows Azure Trusted Signing keeps its existing optional behavior.
+macOS release signing is fail-closed: the arm64 build must be Developer ID signed, notarized, stapled, and verified before upload. All five Apple credentials below are mandatory. Windows Azure Trusted Signing remains optional.
 
 ## Prerequisites
 
@@ -50,7 +50,7 @@ The App Store Connect `.p8` is normally downloadable only once. If it is lost, r
 | `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME` | Azure certificate profile name     |
 | `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`           | Azure publisher name               |
 
-When this complete set is available, the workflow enables Azure Trusted Signing. If it is incomplete, the Windows build continues unsigned as it does today. This optional behavior does not apply to macOS.
+When this complete set is available, the workflow enables Azure Trusted Signing. If it is incomplete, the Windows build continues unsigned. This optional behavior does not apply to macOS.
 
 ### Build environment variables
 
@@ -75,16 +75,16 @@ Import the Developer ID identity and private key into the selected keychain befo
 
 ## macOS signing and notarization pipeline
 
-Each macOS architecture runs independently on a macOS GitHub runner:
+The macOS arm64 build runs on the standard GitHub-hosted `macos-14` M1 runner. Linux x64 builds natively on `ubuntu-24.04`; Windows x64 uses the same Ubuntu runner with Wine for NSIS packaging.
 
 1. The workflow requires all five Apple secrets, decodes the `.p12` and `.p8` into temporary files, and creates a temporary keychain.
 2. It imports the Developer ID Application certificate/private key, unlocks the keychain for non-interactive signing, and derives the explicit signing environment.
 3. electron-builder uses `@electron/osx-sign` to recursively sign the app and its nested helpers, frameworks, native executables, and other signable content with hardened runtime enabled.
 4. The repository's `afterSign` hook verifies the signed app with `codesign`, invokes `xcrun notarytool` directly, submits and polls to a terminal status, fails rejected or invalid submissions, and staples the accepted ticket.
-5. electron-builder creates the architecture's DMG and ZIP around the signed, notarized, stapled app.
+5. electron-builder creates the arm64 DMG and ZIP around the signed, notarized, stapled app.
 6. Before collecting or uploading assets, the workflow extracts the ZIP and runs `codesign`, `stapler validate`, and Gatekeeper's `spctl` against the packaged app. It separately checks the bundled Claude Code proxy's signing identity and architecture, then validates the DMG with `hdiutil verify`.
 
-There is no catch-and-continue unsigned path. A missing/invalid credential or any signing, notarization, stapling, or verification error fails that matrix job. The GitHub Release job depends on the entire build matrix, so neither an unsigned nor a partially successful macOS release is published.
+There is no catch-and-continue unsigned path for macOS. A missing/invalid credential or any signing, notarization, stapling, or verification error fails that matrix job. The GitHub Release job depends on the entire build matrix, so an unsigned macOS release is not published.
 
 ## Release steps
 
@@ -118,21 +118,21 @@ Or go to **Actions > Release Desktop > Run workflow** and enter `1.2.3` or `v1.2
 The workflow runs:
 
 1. **Preflight** — validates the version and runs lint, typecheck, and tests.
-2. **Build** — builds macOS arm64, macOS x64, Linux x64, and Windows x64. macOS signing/notarization is mandatory; Windows signing is optional.
-3. **Release** — merges the macOS updater manifests and creates the GitHub Release with all desktop assets.
+2. **Build** — builds macOS arm64, Linux x64, and Windows x64. macOS signing/notarization is mandatory; Windows signing is optional. Linux and Windows both use `ubuntu-24.04`, with Wine installed for Windows NSIS packaging.
+3. **Release** — creates the GitHub Release with all three platforms' desktop assets.
 4. **Finalize** — updates release package versions and pushes the change to `main` when required.
 
 ### 5. Verify release assets
 
-The release must retain both architecture-specific macOS updater payloads:
+The release must retain each platform's updater payloads:
 
-- Two macOS `.dmg` files and two macOS `.zip` files
-- One Linux `.AppImage`
-- One Windows `.exe`
+- One macOS arm64 `.dmg` and one macOS arm64 `.zip`
+- One Linux x64 `.AppImage`
+- One Windows x64 `.exe`
 - Applicable `*.blockmap` files
-- Merged `latest-mac.yml`, plus `latest-linux.yml` and `latest.yml`
+- `latest-mac.yml`, `latest-linux.yml`, and `latest.yml`
 
-`electron-updater` consumes one `latest-mac.yml` for Apple Silicon and Intel, so the release job merges the per-architecture manifests. The ZIPs are required macOS updater payloads; do not remove them after publishing.
+`electron-updater` consumes the platform-specific update manifest. The ZIP is the required macOS updater payload; do not remove it after publishing.
 
 Verify the downloaded GitHub Release artifacts rather than relying only on CI logs. Mount each DMG, copy the packaged `.app` to a temporary location, and run:
 
@@ -143,7 +143,7 @@ spctl --assess --type execute --verbose=4 "$APP"
 xcrun stapler validate "$APP"
 ```
 
-Expect a valid sealed signature, an `accepted` Gatekeeper result with a notarized Developer ID origin, and a valid staple. Launch and smoke-test both architectures on representative Macs, and smoke-test the Linux and Windows installers.
+Expect a valid sealed signature, an `accepted` Gatekeeper result with a notarized Developer ID origin, and a valid staple. Launch and smoke-test the arm64 build on a representative Apple Silicon Mac, and smoke-test the Linux and Windows installers.
 
 ## Auto-update behavior
 
@@ -162,6 +162,7 @@ Tags such as `v1.2.3-beta.1` are GitHub prereleases and are not served to the st
 - **`notarytool` authentication fails:** Confirm the `.p8` is a Team API key with App Manager access and that `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` are from the same team/key. Re-encode the original key file.
 - **Notarization is rejected:** Use the submission ID from the job to inspect the `notarytool` log. Fix every reported nested binary/signature problem rather than bypassing the `afterSign` hook.
 - **Stapling, `codesign`, or Gatekeeper verification fails:** Treat the build as failed even if Apple accepted the submission. Compare the failed CI verification with the downloaded-app commands above.
+- **Windows packaging cannot find Wine:** Check the Windows matrix job's Wine installation step. NSIS cross-packaging on Ubuntu requires Wine.
 - **Windows output is unsigned:** Check the complete Azure secret set. Windows signing remains optional.
 - **Finalize cannot push:** Repository branch protection may block `github-actions[bot]`; grant the workflow the intended permission without weakening release checks.
-- **Auto-update cannot find the release:** Verify all architecture-specific DMG/ZIP assets, blockmaps, and merged/current `latest*.yml` files are attached.
+- **Auto-update cannot find the release:** Verify the macOS DMG/ZIP, Linux AppImage, Windows EXE, blockmaps, and current platform manifests are attached.
