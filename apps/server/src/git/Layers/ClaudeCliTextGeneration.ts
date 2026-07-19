@@ -45,11 +45,7 @@ function sanitizePrTitle(raw: string): string {
   return singleLine.length > 0 ? singleLine : "Update project changes";
 }
 
-function normalizeError(
-  operation: string,
-  error: unknown,
-  fallback: string,
-): TextGenerationError {
+function normalizeError(operation: string, error: unknown, fallback: string): TextGenerationError {
   if (Schema.is(TextGenerationError)(error)) return error;
   if (error instanceof Error) {
     const lower = error.message.toLowerCase();
@@ -175,12 +171,18 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
         "claude",
         [
           "-p",
-          "--output-format", "json",
-          "--model", model,
-          "--tools", "",
-          "--max-turns", "1",
-          "--effort", "low",
-          "--system-prompt", `${systemPrompt}\n\nRespond with ONLY a valid JSON object matching the requested schema. No markdown, no code fences, no extra text.`,
+          "--output-format",
+          "json",
+          "--model",
+          model,
+          "--tools",
+          "",
+          "--max-turns",
+          "1",
+          "--effort",
+          "low",
+          "--system-prompt",
+          `${systemPrompt}\n\nRespond with ONLY a valid JSON object matching the requested schema. No markdown, no code fences, no extra text.`,
           "--no-session-persistence",
           "-",
         ],
@@ -243,7 +245,8 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       let resultObj: unknown;
 
       if (typeof resultValue === "string" && resultValue.trim().length > 0) {
-        const cleaned = resultValue.trim()
+        const cleaned = resultValue
+          .trim()
           .replace(/^```(?:json)?\s*/, "")
           .replace(/\s*```$/, "")
           .trim();
@@ -439,7 +442,9 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       }).pipe(
         Effect.map(
           (generated) =>
-            ({ branch: sanitizeBranchFragment(generated.branch) }) satisfies BranchNameGenerationResult,
+            ({
+              branch: sanitizeBranchFragment(generated.branch),
+            }) satisfies BranchNameGenerationResult,
         ),
       ),
       codexTextGeneration.generateBranchName(input),
@@ -456,12 +461,18 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
         "claude",
         [
           "-p",
-          "--output-format", "json",
-          "--model", SONNET_MODEL,
-          "--tools", "",
-          "--max-turns", "1",
-          "--effort", "low",
-          "--system-prompt", "Generate a descriptive thread title (up to 120 chars) for a coding session. Summarize the intent in title case. Prefer enough detail to distinguish similar sessions. Respond with ONLY the title text, nothing else.",
+          "--output-format",
+          "json",
+          "--model",
+          SONNET_MODEL,
+          "--tools",
+          "",
+          "--max-turns",
+          "1",
+          "--effort",
+          "low",
+          "--system-prompt",
+          "Generate a descriptive thread title (up to 120 chars) for a coding session. Summarize the intent in title case. Prefer enough detail to distinguish similar sessions. Respond with ONLY the title text, nothing else.",
           "--no-session-persistence",
           "-",
         ],
@@ -476,9 +487,11 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
 
       const child = yield* commandSpawner
         .spawn(command)
-        .pipe(Effect.mapError((cause) =>
-          normalizeError("generateThreadTitle", cause, "Failed to spawn Claude CLI"),
-        ));
+        .pipe(
+          Effect.mapError((cause) =>
+            normalizeError("generateThreadTitle", cause, "Failed to spawn Claude CLI"),
+          ),
+        );
 
       const [stdout, stderr, exitCode] = yield* Effect.all(
         [
@@ -534,7 +547,12 @@ export const makeClaudeCliTextGeneration = Effect.gen(function* () {
       Effect.flatMap(
         Option.match({
           onNone: () =>
-            Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail: "Title generation timed out." })),
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateThreadTitle",
+                detail: "Title generation timed out.",
+              }),
+            ),
           onSome: (value) => Effect.succeed(value),
         }),
       ),

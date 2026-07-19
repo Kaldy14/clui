@@ -126,12 +126,13 @@ function applyCsiSequence(state: EditableLineState, sequence: string): void {
   if (!final) return;
 
   const body = sequence.slice(2, -1);
-  const params = body.length > 0
-    ? body.split(";").map((part) => {
-        const parsed = Number.parseInt(part, 10);
-        return Number.isFinite(parsed) ? parsed : null;
-      })
-    : [];
+  const params =
+    body.length > 0
+      ? body.split(";").map((part) => {
+          const parsed = Number.parseInt(part, 10);
+          return Number.isFinite(parsed) ? parsed : null;
+        })
+      : [];
   const first = params[0] ?? 1;
   const modifier = params[1] ?? null;
   const wantsWordMotion = modifier === 3 || modifier === 5;
@@ -194,7 +195,7 @@ function applyCsiSequence(state: EditableLineState, sequence: string): void {
 export function reconstructPiPromptLine(rawLine: string): string {
   const state: EditableLineState = { chars: [], cursor: 0 };
 
-  for (let index = 0; index < rawLine.length;) {
+  for (let index = 0; index < rawLine.length; ) {
     const current = rawLine[index];
     if (!current) break;
 

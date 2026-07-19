@@ -12,7 +12,12 @@ import { Readable } from "node:stream";
 
 import { Effect, Layer } from "effect";
 
-import { PtyAdapter, type PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
+import {
+  PtyAdapter,
+  type PtyAdapterShape,
+  type PtyExitEvent,
+  type PtyProcess,
+} from "../Services/PTY";
 
 const PTY_HOST_PATH = new URL("../pty-host.mjs", import.meta.url).pathname;
 

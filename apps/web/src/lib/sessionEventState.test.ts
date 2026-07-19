@@ -351,12 +351,7 @@ describe("createSessionEventState", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleDormant("t1", "exited");
 
-      expect(ctx.deps.setTerminalLifecycle).toHaveBeenCalledWith(
-        "t1",
-        "dormant",
-        null,
-        "exited",
-      );
+      expect(ctx.deps.setTerminalLifecycle).toHaveBeenCalledWith("t1", "dormant", null, "exited");
     });
   });
 

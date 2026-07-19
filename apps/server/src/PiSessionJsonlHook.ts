@@ -6,7 +6,15 @@
  * assistant message exists (`_persist` / `hasAssistant` in @mariozechner/pi-coding-agent).
  * Clui pairs this watcher with `notifyPromptSubmitted` on `pi.write` newlines.
  */
-import { closeSync, existsSync, openSync, readSync, statSync, watch, type FSWatcher } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readSync,
+  statSync,
+  watch,
+  type FSWatcher,
+} from "node:fs";
 import path from "node:path";
 
 import type { ClaudeHookStatus, PiSessionEvent } from "@clui/contracts";

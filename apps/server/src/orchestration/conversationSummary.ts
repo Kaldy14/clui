@@ -15,9 +15,7 @@ export function buildConversationSummary(
 ): string | undefined {
   if (messages.length === 0) return undefined;
 
-  const lines: string[] = [
-    "[Prior conversation context - session was interrupted]",
-  ];
+  const lines: string[] = ["[Prior conversation context - session was interrupted]"];
 
   let charCount = lines[0]!.length;
   let turnIndex = 0;
@@ -28,9 +26,7 @@ export function buildConversationSummary(
 
     const role = msg.role;
     const maxChars = role === "user" ? MAX_USER_CHARS : MAX_ASSISTANT_CHARS;
-    const truncated = msg.text.length > maxChars
-      ? msg.text.slice(0, maxChars) + "..."
-      : msg.text;
+    const truncated = msg.text.length > maxChars ? msg.text.slice(0, maxChars) + "..." : msg.text;
     const line = `Turn ${Math.floor(turnIndex / 2) + 1} (${role}): ${truncated}`;
 
     if (charCount + line.length + 1 > MAX_SUMMARY_CHARS) break;

@@ -15,6 +15,7 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 ## Requirements Summary
 
 ### Must Have (MVP)
+
 1. Project sidebar with nested threads (kept from t3code as-is)
 2. Each thread renders a full-screen xterm.js terminal instead of a chat view
 3. Threads spawn `claude` CLI via node-pty in the thread's worktree/branch cwd
@@ -26,17 +27,20 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 9. Git operations: commit, push, PR flow (kept from t3code)
 
 ### Should Have
+
 10. Terminal theming (inherit from system or configurable)
 11. Copy/paste, find-in-terminal, URL detection
 12. Thread status detection from terminal output (working/idle/waiting)
 13. Split terminal view (multiple threads visible)
 
 ### Could Have
+
 14. Import existing Claude sessions from `~/.claude/` into threads
 15. Quick command palette for common actions
 16. Terminal scrollback search across threads
 
 ### Future (Post-MVP)
+
 17. Expand harness support beyond Claude Code and pi: Codex CLI, GitHub Copilot CLI, Aider, etc.
 18. Broaden the per-thread harness selector beyond the current `claudeCode | pi` choices.
 19. Continue adding harness-specific resume/runtime logic where each CLI has its own session model.
@@ -45,18 +49,18 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 
 ## Acceptance Criteria
 
-| # | Criterion | Verification |
-|---|-----------|--------------|
-| AC1 | Creating a new thread and typing a message spawns `claude` in the correct worktree cwd | `ps aux \| grep claude` shows process with expected cwd |
-| AC2 | Switching threads preserves the previous thread's PTY process | Switch away and back; terminal state is identical, process PID unchanged |
-| AC3 | Dormant threads display saved scrollback as read-only | Kill PTY manually; thread shows static scrollback with "Resume" button |
-| AC4 | Clicking "Resume" on dormant thread runs `claude --resume <id>` | New PTY spawns with `--resume` flag; conversation continues from last point |
-| AC5 | Closing app with 10 active terminals saves all scrollback | Relaunch; all threads show scrollback, zero PTYs running until user clicks in |
-| AC6 | Exceeding max terminals (default 12) hibernates LRU thread | Open 13 threads; oldest untouched thread auto-hibernates |
-| AC7 | Branch toolbar works: create branch, switch, create worktree | Thread's terminal cwd updates to worktree path |
-| AC8 | Git operations (commit, push, PR) work from sidebar | PR created via sidebar matches the thread's branch |
-| AC9 | Agent SDK code fully removed | No `@anthropic-ai/claude-agent-sdk` in node_modules or imports |
-| AC10 | App starts in < 3 seconds with 200 dormant threads | Measure startup; no PTYs spawned until user interaction |
+| #    | Criterion                                                                              | Verification                                                                  |
+| ---- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| AC1  | Creating a new thread and typing a message spawns `claude` in the correct worktree cwd | `ps aux \| grep claude` shows process with expected cwd                       |
+| AC2  | Switching threads preserves the previous thread's PTY process                          | Switch away and back; terminal state is identical, process PID unchanged      |
+| AC3  | Dormant threads display saved scrollback as read-only                                  | Kill PTY manually; thread shows static scrollback with "Resume" button        |
+| AC4  | Clicking "Resume" on dormant thread runs `claude --resume <id>`                        | New PTY spawns with `--resume` flag; conversation continues from last point   |
+| AC5  | Closing app with 10 active terminals saves all scrollback                              | Relaunch; all threads show scrollback, zero PTYs running until user clicks in |
+| AC6  | Exceeding max terminals (default 12) hibernates LRU thread                             | Open 13 threads; oldest untouched thread auto-hibernates                      |
+| AC7  | Branch toolbar works: create branch, switch, create worktree                           | Thread's terminal cwd updates to worktree path                                |
+| AC8  | Git operations (commit, push, PR) work from sidebar                                    | PR created via sidebar matches the thread's branch                            |
+| AC9  | Agent SDK code fully removed                                                           | No `@anthropic-ai/claude-agent-sdk` in node_modules or imports                |
+| AC10 | App starts in < 3 seconds with 200 dormant threads                                     | Measure startup; no PTYs spawned until user interaction                       |
 
 ---
 
@@ -106,13 +110,13 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 
 **Goal:** Clean fork of t3code, verify it builds, rename.
 
-| Step | Action | Files |
-|------|--------|-------|
-| 0.1 | Fork t3code into `better-claude-cmux` repo | — |
-| 0.2 | Rename package from `@clui/monorepo` to `@clui/monorepo` | `/package.json` (line 2) |
-| 0.3 | Update all `@clui/*` package names to `@clui/*` | `apps/web/package.json`, `apps/server/package.json`, `apps/desktop/package.json`, `packages/contracts/package.json`, `packages/shared/package.json` |
-| 0.4 | Verify build: `bun install && bun run build` | — |
-| 0.5 | Verify dev: `bun run dev` and confirm the existing app runs | — |
+| Step | Action                                                      | Files                                                                                                                                               |
+| ---- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1  | Fork t3code into `better-claude-cmux` repo                  | —                                                                                                                                                   |
+| 0.2  | Rename package from `@clui/monorepo` to `@clui/monorepo`    | `/package.json` (line 2)                                                                                                                            |
+| 0.3  | Update all `@clui/*` package names to `@clui/*`             | `apps/web/package.json`, `apps/server/package.json`, `apps/desktop/package.json`, `packages/contracts/package.json`, `packages/shared/package.json` |
+| 0.4  | Verify build: `bun install && bun run build`                | —                                                                                                                                                   |
+| 0.5  | Verify dev: `bun run dev` and confirm the existing app runs | —                                                                                                                                                   |
 
 ---
 
@@ -124,45 +128,45 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 
 #### 1.1 Delete provider adapters
 
-| File | Action |
-|------|--------|
+| File                                                                 | Action     |
+| -------------------------------------------------------------------- | ---------- |
 | `apps/server/src/provider/Layers/ClaudeCodeAdapter.ts` (~1900 lines) | **Delete** |
-| `apps/server/src/provider/Layers/CodexAdapter.ts` | **Delete** |
-| `apps/server/src/provider/Layers/ProviderAdapterRegistry.ts` | **Delete** |
-| `apps/server/src/provider/Layers/ProviderService.ts` | **Delete** |
-| `apps/server/src/provider/Services/` (entire directory) | **Delete** |
-| `apps/server/src/provider/` (entire directory if empty after above) | **Delete** |
+| `apps/server/src/provider/Layers/CodexAdapter.ts`                    | **Delete** |
+| `apps/server/src/provider/Layers/ProviderAdapterRegistry.ts`         | **Delete** |
+| `apps/server/src/provider/Layers/ProviderService.ts`                 | **Delete** |
+| `apps/server/src/provider/Services/` (entire directory)              | **Delete** |
+| `apps/server/src/provider/` (entire directory if empty after above)  | **Delete** |
 
 #### 1.2 Remove SDK dependency
 
-| File | Action |
-|------|--------|
-| `apps/server/package.json` line 25 | Remove `@anthropic-ai/claude-agent-sdk` |
-| Run `bun install` to clean lockfile | — |
+| File                                | Action                                  |
+| ----------------------------------- | --------------------------------------- |
+| `apps/server/package.json` line 25  | Remove `@anthropic-ai/claude-agent-sdk` |
+| Run `bun install` to clean lockfile | —                                       |
 
 #### 1.3 Clean up contracts
 
-| File | Action |
-|------|--------|
-| `packages/contracts/src/orchestration.ts` line 34 | Remove `ProviderKind` schema or replace with simple string literal |
-| `packages/contracts/src/orchestration.ts` line 49 | Remove `DEFAULT_PROVIDER_KIND` |
-| `packages/contracts/src/provider.ts` | **Delete** or gut — remove all SDK-specific types |
+| File                                                    | Action                                                                                                                                                                                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/orchestration.ts` line 34       | Remove `ProviderKind` schema or replace with simple string literal                                                                                                                                                         |
+| `packages/contracts/src/orchestration.ts` line 49       | Remove `DEFAULT_PROVIDER_KIND`                                                                                                                                                                                             |
+| `packages/contracts/src/provider.ts`                    | **Delete** or gut — remove all SDK-specific types                                                                                                                                                                          |
 | `packages/contracts/src/orchestration.ts` lines 483-608 | Remove provider-specific commands: `thread.message.assistant.delta`, `thread.message.assistant.complete`, `thread.proposed-plan.upsert`, `thread.turn.diff.complete`, `thread.activity.append`, `thread.turn.usage.update` |
 
 #### 1.4 Remove chat UI components
 
-| File | Action |
-|------|--------|
-| `apps/web/src/components/ChatView.tsx` (or similar) | **Delete** |
-| `apps/web/src/components/Composer*.tsx` | **Delete** (the message input composer) |
-| `apps/web/src/composerDraftStore.ts` | **Delete** |
-| `apps/web/src/components/DiffPanel.tsx` | **Keep** (useful for viewing git diffs) |
-| `apps/web/src/components/Message*.tsx` | **Delete** (chat message renderers) |
+| File                                                | Action                                  |
+| --------------------------------------------------- | --------------------------------------- |
+| `apps/web/src/components/ChatView.tsx` (or similar) | **Delete**                              |
+| `apps/web/src/components/Composer*.tsx`             | **Delete** (the message input composer) |
+| `apps/web/src/composerDraftStore.ts`                | **Delete**                              |
+| `apps/web/src/components/DiffPanel.tsx`             | **Keep** (useful for viewing git diffs) |
+| `apps/web/src/components/Message*.tsx`              | **Delete** (chat message renderers)     |
 
 #### 1.5 Stub the thread route
 
-| File | Action |
-|------|--------|
+| File                                      | Action                                                                |
+| ----------------------------------------- | --------------------------------------------------------------------- |
 | `apps/web/src/routes/_chat.$threadId.tsx` | Replace `ChatView` with a placeholder `<div>Terminal goes here</div>` |
 
 **Checkpoint:** App builds, sidebar works, clicking a thread shows placeholder.
@@ -194,15 +198,15 @@ INSERT OR IGNORE INTO terminal_settings (key, value) VALUES ('max_active_termina
 
 #### 2.2 Update contracts
 
-| File | Action |
-|------|--------|
+| File                                                                       | Action                                                                                             |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `packages/contracts/src/orchestration.ts` `OrchestrationThread` (line 295) | Add fields: `claudeSessionId: string \| null`, `terminalStatus: "new" \| "active" \| "dormant"` ✅ |
-| Old fields (`session`, `proposedPlans`, `activities`, `checkpoints`) | **Kept** — still actively used by projector, CheckpointReactor, and persistence layers |
+| Old fields (`session`, `proposedPlans`, `activities`, `checkpoints`)       | **Kept** — still actively used by projector, CheckpointReactor, and persistence layers             |
 
 #### 2.3 Update projection queries
 
-| File | Action |
-|------|--------|
+| File                                           | Action                                                            |
+| ---------------------------------------------- | ----------------------------------------------------------------- |
 | `apps/server/src/persistence/Layers/Sqlite.ts` | Update thread SELECT/INSERT/UPDATE queries to include new columns |
 
 **Checkpoint:** App builds, migration runs, new columns exist.
@@ -220,41 +224,42 @@ Create `apps/server/src/terminal/Layers/TerminalSessionManager.ts`:
 ```typescript
 // Effect service that manages PTY processes for threads
 interface TerminalSession {
-  threadId: ThreadId
-  pty: IPty                    // node-pty process
-  claudeSessionId: string | null  // captured from claude CLI output
-  lastInteractedAt: number     // for LRU eviction
-  scrollbackBuffer: string     // accumulated terminal output
+  threadId: ThreadId;
+  pty: IPty; // node-pty process
+  claudeSessionId: string | null; // captured from claude CLI output
+  lastInteractedAt: number; // for LRU eviction
+  scrollbackBuffer: string; // accumulated terminal output
 }
 
 interface TerminalSessionManager {
   // Spawn claude CLI in cwd, optionally with --resume
-  startSession(threadId: ThreadId, cwd: string, resumeSessionId?: string): Effect<void>
+  startSession(threadId: ThreadId, cwd: string, resumeSessionId?: string): Effect<void>;
 
   // Capture scrollback, kill PTY
-  hibernateSession(threadId: ThreadId): Effect<string> // returns scrollback
+  hibernateSession(threadId: ThreadId): Effect<string>; // returns scrollback
 
   // Get live or saved scrollback
-  getScrollback(threadId: ThreadId): Effect<string | null>
+  getScrollback(threadId: ThreadId): Effect<string | null>;
 
   // Write to PTY stdin (user input from xterm.js)
-  writeToSession(threadId: ThreadId, data: string): Effect<void>
+  writeToSession(threadId: ThreadId, data: string): Effect<void>;
 
   // Subscribe to PTY output (for streaming to xterm.js)
-  onSessionOutput(threadId: ThreadId, callback: (data: string) => void): Effect<void>
+  onSessionOutput(threadId: ThreadId, callback: (data: string) => void): Effect<void>;
 
   // Evict LRU sessions when over cap
-  reconcileActiveSessions(): Effect<void>
+  reconcileActiveSessions(): Effect<void>;
 
   // Get session status
-  getSessionStatus(threadId: ThreadId): Effect<"new" | "active" | "dormant">
+  getSessionStatus(threadId: ThreadId): Effect<"new" | "active" | "dormant">;
 
   // Hibernate all (for app shutdown)
-  hibernateAll(): Effect<void>
+  hibernateAll(): Effect<void>;
 }
 ```
 
 **Key behaviors:**
+
 - `startSession` builds the command: `claude` (new) or `claude --resume <id>` (resume)
 - PTY output is buffered in `scrollbackBuffer` (ring buffer, max ~500KB per session)
 - `hibernateSession` captures the buffer, writes to SQLite, kills the PTY process
@@ -264,6 +269,7 @@ interface TerminalSessionManager {
 #### 3.2 Reuse existing terminal infrastructure
 
 t3code already has terminal support:
+
 - `apps/server/src/terminal/Services/PTY.ts` — PTY adapter service contract
 - `apps/server/src/terminal/Layers/NodePtyAdapter.ts` — node-pty integration
 
@@ -271,11 +277,12 @@ t3code already has terminal support:
 
 #### 3.3 Wire into WebSocket server
 
-| File | Action |
-|------|--------|
+| File                          | Action                                                                                                                                                           |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/server/src/wsServer.ts` | Add new WebSocket message types: `terminal.start`, `terminal.write`, `terminal.output` (push), `terminal.resize`, `terminal.hibernate`, `terminal.getScrollback` |
 
 The transport protocol:
+
 - **Client → Server:** `terminal.start { threadId, cwd, resumeSessionId? }`, `terminal.write { threadId, data }`, `terminal.resize { threadId, cols, rows }`
 - **Server → Client (push):** `terminal.output { threadId, data }`, `terminal.status { threadId, status }`, `terminal.sessionId { threadId, claudeSessionId }`
 
@@ -330,6 +337,7 @@ Create `apps/web/src/components/ActiveTerminalView.tsx`:
 - On re-mount (switch back): reattach xterm.js, replay any buffered output while detached
 
 **xterm.js instance management:**
+
 - Keep a `Map<ThreadId, Terminal>` in a Zustand store or module-level cache
 - When switching threads, detach the old `Terminal` from its DOM container (don't dispose it)
 - When switching back, reattach — instant, no re-render needed
@@ -354,27 +362,28 @@ Create `apps/web/src/components/NewThreadView.tsx`:
 
 #### 4.5 Wire into route
 
-| File | Action |
-|------|--------|
+| File                                      | Action                                       |
+| ----------------------------------------- | -------------------------------------------- |
 | `apps/web/src/routes/_chat.$threadId.tsx` | Replace `ChatView` with `ThreadTerminalView` |
-| Keep | `DiffPanel` (inline sidebar for git diffs) |
-| Keep | `BranchToolbar` at the top |
+| Keep                                      | `DiffPanel` (inline sidebar for git diffs)   |
+| Keep                                      | `BranchToolbar` at the top                   |
 
 #### 4.6 Update sidebar status pills
 
-| File | Action |
-|------|--------|
+| File                                       | Action                                               |
+| ------------------------------------------ | ---------------------------------------------------- |
 | `apps/web/src/components/Sidebar.logic.ts` | Update `getThreadStatusPill` to use `terminalStatus` |
 
 New status mapping:
+
 - `"new"` → no pill (or gray "New")
 - `"active"` → green pulsing "Running"
 - `"dormant"` → gray "Paused"
 
 #### 4.7 Add xterm addons
 
-| File | Action |
-|------|--------|
+| File                    | Action                                                                    |
+| ----------------------- | ------------------------------------------------------------------------- |
 | `apps/web/package.json` | Add `@xterm/addon-webgl`, `@xterm/addon-search`, `@xterm/addon-web-links` |
 
 **Checkpoint:** Click thread → see terminal → type → claude responds. Switch threads preserved. Dormant threads show scrollback.
@@ -396,25 +405,30 @@ New status mapping:
 All lifecycle features implemented and verified.
 
 #### 5.1 LRU eviction ✅
+
 - `lastInteractedAt` tracked on every `writeToSession` and `startSession`
 - `reconcileActiveSessions()` called fire-and-forget after each `startSession` (max 10, configurable)
 - Over cap: sort by `lastInteractedAt`, hibernate oldest
 - `terminal.status` pushed to client via orchestration events
 
 #### 5.2 Graceful shutdown ✅
+
 - `hibernateAll()` runs before closing WebSocket connections (sequential ordering)
 - Each session: capture scrollback → persist via orchestration → kill PTY (SIGTERM → 1s → SIGKILL)
 - 5 second timeout on hibernateAll, then force-kill remaining PTYs
 
 #### 5.3 Startup behavior ✅
+
 - All threads with `terminal_status = 'active'` set to `'dormant'` on startup (preserves `claudeSessionId` and `scrollbackSnapshot`)
 - Zero PTYs spawn until user interacts
 
 #### 5.4 Thread deletion cleanup ✅
+
 - `destroySession(threadId)` — kills PTY, removes from map, no lifecycle events emitted
 - Wired into `thread.delete` command dispatch in wsServer
 
 #### 5.5 Session ID reliability fix ✅
+
 - **Bug:** Regex extraction of session ID from Claude CLI output never worked (Claude Code doesn't print session IDs in parseable text)
 - **Fix:** Generate UUID via `crypto.randomUUID()`, pass `--session-id <uuid>` for new sessions, `--resume <uuid>` for resumes
 - Session ID known upfront, emitted immediately after spawn — no async extraction needed
@@ -429,6 +443,7 @@ All lifecycle features implemented and verified.
 All Phase 6 features implemented and verified.
 
 #### 6.1 Terminal theming ✅
+
 - Dark/light theme already synced via `lib/terminalTheme.ts`
 - Font size and font family now configurable via app settings
 - `claudeTerminalCache.ts` reads `terminalFontSize` / `terminalFontFamily` from `appSettings`
@@ -436,13 +451,13 @@ All Phase 6 features implemented and verified.
 
 #### 6.2 Keyboard shortcuts ✅
 
-| Shortcut | Action | Implementation |
-|----------|--------|----------------|
-| `Cmd+N` | New thread in current project | Already wired (`chat.new`) |
-| `Cmd+W` | Hibernate current thread | New `claude.hibernate` command |
-| `Cmd+1-9` | Switch to thread by index | Direct handler in `_chat.tsx` |
-| `Cmd+Shift+]` / `[` | Next/prev thread | New `thread.next` / `thread.prev` commands |
-| `Cmd+K` | Quick thread search/switch | Already wired (`thread.search`) |
+| Shortcut            | Action                        | Implementation                             |
+| ------------------- | ----------------------------- | ------------------------------------------ |
+| `Cmd+N`             | New thread in current project | Already wired (`chat.new`)                 |
+| `Cmd+W`             | Hibernate current thread      | New `claude.hibernate` command             |
+| `Cmd+1-9`           | Switch to thread by index     | Direct handler in `_chat.tsx`              |
+| `Cmd+Shift+]` / `[` | Next/prev thread              | New `thread.next` / `thread.prev` commands |
+| `Cmd+K`             | Quick thread search/switch    | Already wired (`thread.search`)            |
 
 - Added 3 new keybinding commands to contracts: `claude.hibernate`, `thread.next`, `thread.prev`
 - Added default bindings in server keybindings
@@ -450,6 +465,7 @@ All Phase 6 features implemented and verified.
 - Wired all shortcuts in `_chat.tsx` ChatRouteLayout
 
 #### 6.3 Terminal toolbar ✅
+
 - New `TerminalToolbar` component with:
   - Editable thread title (click to rename, commits via `thread.meta.update`)
   - Branch name badge with git branch icon
@@ -460,10 +476,12 @@ All Phase 6 features implemented and verified.
 - Wired into `_chat.$threadId.tsx` above `ThreadTerminalView`
 
 #### 6.4 Git integration ✅
+
 - `BranchToolbar.tsx` — hibernates active claude terminal when branch/worktree changes
 - Terminal restarts in new cwd on next user interaction
 
 #### 6.5 Settings ✅
+
 - Added `terminalFontSize` (8-32px, default 13) and `terminalFontFamily` to `appSettings`
 - Terminal settings section in Settings page with live preview
 - Reset to defaults button
@@ -475,14 +493,17 @@ All Phase 6 features implemented and verified.
 +45 new tests across unit and integration layers.
 
 #### Unit tests ✅
+
 - `terminalUtils.test.ts` (NEW) — 30 tests for `capHistory`, `shouldExcludeEnvKey`, `createSpawnEnv`, `runWithThreadLock`, `assertValidCwd`
 - `keybindings.test.ts` — 9 new tests for `isClaudeHibernateShortcut`, `isThreadNextShortcut`, `isThreadPrevShortcut`
 - `ClaudeSessionManager.test.ts` — 33 tests (already existed from Phase 3)
 
 #### Integration tests ✅
+
 - `wsServer.test.ts` — 6 new tests for claude session WS routes (`claude.start`, `claude.hibernate`, `claude.getScrollback`, `claude.write`, `claude.resize`, resume flow)
 
 #### E2E tests (Playwright) — deferred
+
 - Requires full app stack with real PTYs; better suited for CI with container isolation
 - Unit + integration coverage validates all critical paths
 
@@ -493,6 +514,7 @@ All Phase 6 features implemented and verified.
 **Goal:** Use Claude Code's `--settings` hooks to drive rich sidebar badges — replace terminal output parsing with structured hook callbacks.
 
 **Reference:** Take heavy inspiration from `../cmux` which implements this pattern well. Key cmux files:
+
 - `Resources/bin/claude` — wrapper that injects `--settings` with hook JSON and `--session-id`
 - `CLI/cmux.swift` (lines 8450-8867) — hook handler: `session-start`, `stop`, `notification` subcommands
 - `CLI/cmux.swift` (lines 238-303) — `ClaudeHookSessionStore` for session→workspace mapping with 7-day retention
@@ -505,42 +527,78 @@ Claude Code CLI supports `--settings <path>` which accepts a JSON file defining 
 
 #### 8.1 Hook settings injection
 
-| File | Action |
-|------|--------|
+| File                                                      | Action                                                                                                                                                            |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | Generate per-session hook settings JSON and pass `--settings <path>` when spawning claude. Also inject `--session-id <uuid>` for session tracking (as cmux does). |
 
 Settings JSON structure (mirroring cmux's `HOOKS_JSON`):
+
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "curl -s http://localhost:$PORT/hooks/session-start?thread=$THREAD_ID", "timeout": 10 }] }],
-    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "curl -s http://localhost:$PORT/hooks/stop?thread=$THREAD_ID", "timeout": 10 }] }],
-    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "curl -s http://localhost:$PORT/hooks/notification?thread=$THREAD_ID", "timeout": 10 }] }]
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s http://localhost:$PORT/hooks/session-start?thread=$THREAD_ID",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s http://localhost:$PORT/hooks/stop?thread=$THREAD_ID",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s http://localhost:$PORT/hooks/notification?thread=$THREAD_ID",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
 Key details from cmux:
+
 - Clear `CLAUDECODE` env var to prevent nested session detection
 - Timeout hooks (10s) to avoid blocking Claude startup
 - Verify server is reachable before injecting hooks (graceful degradation if not)
 
 #### 8.2 Hook receiver endpoint
 
-| File | Action |
-|------|--------|
-| `apps/server/src/hooks/hookReceiver.ts` (NEW) | Lightweight HTTP handler for hook callbacks |
-| `apps/server/src/server.ts` | Register hook routes on the existing HTTP server |
+| File                                          | Action                                           |
+| --------------------------------------------- | ------------------------------------------------ |
+| `apps/server/src/hooks/hookReceiver.ts` (NEW) | Lightweight HTTP handler for hook callbacks      |
+| `apps/server/src/server.ts`                   | Register hook routes on the existing HTTP server |
 
 Endpoint receives hook events, maps them to thread IDs, and emits internal events. Reuse cmux's notification classification logic:
+
 - Parse notification JSON for event type, message, nested data
 - Classify: "Permission/Approve/Approval" → Permission, "Error/Failed/Exception" → Error, "Idle/Wait/Input/Prompt" → Waiting, default → Attention
 - Truncate notification body to 180 chars
 
 #### 8.3 Session-to-thread mapping store
 
-| File | Action |
-|------|--------|
+| File                                              | Action                                                                                                                      |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `apps/server/src/hooks/hookSessionStore.ts` (NEW) | Map `sessionId → { threadId, surfaceId, startedAt, updatedAt, lastSubtitle }` (inspired by cmux's `ClaudeHookSessionStore`) |
 
 - Persist to SQLite (or JSON file like cmux's `claude-hook-sessions.json`)
@@ -549,17 +607,18 @@ Endpoint receives hook events, maps them to thread IDs, and emits internal event
 
 #### 8.4 New ClaudeSessionEvent types
 
-| File | Action |
-|------|--------|
+| File                                 | Action                                                                                                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/contracts/src/terminal.ts` | Add hook-derived event types: `claude.working`, `claude.needsInput`, `claude.pendingApproval`, `claude.completed`, `claude.error`, `claude.notification` |
 
 #### 8.5 Wire hooks into sidebar badge system
 
-| File | Action |
-|------|--------|
+| File                               | Action                                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------------------------- |
 | `apps/web/src/lib/threadStatus.ts` | Map hook events to badge types with icons and colors (inspired by cmux's `set_status`) |
 
 Badge mapping (mirroring cmux's status icons/colors):
+
 - `SessionStart` → "Working" (bolt icon, blue, pulsing)
 - `Notification` (needs input) → "Needs Input" (bell icon, amber)
 - `Notification` (pending approval) → "Pending Approval" (amber)
@@ -570,11 +629,12 @@ Badge mapping (mirroring cmux's status icons/colors):
 
 #### 8.6 OS-level notifications
 
-| File | Action |
-|------|--------|
+| File                                           | Action                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `apps/server/src/hooks/notifications.ts` (NEW) | Forward hook events as OS notifications (Notification API in web, native in Electron) |
 
 Reuse cmux's notification routing pattern:
+
 - Route notifications to the correct thread/tab
 - Show OS notification when thread is not in focus
 - Custom notification sound support (future)
@@ -595,32 +655,34 @@ Reuse cmux's notification routing pattern:
 
 #### 9.1 Capture initial prompt text
 
-| File | Action |
-|------|--------|
+| File                                                      | Action                                                                                                                                                    |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/server/src/terminal/Layers/ClaudeSessionManager.ts` | After session starts, watch the first chunk of terminal output for the user's initial prompt (the text after the Claude banner before the first response) |
 
 Two approaches (try in order):
+
 1. **Parse terminal output:** After the Claude Code banner renders, the next user input line is the initial prompt. Capture it from PTY output.
 2. **Use hook data:** If `SessionStart` hook provides context about the prompt, extract it there.
 
 #### 9.2 Title generation
 
-| File | Action |
-|------|--------|
+| File                                               | Action                                         |
+| -------------------------------------------------- | ---------------------------------------------- |
 | `apps/server/src/terminal/titleGenerator.ts` (NEW) | Generate a short title from the initial prompt |
 
 Strategies (cheapest first):
+
 1. **Truncate:** First 60 chars of the prompt, cleaned up (strip newlines, trim)
 2. **AI summary:** If an API key is available, call Claude Haiku to generate a 3-6 word title from the prompt (fire-and-forget, don't block the session)
 3. **Fallback:** If no prompt captured within 30s, keep the default name
 
 #### 9.3 Push title update to sidebar
 
-| File | Action |
-|------|--------|
-| `packages/contracts/src/terminal.ts` | Add `terminal.titleUpdate` push event: `{ threadId, title }` |
-| `apps/server/src/wsServer.ts` | Emit `terminal.titleUpdate` when title is generated |
-| `apps/web/src/components/Sidebar/` | Handle `terminal.titleUpdate` — update thread name in real-time |
+| File                                 | Action                                                          |
+| ------------------------------------ | --------------------------------------------------------------- |
+| `packages/contracts/src/terminal.ts` | Add `terminal.titleUpdate` push event: `{ threadId, title }`    |
+| `apps/server/src/wsServer.ts`        | Emit `terminal.titleUpdate` when title is generated             |
+| `apps/web/src/components/Sidebar/`   | Handle `terminal.titleUpdate` — update thread name in real-time |
 
 #### 9.4 Allow manual override
 
@@ -637,6 +699,7 @@ Strategies (cheapest first):
 **Goal:** Bring back t3code's git workflow that was lost during the refactor — branch/worktree selection on new thread creation, and the action toolbar for commit/push/PR.
 
 **Reference:** Research `../t3code` extensively before implementing. The original repo has the full git workflow UI — branch picker, worktree creation, commit/push/PR toolbar, and recent actions. Key areas to study:
+
 - `apps/web/src/components/` — look for BranchToolbar, GitToolbar, NewThread, worktree picker components
 - `apps/web/src/lib/` — git-related hooks and state management
 - `apps/server/src/git/` — server-side git RPC handlers and worktree management
@@ -646,11 +709,12 @@ t3code had a great git workflow: when creating a new thread, you could choose be
 
 #### 10.1 New thread creation flow — branch/worktree picker
 
-| File | Action |
-|------|--------|
+| File                                        | Action                                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------- |
 | `apps/web/src/components/NewThreadView.tsx` | Restore branch/worktree selection UI from t3code's thread creation flow |
 
 New thread creation should offer:
+
 - **Local:** Run in the project's main directory (current branch)
 - **Worktree:** Create a new worktree from a selected branch
 - Branch picker dropdown (list local + remote branches)
@@ -659,11 +723,12 @@ New thread creation should offer:
 
 #### 10.2 Git action toolbar
 
-| File | Action |
-|------|--------|
+| File                                                                  | Action                              |
+| --------------------------------------------------------------------- | ----------------------------------- |
 | `apps/web/src/components/GitToolbar.tsx` (NEW or restore from t3code) | Top toolbar with git action buttons |
 
 Toolbar buttons:
+
 - **Commit** — Opens commit dialog (staged changes summary, message input)
 - **Push** — Push current branch to remote
 - **Create PR** — Opens PR creation flow (title, description, base branch)
@@ -672,8 +737,8 @@ Toolbar buttons:
 
 #### 10.3 Recent actions / activity feed
 
-| File | Action |
-|------|--------|
+| File                                                         | Action                                                    |
+| ------------------------------------------------------------ | --------------------------------------------------------- |
 | `apps/web/src/components/RecentActions.tsx` (NEW or restore) | Show recent git actions (commits, pushes, PRs) per thread |
 
 - Compact list of recent operations with timestamps
@@ -682,17 +747,17 @@ Toolbar buttons:
 
 #### 10.4 Wire git operations to thread context
 
-| File | Action |
-|------|--------|
+| File                   | Action                                                              |
+| ---------------------- | ------------------------------------------------------------------- |
 | `apps/server/src/git/` | Ensure all git RPC methods respect the thread's cwd (worktree path) |
-| `apps/web/src/lib/` | Git operation hooks pass the active thread's worktree cwd |
+| `apps/web/src/lib/`    | Git operation hooks pass the active thread's worktree cwd           |
 
 Key: Every git operation must run in the context of the thread's worktree, not the project root. t3code already had this wiring — restore it.
 
 #### 10.5 Branch toolbar integration with terminal
 
-| File | Action |
-|------|--------|
+| File                                        | Action                                                       |
+| ------------------------------------------- | ------------------------------------------------------------ |
 | `apps/web/src/components/BranchToolbar.tsx` | Ensure branch switching restarts the terminal in the new cwd |
 
 - Switching branches updates the thread's cwd
@@ -705,15 +770,15 @@ Key: Every git operation must run in the context of the thread's worktree, not t
 
 ## Risks and Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Claude CLI session ID format changes | Resume breaks | Also store session path from `~/.claude/projects/`; fall back to fresh start |
-| xterm.js memory leak with many cached instances | Memory grows | ✅ **Solved:** LRU cap (50), 2-hour idle sweep, WebGL disposal on detach. Busy threads protected from eviction. |
-| WebGL GPU context exhaustion (~16 limit) | New terminals fall back to canvas | ✅ **Solved:** WebGL addon disposed on detach, re-created on attach. Only the active terminal holds a GPU context. |
-| PTY scrollback buffer grows unbounded | Memory grows | Ring buffer with 5,000-line cap per session (server-side) |
-| node-pty Electron version mismatch | Build breaks | Use `electron-rebuild`; pin node-pty version |
-| Claude CLI not installed | App useless | Check PATH on startup; show install instructions |
-| WebSocket disconnect during session | Lost output | Buffer server-side; replay on reconnect |
+| Risk                                            | Impact                            | Mitigation                                                                                                         |
+| ----------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Claude CLI session ID format changes            | Resume breaks                     | Also store session path from `~/.claude/projects/`; fall back to fresh start                                       |
+| xterm.js memory leak with many cached instances | Memory grows                      | ✅ **Solved:** LRU cap (50), 2-hour idle sweep, WebGL disposal on detach. Busy threads protected from eviction.    |
+| WebGL GPU context exhaustion (~16 limit)        | New terminals fall back to canvas | ✅ **Solved:** WebGL addon disposed on detach, re-created on attach. Only the active terminal holds a GPU context. |
+| PTY scrollback buffer grows unbounded           | Memory grows                      | Ring buffer with 5,000-line cap per session (server-side)                                                          |
+| node-pty Electron version mismatch              | Build breaks                      | Use `electron-rebuild`; pin node-pty version                                                                       |
+| Claude CLI not installed                        | App useless                       | Check PATH on startup; show install instructions                                                                   |
+| WebSocket disconnect during session             | Lost output                       | Buffer server-side; replay on reconnect                                                                            |
 
 ---
 
@@ -733,18 +798,18 @@ Key: Every git operation must run in the context of the thread's worktree, not t
 
 ## Timeline
 
-| Phase | Scope | Duration |
-|-------|-------|----------|
-| 0 | Fork & Setup ✅ | Day 1 |
-| 1 | Delete Agent SDK ✅ | Day 1-2 |
-| 2 | Database Schema ✅ | Day 2 |
-| 3 | TerminalSessionManager (server) ✅ | Day 2-4 |
-| 4 | Terminal UI (client) | Day 4-6 |
-| 5 | Lifecycle Management | Day 6-7 |
-| 6 | Polish & Integration | Day 7-9 |
-| 7 | Testing & Hardening | Day 9-10 |
-| 8 | Claude Code Hooks (Badge System) ✅ | Day 10-12 |
-| 9 | Auto-Generate Thread Titles ✅ | Day 12-13 |
-| 10 | Restore Git Workflow UI | Day 13-16 |
+| Phase | Scope                               | Duration  |
+| ----- | ----------------------------------- | --------- |
+| 0     | Fork & Setup ✅                     | Day 1     |
+| 1     | Delete Agent SDK ✅                 | Day 1-2   |
+| 2     | Database Schema ✅                  | Day 2     |
+| 3     | TerminalSessionManager (server) ✅  | Day 2-4   |
+| 4     | Terminal UI (client)                | Day 4-6   |
+| 5     | Lifecycle Management                | Day 6-7   |
+| 6     | Polish & Integration                | Day 7-9   |
+| 7     | Testing & Hardening                 | Day 9-10  |
+| 8     | Claude Code Hooks (Badge System) ✅ | Day 10-12 |
+| 9     | Auto-Generate Thread Titles ✅      | Day 12-13 |
+| 10    | Restore Git Workflow UI             | Day 13-16 |
 
 **MVP (Phases 0-5):** ~7 days | **Polished v1:** ~10 days | **Full v1 with hooks:** ~12 days | **Complete v1:** ~16 days

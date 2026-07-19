@@ -26,12 +26,7 @@ import {
   TerminalSessionState,
   TerminalStartInput,
 } from "../Services/Manager";
-import {
-  assertValidCwd,
-  capHistory,
-  createSpawnEnv,
-  runWithThreadLock,
-} from "../terminalUtils";
+import { assertValidCwd, capHistory, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;

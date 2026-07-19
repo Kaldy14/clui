@@ -5,9 +5,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const columns = yield* sql`PRAGMA table_info(projection_threads)`;
-  const columnNames = new Set(
-    (columns as ReadonlyArray<{ name: string }>).map((c) => c.name),
-  );
+  const columnNames = new Set((columns as ReadonlyArray<{ name: string }>).map((c) => c.name));
 
   if (!columnNames.has("last_interacted_at")) {
     // Default to updated_at for existing rows so they keep their current sort order

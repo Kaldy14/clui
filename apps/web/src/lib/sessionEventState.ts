@@ -5,7 +5,10 @@ export interface SessionEventDeps {
   getThreadHookStatus: (rawId: string) => ClaudeHookStatus | null | undefined;
   getThreadTerminalStatus: (rawId: string) => TerminalStatus | undefined;
   /** Combined lookup — returns both hookStatus and terminalStatus in a single store read. */
-  getThreadState?: (rawId: string) => { hookStatus: ClaudeHookStatus | null | undefined; terminalStatus: TerminalStatus | undefined };
+  getThreadState?: (rawId: string) => {
+    hookStatus: ClaudeHookStatus | null | undefined;
+    terminalStatus: TerminalStatus | undefined;
+  };
   setHookStatus: (rawId: string, status: ClaudeHookStatus | null) => void;
   setTerminalStatus: (rawId: string, status: TerminalStatus) => void;
   setTerminalLifecycle: (
@@ -56,9 +59,7 @@ export interface SessionEventState {
  * Result from handleHookStatus — tells the caller whether the hook was applied
  * and what the new status is, so the caller can dispatch notifications.
  */
-export type HandleHookResult =
-  | { applied: true; hookStatus: ClaudeHookStatus }
-  | { applied: false };
+export type HandleHookResult = { applied: true; hookStatus: ClaudeHookStatus } | { applied: false };
 
 /** Matches Claude Code API error lines (529 overloaded, 429 rate-limit, 5xx server errors). */
 const API_ERROR_RE = /API Error: (?:429|5\d{2})\b/;
@@ -106,7 +107,11 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
 
   const now = deps.now ?? Date.now;
 
-  const resetWorkingIdleTimer = (rawThreadId: string, force = false, knownHookStatus?: ClaudeHookStatus | null | undefined) => {
+  const resetWorkingIdleTimer = (
+    rawThreadId: string,
+    force = false,
+    knownHookStatus?: ClaudeHookStatus | null | undefined,
+  ) => {
     if (!force) {
       const lastReset = workingIdleLastReset.get(rawThreadId) ?? 0;
       if (now() - lastReset < IDLE_TIMER_RESET_THROTTLE_MS) return;
@@ -114,7 +119,8 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     workingIdleLastReset.set(rawThreadId, now());
     const existing = workingIdleTimers.get(rawThreadId);
     if (existing) clearTimeout(existing);
-    const hookStatus = knownHookStatus !== undefined ? knownHookStatus : deps.getThreadHookStatus(rawThreadId);
+    const hookStatus =
+      knownHookStatus !== undefined ? knownHookStatus : deps.getThreadHookStatus(rawThreadId);
     if (hookStatus !== "working") return;
     workingIdleTimers.set(
       rawThreadId,
@@ -253,7 +259,10 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleOutput(rawThreadId: string, data: string): void {
     const threadState = deps.getThreadState
       ? deps.getThreadState(rawThreadId)
-      : { hookStatus: deps.getThreadHookStatus(rawThreadId), terminalStatus: deps.getThreadTerminalStatus(rawThreadId) };
+      : {
+          hookStatus: deps.getThreadHookStatus(rawThreadId),
+          terminalStatus: deps.getThreadTerminalStatus(rawThreadId),
+        };
     const hookStatus = threadState.hookStatus;
     const terminalStatus = threadState.terminalStatus;
 

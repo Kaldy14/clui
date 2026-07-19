@@ -531,9 +531,7 @@ describe("terminalNavigationShortcutData", () => {
   });
 
   it("does not map plain Backspace", () => {
-    assert.isNull(
-      terminalNavigationShortcutData(event({ key: "Backspace" }), "MacIntel"),
-    );
+    assert.isNull(terminalNavigationShortcutData(event({ key: "Backspace" }), "MacIntel"));
   });
 
   it("does not map Option+Backspace", () => {

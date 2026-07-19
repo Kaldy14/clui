@@ -126,10 +126,12 @@ export function BranchToolbarBranchSelector({
   const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
   // Auto-apply branch prefix if the typed query doesn't already contain a slash (e.g. feature/, bugfix/)
   const hasBranchCategoryPrefix = trimmedBranchQuery.includes("/");
-  const prefixedBranchName = canCreateBranch && branchPrefix && !hasBranchCategoryPrefix
-    ? `${branchPrefix}${trimmedBranchQuery}`
-    : trimmedBranchQuery;
-  const hasExactBranchMatch = branchByName.has(trimmedBranchQuery) || branchByName.has(prefixedBranchName);
+  const prefixedBranchName =
+    canCreateBranch && branchPrefix && !hasBranchCategoryPrefix
+      ? `${branchPrefix}${trimmedBranchQuery}`
+      : trimmedBranchQuery;
+  const hasExactBranchMatch =
+    branchByName.has(trimmedBranchQuery) || branchByName.has(prefixedBranchName);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${prefixedBranchName}`
     : null;
@@ -209,7 +211,6 @@ export function BranchToolbarBranchSelector({
 
     setIsBranchMenuOpen(false);
 
-
     runBranchAction(async () => {
       setOptimisticBranch(selectedBranchName);
       try {
@@ -243,7 +244,6 @@ export function BranchToolbarBranchSelector({
     if (!api || !branchCwd || !name || isBranchActionPending) return;
 
     setIsBranchMenuOpen(false);
-
 
     runBranchAction(async () => {
       setOptimisticBranch(name);
@@ -365,7 +365,7 @@ export function BranchToolbarBranchSelector({
             }
             setIsBranchMenuOpen(false);
             setBranchQuery("");
-      
+
             onCheckoutPullRequestRequest(prReference);
           }}
         >

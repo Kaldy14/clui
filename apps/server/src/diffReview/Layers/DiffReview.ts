@@ -131,7 +131,10 @@ function slugFragment(value: string): string {
   return slug.length > 0 ? slug : "change";
 }
 
-function normalizeAnchor(anchor: GeneratedAnchor, fallbackFilePath: string): OrchestrationDiffReviewAnchor {
+function normalizeAnchor(
+  anchor: GeneratedAnchor,
+  fallbackFilePath: string,
+): OrchestrationDiffReviewAnchor {
   const filePath = normalizeReviewFilePath(anchor.filePath ?? fallbackFilePath) || fallbackFilePath;
   return {
     filePath,
@@ -139,25 +142,29 @@ function normalizeAnchor(anchor: GeneratedAnchor, fallbackFilePath: string): Orc
     oldEndLine: normalizeLine(anchor.oldEndLine),
     newStartLine: normalizeLine(anchor.newStartLine),
     newEndLine: normalizeLine(anchor.newEndLine),
-    hunkHeader: anchor.hunkHeader && anchor.hunkHeader.trim().length > 0 ? anchor.hunkHeader.trim() : null,
+    hunkHeader:
+      anchor.hunkHeader && anchor.hunkHeader.trim().length > 0 ? anchor.hunkHeader.trim() : null,
   };
 }
 
 function normalizeChange(change: GeneratedChange, index: number): OrchestrationDiffReviewChange {
-  const filePath = normalizeReviewFilePath(change.filePath || change.anchors[0]?.filePath || "unknown") || "unknown";
+  const filePath =
+    normalizeReviewFilePath(change.filePath || change.anchors[0]?.filePath || "unknown") ||
+    "unknown";
   const title = change.title.trim() || `Review ${filePath}`;
-  const anchors = change.anchors.length > 0
-    ? change.anchors.map((anchor) => normalizeAnchor(anchor, filePath))
-    : [
-        {
-          filePath,
-          oldStartLine: null,
-          oldEndLine: null,
-          newStartLine: null,
-          newEndLine: null,
-          hunkHeader: null,
-        },
-      ];
+  const anchors =
+    change.anchors.length > 0
+      ? change.anchors.map((anchor) => normalizeAnchor(anchor, filePath))
+      : [
+          {
+            filePath,
+            oldStartLine: null,
+            oldEndLine: null,
+            newStartLine: null,
+            newEndLine: null,
+            hunkHeader: null,
+          },
+        ];
 
   return {
     id: `${index + 1}-${slugFragment(filePath)}-${slugFragment(title)}`,
@@ -199,7 +206,10 @@ function emptyReviewResult(input: {
 
 function shouldUseDeterministicReviewFallback(error: DiffReviewError): boolean {
   if (error.operation !== "DiffReview.generateDiffReview") return false;
-  return error.detail.includes("invalid JSON output") || error.detail.includes("invalid structured output");
+  return (
+    error.detail.includes("invalid JSON output") ||
+    error.detail.includes("invalid structured output")
+  );
 }
 
 function significanceForRisk(riskScore: number): OrchestrationDiffReviewChange["significance"] {
@@ -246,7 +256,9 @@ function parseHunkHeaderRange(hunkHeader: string): {
 
 function deterministicAnchors(file: DiffReviewFilePriority): OrchestrationDiffReviewAnchor[] {
   const filePath = normalizeReviewFilePath(file.filePath) || "unknown";
-  const hunkHeaders = file.hunkHeaders.map((value) => value.trim()).filter((value) => value.length > 0);
+  const hunkHeaders = file.hunkHeaders
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
   if (hunkHeaders.length === 0) {
     return [
       {
@@ -271,7 +283,9 @@ function deterministicRiskReasons(file: DiffReviewFilePriority): string[] {
   const lowerPath = file.filePath.toLowerCase();
   const reasons: string[] = [];
 
-  if (/(^|\/)(auth|security|permission|permissions|session|token|oauth)(\/|\.|$)/u.test(lowerPath)) {
+  if (
+    /(^|\/)(auth|security|permission|permissions|session|token|oauth)(\/|\.|$)/u.test(lowerPath)
+  ) {
     reasons.push("Auth, permission, or session path changed.");
   }
   if (/(^|\/)(migrations?|schema|db|database|sql)(\/|\.|$)/u.test(lowerPath)) {
@@ -280,7 +294,11 @@ function deterministicRiskReasons(file: DiffReviewFilePriority): string[] {
   if (/(^|\/)(contracts?|api|routes?|server)(\/|\.|$)/u.test(lowerPath)) {
     reasons.push("Server, route, API, or contract path changed.");
   }
-  if (/(^|\/)(package\.json|bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|package-lock\.json)$/u.test(lowerPath)) {
+  if (
+    /(^|\/)(package\.json|bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|package-lock\.json)$/u.test(
+      lowerPath,
+    )
+  ) {
     reasons.push("Dependency or lockfile changed.");
   }
   if (file.changeType === "new" || file.changeType === "deleted") {
@@ -307,12 +325,16 @@ function deterministicReviewFocus(file: DiffReviewFilePriority): string[] {
   } else if (!isDocumentationFile(file.filePath)) {
     focus.push("Check callers, state, and error paths touched by the change.");
   }
-  if (file.additions + file.deletions > 250) focus.push("Skim structure first, then inspect risky hunks.");
+  if (file.additions + file.deletions > 250)
+    focus.push("Skim structure first, then inspect risky hunks.");
 
   return focus.slice(0, 4);
 }
 
-function deterministicChange(file: DiffReviewFilePriority, index: number): OrchestrationDiffReviewChange {
+function deterministicChange(
+  file: DiffReviewFilePriority,
+  index: number,
+): OrchestrationDiffReviewChange {
   const filePath = normalizeReviewFilePath(file.filePath) || "unknown";
   const significance = significanceForRisk(file.riskScore);
   const title = `${significance === "high" ? "High-risk" : "Review"} changes in ${filePath}`;
@@ -334,14 +356,24 @@ function deterministicOverview(files: ReadonlyArray<DiffReviewFilePriority>): st
   if (files.length === 0) {
     return "Pi output could not be decoded. Showing deterministic diff summary.";
   }
-  const topFiles = files.slice(0, 3).map((file) => file.filePath).join(", ");
+  const topFiles = files
+    .slice(0, 3)
+    .map((file) => file.filePath)
+    .join(", ");
   return `Pi output could not be decoded. Showing deterministic diff-risk ranking; start with ${topFiles}.`;
 }
 
 function deterministicTestFocus(files: ReadonlyArray<DiffReviewFilePriority>): string[] {
-  const runtimeFiles = files.filter((file) => !isTestFile(file.filePath) && !isDocumentationFile(file.filePath));
+  const runtimeFiles = files.filter(
+    (file) => !isTestFile(file.filePath) && !isDocumentationFile(file.filePath),
+  );
   if (runtimeFiles.length === 0) return [];
-  return [`Verify changed behavior in ${runtimeFiles.slice(0, 3).map((file) => file.filePath).join(", ")}.`];
+  return [
+    `Verify changed behavior in ${runtimeFiles
+      .slice(0, 3)
+      .map((file) => file.filePath)
+      .join(", ")}.`,
+  ];
 }
 
 function deterministicReviewResult(input: {
@@ -453,7 +485,8 @@ export const DiffReviewLive = Layer.effect(
         );
 
         if (exitCode !== 0) {
-          const detail = safeProcessDetail(stderr) || safeProcessDetail(stdout, MAX_PI_STDERR_CHARS);
+          const detail =
+            safeProcessDetail(stderr) || safeProcessDetail(stdout, MAX_PI_STDERR_CHARS);
           return yield* diffReviewError(
             input.operation,
             detail.length > 0 ? `pi CLI failed: ${detail}` : `pi CLI failed with code ${exitCode}.`,
@@ -462,7 +495,8 @@ export const DiffReviewLive = Layer.effect(
 
         const parsed = yield* Effect.try({
           try: () => parseJsonCandidate(stdout),
-          catch: (cause) => diffReviewError(input.operation, "pi returned invalid JSON output.", cause),
+          catch: (cause) =>
+            diffReviewError(input.operation, "pi returned invalid JSON output.", cause),
         });
 
         return yield* Schema.decodeEffect(input.outputSchema)(parsed).pipe(
@@ -486,11 +520,17 @@ export const DiffReviewLive = Layer.effect(
 
     const resolveThreadCwd = (threadId: ThreadId): Effect.Effect<string, DiffReviewError> =>
       Effect.gen(function* () {
-        const snapshot = yield* projectionSnapshotQuery.getSnapshot().pipe(
-          Effect.mapError((cause) =>
-            diffReviewError("DiffReview.resolveThreadCwd", "Failed to read projection snapshot.", cause),
-          ),
-        );
+        const snapshot = yield* projectionSnapshotQuery
+          .getSnapshot()
+          .pipe(
+            Effect.mapError((cause) =>
+              diffReviewError(
+                "DiffReview.resolveThreadCwd",
+                "Failed to read projection snapshot.",
+                cause,
+              ),
+            ),
+          );
         const thread = snapshot.threads.find((entry) => entry.id === threadId);
         if (!thread) {
           return yield* diffReviewError(
@@ -522,7 +562,11 @@ export const DiffReviewLive = Layer.effect(
         if (scope.type === "workingTree") {
           const localDiff = yield* collectLocalDiff(cwd).pipe(
             Effect.mapError((cause) =>
-              diffReviewError("DiffReview.workingTreeDiff", "Failed to collect working tree diff.", cause),
+              diffReviewError(
+                "DiffReview.workingTreeDiff",
+                "Failed to collect working tree diff.",
+                cause,
+              ),
             ),
           );
           return {
@@ -563,7 +607,11 @@ export const DiffReviewLive = Layer.effect(
           .getFullThreadDiff({ threadId, toTurnCount: scope.toTurnCount })
           .pipe(
             Effect.mapError((cause) =>
-              diffReviewError("DiffReview.fullThreadDiff", "Failed to collect all-turn diff.", cause),
+              diffReviewError(
+                "DiffReview.fullThreadDiff",
+                "Failed to collect all-turn diff.",
+                cause,
+              ),
             ),
           );
         return {
@@ -611,7 +659,10 @@ export const DiffReviewLive = Layer.effect(
           "- testFocus and followUps: compact, actionable bullets. Use [] when none are warranted.",
         ].join("\n");
 
-        const promptContext = buildDiffReviewPromptContext(context.diffPatch, MAX_PROMPT_DIFF_CHARS);
+        const promptContext = buildDiffReviewPromptContext(
+          context.diffPatch,
+          MAX_PROMPT_DIFF_CHARS,
+        );
         const userPrompt = [
           "<review_input>",
           `<source>${context.sourceLabel}</source>`,

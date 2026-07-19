@@ -6,7 +6,11 @@ import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildDiffReviewPromptContext, collectBranchDiff, rankDiffReviewFiles } from "./DiffCollector.ts";
+import {
+  buildDiffReviewPromptContext,
+  collectBranchDiff,
+  rankDiffReviewFiles,
+} from "./DiffCollector.ts";
 
 const repos: string[] = [];
 
@@ -50,7 +54,12 @@ async function makeRepo(): Promise<string> {
   return repo;
 }
 
-async function commitFile(repo: string, filePath: string, contents: string, message: string): Promise<void> {
+async function commitFile(
+  repo: string,
+  filePath: string,
+  contents: string,
+  message: string,
+): Promise<void> {
   const absolutePath = path.join(repo, filePath);
   await writeFile(absolutePath, contents);
   await git(repo, ["add", filePath]);

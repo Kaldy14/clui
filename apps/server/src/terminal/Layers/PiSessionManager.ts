@@ -13,7 +13,10 @@ import type {
   PiSessionUsageStats,
   TerminalStatus,
 } from "@clui/contracts";
-import { AGENT_ACTIVITY_LABELS, classifyAgentActivityFromPiReason } from "@clui/shared/agentActivity";
+import {
+  AGENT_ACTIVITY_LABELS,
+  classifyAgentActivityFromPiReason,
+} from "@clui/shared/agentActivity";
 import { encodePiTuiPrompt } from "@clui/shared/piTuiInput";
 import { hasPiWorkingStatusOutput, stripPiTerminalControls } from "@clui/shared/piTerminalStatus";
 import { Effect, Layer } from "effect";
@@ -519,7 +522,9 @@ function snapshotExtensionUiState(state: MutableExtensionUiState): PiExtensionUi
   };
 }
 
-function isExtensionDialogMethod(method: unknown): method is "select" | "confirm" | "input" | "editor" {
+function isExtensionDialogMethod(
+  method: unknown,
+): method is "select" | "confirm" | "input" | "editor" {
   return method === "select" || method === "confirm" || method === "input" || method === "editor";
 }
 
@@ -551,7 +556,9 @@ function normalizeSessionUsageStats(data: unknown): PiSessionUsageStats | null {
   const output = finiteNumber(data.tokens.output);
   const cacheRead = finiteNumber(data.tokens.cacheRead);
   const cacheWrite = finiteNumber(data.tokens.cacheWrite);
-  const total = finiteNumber(data.tokens.total) ?? (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0);
+  const total =
+    finiteNumber(data.tokens.total) ??
+    (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0);
   const cost = finiteNumber(data.cost) ?? 0;
   if (input === null || output === null || cacheRead === null || cacheWrite === null) return null;
 
@@ -939,7 +946,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       return [
         {
           name: candidate.name,
-          ...(typeof candidate.description === "string" ? { description: candidate.description } : {}),
+          ...(typeof candidate.description === "string"
+            ? { description: candidate.description }
+            : {}),
           ...(typeof candidate.source === "string" ? { source: candidate.source } : {}),
         },
       ];
@@ -968,7 +977,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     const response = await this.sendRpcCommand(entry, { type: commandType, ...(payload ?? {}) });
     if (!isRecord(response)) return null;
     if (response.success === false) {
-      throw new Error(typeof response.error === "string" ? response.error : `Pi RPC command failed: ${commandType}`);
+      throw new Error(
+        typeof response.error === "string"
+          ? response.error
+          : `Pi RPC command failed: ${commandType}`,
+      );
     }
     return response.data ?? null;
   }
@@ -1449,7 +1462,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }
   }
 
-  private sendRpcCommand(entry: PiSessionEntry, command: Record<string, unknown>): Promise<unknown> {
+  private sendRpcCommand(
+    entry: PiSessionEntry,
+    command: Record<string, unknown>,
+  ): Promise<unknown> {
     const child = entry.rpcProcess;
     if (!child || !child.stdin.writable) {
       return Promise.reject(new Error(`No active html pi session for thread: ${entry.threadId}`));
@@ -1522,7 +1538,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       if (pending) {
         entry.rpcPendingRequests.delete(payload.id);
         if (payload.success === false) {
-          pending.reject(new Error(typeof payload.error === "string" ? payload.error : "pi command failed"));
+          pending.reject(
+            new Error(typeof payload.error === "string" ? payload.error : "pi command failed"),
+          );
         } else {
           pending.resolve(payload);
         }
@@ -1766,7 +1784,8 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   private resolveTerminalReadiness(entry: PiSessionEntry, sessionSyncNonce: string): void {
     const waiter = entry.terminalReadinessWaiter;
-    if (!waiter || waiter.sessionSyncNonce !== sessionSyncNonce || waiter.process !== entry.process) return;
+    if (!waiter || waiter.sessionSyncNonce !== sessionSyncNonce || waiter.process !== entry.process)
+      return;
     entry.terminalReadinessWaiter = null;
     clearTimeout(waiter.timeoutTimer);
     clearInterval(waiter.pollTimer);
@@ -1796,7 +1815,10 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     waiter.reject(error);
   }
 
-  private async startSessionSyncWatcher(entry: PiSessionEntry, sessionSyncNonce: string): Promise<void> {
+  private async startSessionSyncWatcher(
+    entry: PiSessionEntry,
+    sessionSyncNonce: string,
+  ): Promise<void> {
     this.stopSessionSyncWatcher(entry);
     const syncFilePath = path.join(this.sessionSyncDir, `${sessionSyncNonce}.json`);
     entry.syncFilePath = syncFilePath;
@@ -1892,17 +1914,18 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       const toolInputCommand = nonEmptyString(parsed.toolInputCommand);
       const toolInputDescription = nonEmptyString(parsed.toolInputDescription);
       const toolInputAgent = nonEmptyString(parsed.toolInputAgent);
-      const activityStatus = explicitActivityStatus !== undefined
-        ? explicitActivityStatus
-        : reason || toolName || toolInputCommand || toolInputDescription || toolInputAgent
-          ? classifyAgentActivityFromPiReason({
-              reason,
-              toolName,
-              command: toolInputCommand,
-              description: toolInputDescription,
-              agentName: toolInputAgent,
-            })
-          : undefined;
+      const activityStatus =
+        explicitActivityStatus !== undefined
+          ? explicitActivityStatus
+          : reason || toolName || toolInputCommand || toolInputDescription || toolInputAgent
+            ? classifyAgentActivityFromPiReason({
+                reason,
+                toolName,
+                command: toolInputCommand,
+                description: toolInputDescription,
+                agentName: toolInputAgent,
+              })
+            : undefined;
       payload = {
         threadId: entry.threadId,
         sessionSyncNonce: parsed.sessionSyncNonce,
@@ -2071,8 +2094,12 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.writeProcessRegistryEntry(entry, expectedProcess.pid);
   }
 
-  private registerRpcProcess(entry: PiSessionEntry, expectedProcess: ChildProcessWithoutNullStreams): void {
-    if (entry.rpcProcess !== expectedProcess || entry.status !== "active" || !expectedProcess.pid) return;
+  private registerRpcProcess(
+    entry: PiSessionEntry,
+    expectedProcess: ChildProcessWithoutNullStreams,
+  ): void {
+    if (entry.rpcProcess !== expectedProcess || entry.status !== "active" || !expectedProcess.pid)
+      return;
     this.writeProcessRegistryEntry(entry, expectedProcess.pid);
   }
 
@@ -2237,8 +2264,7 @@ export const PiSessionManagerLive = Layer.effect(
       respondExtensionUi: (threadId, response) =>
         Effect.tryPromise({
           try: () => runtime.respondExtensionUi(threadId, response),
-          catch: (cause) =>
-            new PiSessionError({ message: "Failed to answer pi UI prompt", cause }),
+          catch: (cause) => new PiSessionError({ message: "Failed to answer pi UI prompt", cause }),
         }),
       getCommands: (threadId) =>
         Effect.tryPromise({

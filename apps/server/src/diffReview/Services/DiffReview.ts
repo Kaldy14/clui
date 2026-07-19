@@ -7,14 +7,11 @@ import type {
 import { Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
-export class DiffReviewError extends Schema.TaggedErrorClass<DiffReviewError>()(
-  "DiffReviewError",
-  {
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
+export class DiffReviewError extends Schema.TaggedErrorClass<DiffReviewError>()("DiffReviewError", {
+  operation: Schema.String,
+  detail: Schema.String,
+  cause: Schema.optional(Schema.Defect),
+}) {
   override get message(): string {
     return `Diff review failed in ${this.operation}: ${this.detail}`;
   }

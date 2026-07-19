@@ -59,9 +59,7 @@ describe("agent activity classification", () => {
     expect(classifyAgentActivityFromBashCommand("pnpm --dir apps/core-hub run test")).toBe(
       "testing",
     );
-    expect(classifyAgentActivityFromBashCommand("pnpm -C apps/core-hub run lint")).toBe(
-      "linting",
-    );
+    expect(classifyAgentActivityFromBashCommand("pnpm -C apps/core-hub run lint")).toBe("linting");
     expect(classifyAgentActivityFromBashCommand("eslint apps/core-hub/src")).toBe("linting");
     expect(classifyAgentActivityFromBashCommand("vitest run agentActivity.test.ts")).toBe(
       "testing",
@@ -70,7 +68,7 @@ describe("agent activity classification", () => {
     expect(classifyAgentActivityFromBashCommand("bun run test -- Sidebar.logic.test.ts")).toBe(
       "testing",
     );
-    expect(classifyAgentActivityFromBashCommand("rg \"foo\" apps packages")).toBe("searching");
+    expect(classifyAgentActivityFromBashCommand('rg "foo" apps packages')).toBe("searching");
     expect(classifyAgentActivityFromBashCommand("subagent scout investigate websocket state")).toBe(
       "scouting",
     );

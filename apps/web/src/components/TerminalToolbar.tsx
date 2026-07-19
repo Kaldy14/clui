@@ -30,7 +30,11 @@ import {
   useState,
 } from "react";
 
-import { parseDiffRouteSearch, stripAiReviewSearchParams, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  parseDiffRouteSearch,
+  stripAiReviewSearchParams,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../keybindings";
 import { selectLatestDiffReviewRunForThread, useAiDiffReviewStore } from "../lib/aiDiffReviewStore";
 import * as claudeCache from "../lib/claudeTerminalCache";
@@ -156,24 +160,21 @@ function EditableTitle({
     });
   }, [draft, title, threadId]);
 
-  const handleTitlePointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
-      if (!isElectron || event.button !== 0 || window.desktopBridge?.moveWindowBy === undefined) {
-        return;
-      }
+  const handleTitlePointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!isElectron || event.button !== 0 || window.desktopBridge?.moveWindowBy === undefined) {
+      return;
+    }
 
-      dragStateRef.current = {
-        pointerId: event.pointerId,
-        startScreenX: event.screenX,
-        startScreenY: event.screenY,
-        lastScreenX: event.screenX,
-        lastScreenY: event.screenY,
-        dragging: false,
-      };
-      event.currentTarget.setPointerCapture(event.pointerId);
-    },
-    [],
-  );
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startScreenX: event.screenX,
+      startScreenY: event.screenY,
+      lastScreenX: event.screenX,
+      lastScreenY: event.screenY,
+      dragging: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
 
   const handleTitlePointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     const dragState = dragStateRef.current;
@@ -427,7 +428,10 @@ export function runProjectScriptInTerminal(
   } else {
     // Open / write to a thread terminal
     const terminalStore = useTerminalStateStore.getState();
-    const terminalState = selectThreadTerminalState(terminalStore.terminalStateByThreadId, threadId);
+    const terminalState = selectThreadTerminalState(
+      terminalStore.terminalStateByThreadId,
+      threadId,
+    );
     if (openTerminal && !terminalState.terminalOpen) {
       terminalStore.setTerminalOpen(threadId, true);
     }
@@ -470,7 +474,8 @@ export default function TerminalToolbar({
   const piRenderMode = useTerminalStateStore(
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).piRenderMode,
   );
-  const usesPiHtml = thread?.harness === "pi" && (thread.piRenderMode === "html" || piRenderMode === "html");
+  const usesPiHtml =
+    thread?.harness === "pi" && (thread.piRenderMode === "html" || piRenderMode === "html");
 
   const persistProjectMetadata = useCallback(
     async (input: {

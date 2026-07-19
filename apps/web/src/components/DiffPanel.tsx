@@ -95,7 +95,9 @@ function readDiffPref<T>(key: string, fallback: T, validate: (v: unknown) => v i
 function writeDiffPref(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch { /* quota exceeded — ignore */ }
+  } catch {
+    /* quota exceeded — ignore */
+  }
 }
 const isDiffRenderMode = (v: unknown): v is DiffRenderMode => v === "stacked" || v === "split";
 const isBoolean = (v: unknown): v is boolean => typeof v === "boolean";
@@ -229,20 +231,15 @@ function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
 }
 
 function buildSelectedCodePatchContext(selectedText: string, filePatch: string): string {
-  return [
-    "Selected code:",
-    selectedText.slice(0, 12_000),
-    "",
-    "Containing file patch:",
-    filePatch,
-  ].join("\n").slice(0, 80_000);
+  return ["Selected code:", selectedText.slice(0, 12_000), "", "Containing file patch:", filePatch]
+    .join("\n")
+    .slice(0, 80_000);
 }
 
 function extractFilePatchSection(patch: string | undefined, filePath: string): string {
   if (!patch) return "";
-  const normalizedPath = filePath.startsWith("a/") || filePath.startsWith("b/")
-    ? filePath.slice(2)
-    : filePath;
+  const normalizedPath =
+    filePath.startsWith("a/") || filePath.startsWith("b/") ? filePath.slice(2) : filePath;
   const patchLower = patch.toLowerCase();
   const needles = [
     `diff --git a/${normalizedPath} b/${normalizedPath}`,
@@ -415,7 +412,8 @@ function EditableFileView({
   if (fileQuery.error) {
     return (
       <div className="px-3 py-4 text-xs text-red-400">
-        Failed to load file: {fileQuery.error instanceof Error ? fileQuery.error.message : "Unknown error"}
+        Failed to load file:{" "}
+        {fileQuery.error instanceof Error ? fileQuery.error.message : "Unknown error"}
         <span className="ml-1 text-muted-foreground/50">(cwd: {cwd})</span>
         <button
           type="button"
@@ -526,7 +524,11 @@ function DiffAiReviewWorkbenchSummary({
               onClick={onGenerate}
             >
               <SparklesIcon className={cn("size-3", status === "generating" && "animate-pulse")} />
-              {review ? "Regenerate" : status === "generating" ? "Generating…" : "Generate AI review"}
+              {review
+                ? "Regenerate"
+                : status === "generating"
+                  ? "Generating…"
+                  : "Generate AI review"}
             </button>
           </div>
         </div>
@@ -554,17 +556,21 @@ function DiffAiReviewWorkbenchSummary({
           <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(220px,0.4fr)]">
             <div className="space-y-3">
               <div className="rounded-lg border border-border/70 bg-card/70 p-3">
-              <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <span>{review.sourceLabel}</span>
-                <span className="font-mono">{review.diffStat}</span>
-                <span>
-                  covered {review.coveredFileCount}/{review.totalFileCount} files
-                  {review.summarizedFileCount > 0 ? ` · ${review.summarizedFileCount} summarized` : ""}
-                </span>
-              </div>
+                <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span>{review.sourceLabel}</span>
+                  <span className="font-mono">{review.diffStat}</span>
+                  <span>
+                    covered {review.coveredFileCount}/{review.totalFileCount} files
+                    {review.summarizedFileCount > 0
+                      ? ` · ${review.summarizedFileCount} summarized`
+                      : ""}
+                  </span>
+                </div>
                 <p className="text-[13px] leading-relaxed text-foreground/90">{review.overview}</p>
               </div>
-              {(review.keyChanges.length > 0 || review.testFocus.length > 0 || review.followUps.length > 0) && (
+              {(review.keyChanges.length > 0 ||
+                review.testFocus.length > 0 ||
+                review.followUps.length > 0) && (
                 <div className="grid gap-3 md:grid-cols-3">
                   {review.keyChanges.length > 0 && (
                     <div className="rounded-lg border border-border/70 bg-card/70 p-3">
@@ -572,7 +578,9 @@ function DiffAiReviewWorkbenchSummary({
                       <ol className="space-y-1.5 text-[11px] leading-relaxed text-muted-foreground">
                         {review.keyChanges.slice(0, 5).map((change) => (
                           <li key={change.id} className="flex gap-1.5">
-                            <span className="shrink-0 font-mono text-foreground/70">#{change.rank}</span>
+                            <span className="shrink-0 font-mono text-foreground/70">
+                              #{change.rank}
+                            </span>
                             <span className="min-w-0 truncate">{change.filePath}</span>
                           </li>
                         ))}
@@ -584,17 +592,23 @@ function DiffAiReviewWorkbenchSummary({
                       <p className="mb-2 font-semibold text-xs text-foreground">Test focus</p>
                       <ul className="space-y-1.5 text-[11px] leading-relaxed text-muted-foreground">
                         {review.testFocus.slice(0, 5).map((item, index) => (
-                          <li key={`${index}-${item}`} className="list-inside list-disc">{item}</li>
+                          <li key={`${index}-${item}`} className="list-inside list-disc">
+                            {item}
+                          </li>
                         ))}
                       </ul>
                     </div>
                   )}
                   {review.followUps.length > 0 && (
                     <div className="rounded-lg border border-border/70 bg-card/70 p-3">
-                      <p className="mb-2 font-semibold text-xs text-foreground">Follow-up questions</p>
+                      <p className="mb-2 font-semibold text-xs text-foreground">
+                        Follow-up questions
+                      </p>
                       <ul className="space-y-1.5 text-[11px] leading-relaxed text-muted-foreground">
                         {review.followUps.slice(0, 5).map((item, index) => (
-                          <li key={`${index}-${item}`} className="list-inside list-disc">{item}</li>
+                          <li key={`${index}-${item}`} className="list-inside list-disc">
+                            {item}
+                          </li>
                         ))}
                       </ul>
                     </div>
@@ -623,8 +637,12 @@ function DiffAiReviewWorkbenchSummary({
               {stackItems.length > 0 && (
                 <div className="mt-2 max-h-28 space-y-1 overflow-auto pr-1">
                   {stackItems.map((item, index) => (
-                    <div key={item.id} className="rounded-md bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
-                      <span className="font-mono text-foreground/75">{index + 1}.</span> {item.filePath}
+                    <div
+                      key={item.id}
+                      className="rounded-md bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground"
+                    >
+                      <span className="font-mono text-foreground/75">{index + 1}.</span>{" "}
+                      {item.filePath}
                       {item.lineNumber != null ? `:${item.lineNumber}` : ""}
                       {item.selectedText ? " · selection" : ""}
                     </div>
@@ -653,15 +671,26 @@ function DiffAiReviewWorkbenchSummary({
   );
 }
 
-function DiffAiReviewFileSummary({ change }: { change: OrchestrationDiffReviewChange | undefined }) {
+function DiffAiReviewFileSummary({
+  change,
+}: {
+  change: OrchestrationDiffReviewChange | undefined;
+}) {
   if (!change) return null;
   return (
     <div className="border-b border-border/50 bg-blue-500/[0.035] px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className={cn("rounded-full border px-1.5 py-0.5 font-medium text-[10px] uppercase tracking-wide", aiReviewTone(change.significance))}>
+        <span
+          className={cn(
+            "rounded-full border px-1.5 py-0.5 font-medium text-[10px] uppercase tracking-wide",
+            aiReviewTone(change.significance),
+          )}
+        >
           #{change.rank} · {change.significance}
         </span>
-        <span className="min-w-0 truncate text-[12px] font-medium text-foreground">{change.title}</span>
+        <span className="min-w-0 truncate text-[12px] font-medium text-foreground">
+          {change.title}
+        </span>
       </div>
       <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">{change.summary}</p>
       {(change.reviewFocus.length > 0 || change.risks.length > 0) && (
@@ -852,7 +881,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const selectedPatch = showWorkingTree
     ? workingTreeDiffQuery.data?.diff
     : hasTurns
-      ? (selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff)
+      ? selectedTurn
+        ? selectedTurnCheckpointDiff
+        : conversationCheckpointDiff
       : workingTreeDiffQuery.data?.diff;
   const currentSelectedReviewScope = useMemo<OrchestrationDiffReviewScope>(() => {
     if (showWorkingTree) {
@@ -877,18 +908,20 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [activeThreadId, currentSelectedReviewScope],
   );
   const aiReviewRun = useAiDiffReviewStore((state) =>
-    aiReviewRunKey ? state.runsByKey[aiReviewRunKey] ?? null : null,
+    aiReviewRunKey ? (state.runsByKey[aiReviewRunKey] ?? null) : null,
   );
   const startAiReviewRun = useAiDiffReviewStore((state) => state.startRun);
   const markAiReviewRunSeen = useAiDiffReviewStore((state) => state.markRunSeen);
   const aiReviewResult = aiReviewRun?.result ?? null;
   const aiReviewError =
-    aiReviewRun?.status === "error" ? aiReviewRun.error ?? "AI review failed." : null;
+    aiReviewRun?.status === "error" ? (aiReviewRun.error ?? "AI review failed.") : null;
   const [aiReviewNow, setAiReviewNow] = useState(() => Date.now());
   const [aiStackItems, setAiStackItems] = useState<DiffHighlightRange[]>([]);
   const [aiStackAnswer, setAiStackAnswer] = useState<string | null>(null);
   const [quickAskSelection, setQuickAskSelection] = useState<DiffQuickAskSelection | null>(null);
-  const [selectionAskTrigger, setSelectionAskTrigger] = useState<DiffQuickAskSelection | null>(null);
+  const [selectionAskTrigger, setSelectionAskTrigger] = useState<DiffQuickAskSelection | null>(
+    null,
+  );
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
@@ -921,7 +954,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const aiStackMutation = useMutation({
     mutationFn: async (items: DiffHighlightRange[]) => {
       const api = readNativeApi();
-      if (!api || !activeThreadId) throw new Error("Select a thread before asking Pi about a stack.");
+      if (!api || !activeThreadId)
+        throw new Error("Select a thread before asking Pi about a stack.");
       const contextPatch = items
         .map((item, index) =>
           [
@@ -942,7 +976,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         threadId: activeThreadId,
         filePath: "AI review stack",
         lineNumber: null,
-        prompt: "Review these highlighted diff ranges together. Cluster related risks, answer any item instructions, and suggest what to verify next.",
+        prompt:
+          "Review these highlighted diff ranges together. Cluster related risks, answer any item instructions, and suggest what to verify next.",
         contextPatch,
       });
     },
@@ -973,13 +1008,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     return () => window.clearInterval(intervalId);
   }, [aiReviewRun?.key, aiReviewRun?.status]);
 
-  const aiReviewStatus: AiReviewWorkbenchStatus = aiReviewRun?.status === "running"
-    ? "generating"
-    : aiReviewError
-      ? "error"
-      : aiReviewResult
-        ? "ready"
-        : "idle";
+  const aiReviewStatus: AiReviewWorkbenchStatus =
+    aiReviewRun?.status === "running"
+      ? "generating"
+      : aiReviewError
+        ? "error"
+        : aiReviewResult
+          ? "ready"
+          : "idle";
 
   const aggregateStats = useMemo(() => {
     let additions = 0;
@@ -1014,25 +1050,28 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setViewedFiles(new Set());
   }, []);
 
-  const addAiStackItem = useCallback((input: {
-    filePath: string;
-    lineNumber: number | null;
-    selectedText?: string | undefined;
-    instruction?: string | undefined;
-    contextPatch: string;
-  }) => {
-    const item: DiffHighlightRange = {
-      id: `stack-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      filePath: input.filePath,
-      lineNumber: input.lineNumber,
-      selectedText: input.selectedText,
-      instruction: input.instruction,
-      contextPatch: input.contextPatch,
-      createdAt: Date.now(),
-    };
-    setAiStackItems((current) => [...current, item]);
-    setAiStackAnswer(null);
-  }, []);
+  const addAiStackItem = useCallback(
+    (input: {
+      filePath: string;
+      lineNumber: number | null;
+      selectedText?: string | undefined;
+      instruction?: string | undefined;
+      contextPatch: string;
+    }) => {
+      const item: DiffHighlightRange = {
+        id: `stack-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        filePath: input.filePath,
+        lineNumber: input.lineNumber,
+        selectedText: input.selectedText,
+        instruction: input.instruction,
+        contextPatch: input.contextPatch,
+        createdAt: Date.now(),
+      };
+      setAiStackItems((current) => [...current, item]);
+      setAiStackAnswer(null);
+    },
+    [],
+  );
 
   const [editingFiles, setEditingFiles] = useState<Set<string>>(new Set());
   const [editScrollLine, setEditScrollLine] = useState<Record<string, number>>({});
@@ -1087,7 +1126,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     if (!aiReviewActive || !aiReviewResult || aiReviewResult.keyChanges.length === 0) {
       return renderableFiles;
     }
-    const rankByPath = new Map(aiReviewResult.keyChanges.map((change) => [change.filePath, change.rank]));
+    const rankByPath = new Map(
+      aiReviewResult.keyChanges.map((change) => [change.filePath, change.rank]),
+    );
     return renderableFiles.toSorted((left, right) => {
       const leftPath = resolveFileDiffPath(left);
       const rightPath = resolveFileDiffPath(right);
@@ -1156,7 +1197,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         }
         if (headerIdx === -1) continue;
         const nextDiff = patchLower.indexOf("\ndiff --git", headerIdx + 1);
-        const section = nextDiff === -1 ? patchLower.slice(headerIdx) : patchLower.slice(headerIdx, nextDiff);
+        const section =
+          nextDiff === -1 ? patchLower.slice(headerIdx) : patchLower.slice(headerIdx, nextDiff);
         if (section.includes(lower)) {
           matches.push(i);
         }
@@ -1169,7 +1211,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const goToSearchMatch = useCallback(
     (index: number) => {
       if (searchMatches.length === 0) return;
-      const wrapped = ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
+      const wrapped =
+        ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
       setSearchMatchIndex(wrapped);
       const fileIndex = searchMatches[wrapped]!;
       setFocusedFileIndex(fileIndex);
@@ -1289,7 +1332,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
     panel.addEventListener("keydown", onKeyDown);
     return () => panel.removeEventListener("keydown", onKeyDown);
-  }, [sortedRenderableFiles, scrollToFileByIndex, toggleFileViewed, editingFiles, startEditing, stopEditing, closeDiff, closeAiReview, searchOpen, aiReviewActive]);
+  }, [
+    sortedRenderableFiles,
+    scrollToFileByIndex,
+    toggleFileViewed,
+    editingFiles,
+    startEditing,
+    stopEditing,
+    closeDiff,
+    closeAiReview,
+    searchOpen,
+    aiReviewActive,
+  ]);
 
   // Auto-focus the panel when it mounts so keyboard shortcuts work immediately
   useEffect(() => {
@@ -1566,7 +1620,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <span className="text-[11px] tabular-nums text-muted-foreground">
             {aggregateStats.fileCount} {aggregateStats.fileCount === 1 ? "file" : "files"}
             {aggregateStats.additions > 0 && (
-              <span className="text-green-600 dark:text-green-400"> +{aggregateStats.additions}</span>
+              <span className="text-green-600 dark:text-green-400">
+                {" "}
+                +{aggregateStats.additions}
+              </span>
             )}
             {aggregateStats.deletions > 0 && (
               <span className="text-red-500 dark:text-red-400"> -{aggregateStats.deletions}</span>
@@ -1694,16 +1751,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         </div>
       ) : orderedTurnDiffSummaries.length === 0 && !workingTreeDiffQuery.data?.diff ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          {workingTreeDiffQuery.isLoading
-            ? "Loading workspace changes..."
-            : "No changes detected."}
+          {workingTreeDiffQuery.isLoading ? "Loading workspace changes..." : "No changes detected."}
         </div>
       ) : (
         <>
           {renderableFiles.length > 0 && (
-            <div
-              className="h-0.5 shrink-0 bg-border/30"
-            >
+            <div className="h-0.5 shrink-0 bg-border/30">
               <div
                 className="h-full bg-green-500/70 transition-[width] duration-500 ease-out"
                 style={{
@@ -1800,7 +1853,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           />
           {/* Narrow layout: file tree above diff — resizable via drag handle */}
           {showFileTree && !panelWide && renderableFiles.length > 0 && (
-            <div className="relative shrink-0 border-b border-border/60 dark:bg-[#1e2228]" style={{ height: fileTreeHeight, maxHeight: "60%" }}>
+            <div
+              className="relative shrink-0 border-b border-border/60 dark:bg-[#1e2228]"
+              style={{ height: fileTreeHeight, maxHeight: "60%" }}
+            >
               <div className="h-full min-h-0 overflow-hidden">
                 <DiffFileTree
                   files={renderableFiles}
@@ -1818,7 +1874,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   e.preventDefault();
                   const startY = e.clientY;
                   const startH = fileTreeHeight;
-                  const onMove = (ev: MouseEvent) => setFileTreeHeight(Math.max(60, startH + ev.clientY - startY));
+                  const onMove = (ev: MouseEvent) =>
+                    setFileTreeHeight(Math.max(60, startH + ev.clientY - startY));
                   const onUp = () => {
                     document.removeEventListener("mousemove", onMove);
                     document.removeEventListener("mouseup", onUp);
@@ -1848,253 +1905,276 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 />
               </div>
             )}
-          <div
-            ref={patchViewportRef}
-            className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
-            tabIndex={0}
-          >
-            {checkpointDiffError && !renderablePatch && (
-              <div className="px-3">
-                <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
-              </div>
-            )}
-            {!renderablePatch ? (
-              <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
-                <p>
-                  {isLoadingCheckpointDiff
-                    ? (showWorkingTree ? "Loading working tree changes..." : "Loading checkpoint diff...")
-                    : hasNoNetChanges
-                      ? "No net changes in this selection."
-                      : "No patch available for this selection."}
-                </p>
-              </div>
-            ) : renderablePatch.kind === "files" ? (
-              <Virtualizer
-                className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
-                {sortedRenderableFiles.map((fileDiff, fileIndex) => {
-                  const filePath = resolveFileDiffPath(fileDiff);
-                  const fileKey = buildFileDiffRenderKey(fileDiff);
-                  const themedFileKey = `${fileKey}:${resolvedTheme}`;
-                  const isViewed = viewedFiles.has(filePath);
-                  const isFocused = focusedFileIndex === fileIndex;
-                  const stats = getFileDiffStats(fileDiff);
-                  const badge = getChangeTypeBadge(fileDiff.type);
-                  const aiChange = aiReviewChangeByPath.get(filePath);
-                  const fileStackAnnotations: DiffLineAnnotation<DiffHighlightAnnotationMetadata>[] = aiStackItems
-                    .filter((item) => item.filePath === filePath)
-                    .map((item, index) => ({
-                      side: "additions" as const,
-                      lineNumber: item.lineNumber ?? fileDiff.hunks[0]?.additionStart ?? 1,
-                      metadata: {
-                        id: item.id,
-                        label: `AI stack ${index + 1}`,
-                        selectedText: item.selectedText,
-                      },
-                    }));
-                  const lastSlash = filePath.lastIndexOf("/");
-                  const dirPath = lastSlash >= 0 ? filePath.slice(0, lastSlash + 1) : "";
-                  const baseName = lastSlash >= 0 ? filePath.slice(lastSlash + 1) : filePath;
-                  return (
-                    <div
-                      key={themedFileKey}
-                      data-diff-file-path={filePath}
-                      className={cn(
-                        "diff-render-file mb-2 rounded-md transition-[opacity,transform] duration-300 ease-out first:mt-2 last:mb-0",
-                        isViewed && "opacity-60",
-                        isFocused && "ring-1 ring-blue-500/50",
-                      )}
-                    >
+            <div
+              ref={patchViewportRef}
+              className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
+              tabIndex={0}
+            >
+              {checkpointDiffError && !renderablePatch && (
+                <div className="px-3">
+                  <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
+                </div>
+              )}
+              {!renderablePatch ? (
+                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+                  <p>
+                    {isLoadingCheckpointDiff
+                      ? showWorkingTree
+                        ? "Loading working tree changes..."
+                        : "Loading checkpoint diff..."
+                      : hasNoNetChanges
+                        ? "No net changes in this selection."
+                        : "No patch available for this selection."}
+                  </p>
+                </div>
+              ) : renderablePatch.kind === "files" ? (
+                <Virtualizer
+                  className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
+                  config={{
+                    overscrollSize: 600,
+                    intersectionObserverMargin: 1200,
+                  }}
+                >
+                  {sortedRenderableFiles.map((fileDiff, fileIndex) => {
+                    const filePath = resolveFileDiffPath(fileDiff);
+                    const fileKey = buildFileDiffRenderKey(fileDiff);
+                    const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                    const isViewed = viewedFiles.has(filePath);
+                    const isFocused = focusedFileIndex === fileIndex;
+                    const stats = getFileDiffStats(fileDiff);
+                    const badge = getChangeTypeBadge(fileDiff.type);
+                    const aiChange = aiReviewChangeByPath.get(filePath);
+                    const fileStackAnnotations: DiffLineAnnotation<DiffHighlightAnnotationMetadata>[] =
+                      aiStackItems
+                        .filter((item) => item.filePath === filePath)
+                        .map((item, index) => ({
+                          side: "additions" as const,
+                          lineNumber: item.lineNumber ?? fileDiff.hunks[0]?.additionStart ?? 1,
+                          metadata: {
+                            id: item.id,
+                            label: `AI stack ${index + 1}`,
+                            selectedText: item.selectedText,
+                          },
+                        }));
+                    const lastSlash = filePath.lastIndexOf("/");
+                    const dirPath = lastSlash >= 0 ? filePath.slice(0, lastSlash + 1) : "";
+                    const baseName = lastSlash >= 0 ? filePath.slice(lastSlash + 1) : filePath;
+                    return (
                       <div
+                        key={themedFileKey}
+                        data-diff-file-path={filePath}
                         className={cn(
-                          "sticky top-0 z-10 flex items-center gap-3 bg-background px-3 py-2.5 text-[13px] transition-[background-color,border-color] duration-300",
-                          isViewed
-                            ? "border-b border-border/30"
-                            : "border-b border-border/60 dark:bg-[#252a31]",
+                          "diff-render-file mb-2 rounded-md transition-[opacity,transform] duration-300 ease-out first:mt-2 last:mb-0",
+                          isViewed && "opacity-60",
+                          isFocused && "ring-1 ring-blue-500/50",
                         )}
                       >
-                        <button
-                          type="button"
-                          className="group shrink-0 transition-transform duration-200 active:scale-90"
-                          onClick={() => toggleFileViewed(filePath)}
-                          title={isViewed ? "Mark as unviewed" : "Mark as viewed"}
-                        >
-                          {isViewed ? (
-                            <SquareCheckBig className="size-4 animate-[viewedPop_300ms_ease-out] text-blue-500 transition-colors" />
-                          ) : (
-                            <Square className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />
-                          )}
-                        </button>
-                        <span
+                        <div
                           className={cn(
-                            "inline-flex size-[18px] shrink-0 items-center justify-center rounded text-[10px] font-bold leading-none",
-                            badge.className,
+                            "sticky top-0 z-10 flex items-center gap-3 bg-background px-3 py-2.5 text-[13px] transition-[background-color,border-color] duration-300",
+                            isViewed
+                              ? "border-b border-border/30"
+                              : "border-b border-border/60 dark:bg-[#252a31]",
                           )}
                         >
-                          {badge.label}
-                        </span>
-                        {aiChange && (
+                          <button
+                            type="button"
+                            className="group shrink-0 transition-transform duration-200 active:scale-90"
+                            onClick={() => toggleFileViewed(filePath)}
+                            title={isViewed ? "Mark as unviewed" : "Mark as viewed"}
+                          >
+                            {isViewed ? (
+                              <SquareCheckBig className="size-4 animate-[viewedPop_300ms_ease-out] text-blue-500 transition-colors" />
+                            ) : (
+                              <Square className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+                            )}
+                          </button>
                           <span
                             className={cn(
-                              "shrink-0 rounded-full border px-1.5 py-0.5 font-medium text-[10px] uppercase tracking-wide",
-                              aiReviewTone(aiChange.significance),
+                              "inline-flex size-[18px] shrink-0 items-center justify-center rounded text-[10px] font-bold leading-none",
+                              badge.className,
                             )}
-                            title={aiChange.title}
                           >
-                            #{aiChange.rank}
+                            {badge.label}
                           </span>
-                        )}
-                        <button
-                          type="button"
-                          className={cn(
-                            "min-w-0 flex-1 truncate text-left underline decoration-transparent underline-offset-2 transition-colors duration-200 hover:decoration-current",
-                            isViewed
-                              ? "text-muted-foreground hover:text-foreground"
-                              : "text-foreground hover:text-foreground",
-                          )}
-                          onClick={() => openDiffFileInEditor(filePath)}
-                          title={`Open ${filePath} in editor`}
-                        >
-                          {dirPath && (
-                            <span className="opacity-40">{dirPath}</span>
-                          )}
-                          <span className="font-medium">{baseName}</span>
-                        </button>
-                        <div className="flex shrink-0 items-center gap-2 tabular-nums text-[13px]">
-                          {stats.deletions > 0 && (
-                            <span className="text-red-500 dark:text-red-400">
-                              -{stats.deletions}
+                          {aiChange && (
+                            <span
+                              className={cn(
+                                "shrink-0 rounded-full border px-1.5 py-0.5 font-medium text-[10px] uppercase tracking-wide",
+                                aiReviewTone(aiChange.significance),
+                              )}
+                              title={aiChange.title}
+                            >
+                              #{aiChange.rank}
                             </span>
                           )}
-                          {stats.additions > 0 && (
-                            <span className="text-green-600 dark:text-green-400">
-                              +{stats.additions}
-                            </span>
-                          )}
-                        </div>
-                        {activeCwd && !isViewed && (
                           <button
                             type="button"
                             className={cn(
-                              "shrink-0 rounded p-1 transition-colors",
-                              editingFiles.has(filePath)
-                                ? "bg-blue-500/20 text-blue-400"
-                                : "text-muted-foreground/60 hover:bg-accent hover:text-foreground",
+                              "min-w-0 flex-1 truncate text-left underline decoration-transparent underline-offset-2 transition-colors duration-200 hover:decoration-current",
+                              isViewed
+                                ? "text-muted-foreground hover:text-foreground"
+                                : "text-foreground hover:text-foreground",
                             )}
-                            onClick={() =>
-                              editingFiles.has(filePath) ? stopEditing(filePath) : startEditing(filePath)
-                            }
-                            title={editingFiles.has(filePath) ? "Close editor" : "Edit file (e)"}
+                            onClick={() => openDiffFileInEditor(filePath)}
+                            title={`Open ${filePath} in editor`}
                           >
-                            <PencilIcon className="size-3.5" />
+                            {dirPath && <span className="opacity-40">{dirPath}</span>}
+                            <span className="font-medium">{baseName}</span>
                           </button>
-                        )}
-                      </div>
-                      {aiReviewActive && !isViewed && (
-                        <DiffAiReviewFileSummary change={aiReviewChangeByPath.get(filePath)} />
-                      )}
-                      {!isViewed && editingFiles.has(filePath) && activeCwd ? (
-                        <EditableFileView
-                          filePath={filePath}
-                          cwd={activeCwd}
-                          onSave={stopEditing}
-                          onCancel={stopEditing}
-                          isSaving={false}
-                          scrollToLine={editScrollLine[filePath] ?? fileDiff.hunks[0]?.additionStart}
-                        />
-                      ) : !isViewed ? (
-                        <div
-                          className="animate-[diffExpand_250ms_ease-out] overflow-clip"
-                          onContextMenu={(event) => {
-                            const lineNumber = getLineNumberFromEvent(event);
-                            if (lineNumber == null) return;
-                            event.preventDefault();
-                            setSelectionAskTrigger(null);
-                            const selectedText = window.getSelection()?.toString().trim() ?? "";
-                            setContextMenu({
-                              x: event.clientX,
-                              y: event.clientY,
-                              filePath,
-                              lineNumber,
-                              ...(selectedText.length >= 2 ? { selectedText } : {}),
-                            });
-                          }}
-                          onMouseUp={(event) => {
-                            const selectedText = window.getSelection()?.toString().trim() ?? "";
-                            if (selectedText.length < 2) {
-                              setSelectionAskTrigger(null);
-                              return;
-                            }
-                            const range = window.getSelection()?.rangeCount
-                              ? window.getSelection()?.getRangeAt(0)
-                              : null;
-                            const rect = range?.getBoundingClientRect();
-                            const x = rect && rect.width > 0 ? rect.right + 8 : event.clientX;
-                            const y = rect && rect.height > 0 ? rect.bottom + 8 : event.clientY;
-                            const filePatch = extractFilePatchSection(selectedPatch, filePath);
-                            setSelectionAskTrigger({
-                              x,
-                              y,
-                              filePath,
-                              lineNumber: null,
-                              selectedText,
-                              contextPatch: buildSelectedCodePatchContext(selectedText, filePatch),
-                            });
-                          }}
-                        >
-                          <FileDiff<DiffHighlightAnnotationMetadata>
-                            fileDiff={fileDiff}
-                            lineAnnotations={fileStackAnnotations}
-                            renderAnnotation={(annotation) => (
-                              <div className="mx-2 my-1 rounded-md border border-blue-500/25 bg-blue-500/[0.07] px-2 py-1 text-[11px] text-blue-700 shadow-sm dark:text-blue-200">
-                                <span className="font-medium">{annotation.metadata?.label ?? "AI stack"}</span>
-                                {annotation.metadata?.selectedText ? (
-                                  <span className="ml-1 text-muted-foreground">highlighted selection saved</span>
-                                ) : null}
-                              </div>
+                          <div className="flex shrink-0 items-center gap-2 tabular-nums text-[13px]">
+                            {stats.deletions > 0 && (
+                              <span className="text-red-500 dark:text-red-400">
+                                -{stats.deletions}
+                              </span>
                             )}
-                            options={{
-                              diffStyle: diffRenderMode === "split" ? "split" : "unified",
-                              lineDiffType: "word",
-                              overflow: "wrap",
-                              theme: resolveDiffThemeName(resolvedTheme),
-                              themeType: resolvedTheme as DiffThemeType,
-                              disableFileHeader: true,
-                              expandUnchanged,
-                              unsafeCSS: diffUnsafeCSS,
-                            }}
-                          />
+                            {stats.additions > 0 && (
+                              <span className="text-green-600 dark:text-green-400">
+                                +{stats.additions}
+                              </span>
+                            )}
+                          </div>
+                          {activeCwd && !isViewed && (
+                            <button
+                              type="button"
+                              className={cn(
+                                "shrink-0 rounded p-1 transition-colors",
+                                editingFiles.has(filePath)
+                                  ? "bg-blue-500/20 text-blue-400"
+                                  : "text-muted-foreground/60 hover:bg-accent hover:text-foreground",
+                              )}
+                              onClick={() =>
+                                editingFiles.has(filePath)
+                                  ? stopEditing(filePath)
+                                  : startEditing(filePath)
+                              }
+                              title={editingFiles.has(filePath) ? "Close editor" : "Edit file (e)"}
+                            >
+                              <PencilIcon className="size-3.5" />
+                            </button>
+                          )}
                         </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </Virtualizer>
-            ) : (
-              <div className="h-full overflow-auto p-2">
-                <div className="space-y-2">
-                  <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
-                  <pre className="max-h-[72vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
-                    {renderablePatch.text}
-                  </pre>
+                        {aiReviewActive && !isViewed && (
+                          <DiffAiReviewFileSummary change={aiReviewChangeByPath.get(filePath)} />
+                        )}
+                        {!isViewed && editingFiles.has(filePath) && activeCwd ? (
+                          <EditableFileView
+                            filePath={filePath}
+                            cwd={activeCwd}
+                            onSave={stopEditing}
+                            onCancel={stopEditing}
+                            isSaving={false}
+                            scrollToLine={
+                              editScrollLine[filePath] ?? fileDiff.hunks[0]?.additionStart
+                            }
+                          />
+                        ) : !isViewed ? (
+                          <div
+                            className="animate-[diffExpand_250ms_ease-out] overflow-clip"
+                            onContextMenu={(event) => {
+                              const lineNumber = getLineNumberFromEvent(event);
+                              if (lineNumber == null) return;
+                              event.preventDefault();
+                              setSelectionAskTrigger(null);
+                              const selectedText = window.getSelection()?.toString().trim() ?? "";
+                              setContextMenu({
+                                x: event.clientX,
+                                y: event.clientY,
+                                filePath,
+                                lineNumber,
+                                ...(selectedText.length >= 2 ? { selectedText } : {}),
+                              });
+                            }}
+                            onMouseUp={(event) => {
+                              const selectedText = window.getSelection()?.toString().trim() ?? "";
+                              if (selectedText.length < 2) {
+                                setSelectionAskTrigger(null);
+                                return;
+                              }
+                              const range = window.getSelection()?.rangeCount
+                                ? window.getSelection()?.getRangeAt(0)
+                                : null;
+                              const rect = range?.getBoundingClientRect();
+                              const x = rect && rect.width > 0 ? rect.right + 8 : event.clientX;
+                              const y = rect && rect.height > 0 ? rect.bottom + 8 : event.clientY;
+                              const filePatch = extractFilePatchSection(selectedPatch, filePath);
+                              setSelectionAskTrigger({
+                                x,
+                                y,
+                                filePath,
+                                lineNumber: null,
+                                selectedText,
+                                contextPatch: buildSelectedCodePatchContext(
+                                  selectedText,
+                                  filePatch,
+                                ),
+                              });
+                            }}
+                          >
+                            <FileDiff<DiffHighlightAnnotationMetadata>
+                              fileDiff={fileDiff}
+                              lineAnnotations={fileStackAnnotations}
+                              renderAnnotation={(annotation) => (
+                                <div className="mx-2 my-1 rounded-md border border-blue-500/25 bg-blue-500/[0.07] px-2 py-1 text-[11px] text-blue-700 shadow-sm dark:text-blue-200">
+                                  <span className="font-medium">
+                                    {annotation.metadata?.label ?? "AI stack"}
+                                  </span>
+                                  {annotation.metadata?.selectedText ? (
+                                    <span className="ml-1 text-muted-foreground">
+                                      highlighted selection saved
+                                    </span>
+                                  ) : null}
+                                </div>
+                              )}
+                              options={{
+                                diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                                lineDiffType: "word",
+                                overflow: "wrap",
+                                theme: resolveDiffThemeName(resolvedTheme),
+                                themeType: resolvedTheme as DiffThemeType,
+                                disableFileHeader: true,
+                                expandUnchanged,
+                                unsafeCSS: diffUnsafeCSS,
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </Virtualizer>
+              ) : (
+                <div className="h-full overflow-auto p-2">
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
+                    <pre className="max-h-[72vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
+                      {renderablePatch.text}
+                    </pre>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
           </div>
         </>
       )}
       {sortedRenderableFiles.length > 0 && (
         <div className="flex shrink-0 items-center gap-3 border-t border-border/50 px-3 py-1.5 text-[10px] text-muted-foreground/50">
-          <span><kbd className="rounded border border-border/40 px-1 font-mono">j</kbd>/<kbd className="rounded border border-border/40 px-1 font-mono">k</kbd> navigate</span>
-          <span><kbd className="rounded border border-border/40 px-1 font-mono">v</kbd> viewed</span>
-          <span><kbd className="rounded border border-border/40 px-1 font-mono">e</kbd> edit</span>
-          <span><kbd className="rounded border border-border/40 px-1 font-mono">⌘F</kbd> search</span>
-          <span><kbd className="rounded border border-border/40 px-1 font-mono">esc</kbd> close</span>
+          <span>
+            <kbd className="rounded border border-border/40 px-1 font-mono">j</kbd>/
+            <kbd className="rounded border border-border/40 px-1 font-mono">k</kbd> navigate
+          </span>
+          <span>
+            <kbd className="rounded border border-border/40 px-1 font-mono">v</kbd> viewed
+          </span>
+          <span>
+            <kbd className="rounded border border-border/40 px-1 font-mono">e</kbd> edit
+          </span>
+          <span>
+            <kbd className="rounded border border-border/40 px-1 font-mono">⌘F</kbd> search
+          </span>
+          <span>
+            <kbd className="rounded border border-border/40 px-1 font-mono">esc</kbd> close
+          </span>
         </div>
       )}
       {selectionAskTrigger && !quickAskSelection && (
@@ -2126,8 +2206,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div
           className="fixed inset-0 z-50"
           onClick={() => setContextMenu(null)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
-          onKeyDown={(e) => { if (e.key === "Escape") setContextMenu(null); }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setContextMenu(null);
+          }}
           tabIndex={-1}
         >
           <div

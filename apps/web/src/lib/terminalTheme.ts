@@ -48,8 +48,7 @@ const DARK_THEMES: Record<TerminalColorTheme, () => ITheme> = {
   }),
   "classic-pastel": () => {
     const bodyStyles = getComputedStyle(document.body);
-    const background =
-      bodyStyles.backgroundColor || "rgb(14, 18, 24)";
+    const background = bodyStyles.backgroundColor || "rgb(14, 18, 24)";
     const foreground = bodyStyles.color || "rgb(237, 241, 247)";
     return {
       background,

@@ -1,4 +1,9 @@
-import type { AgentActivityStatus, ClaudeHookStatus, GitStatusResult, TerminalStatus } from "@clui/contracts";
+import type {
+  AgentActivityStatus,
+  ClaudeHookStatus,
+  GitStatusResult,
+  TerminalStatus,
+} from "@clui/contracts";
 import { AGENT_ACTIVITY_LABELS } from "@clui/shared/agentActivity";
 import type { Thread } from "../types";
 import {

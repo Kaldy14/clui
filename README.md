@@ -22,12 +22,12 @@ Clui wraps terminal-native coding agents in a proper desktop app with project or
 
 Grab the latest release from the [Releases page](https://github.com/Kaldy14/clui/releases).
 
-| Platform | Format |
-|----------|--------|
-| macOS (Apple Silicon) | `.dmg` |
-| macOS (Intel) | `.dmg` |
-| Linux | `.AppImage` |
-| Windows | `.exe` (NSIS installer) |
+| Platform              | Format                  |
+| --------------------- | ----------------------- |
+| macOS (Apple Silicon) | `.dmg`                  |
+| macOS (Intel)         | `.dmg`                  |
+| Linux                 | `.AppImage`             |
+| Windows               | `.exe` (NSIS installer) |
 
 ## Acknowledgments
 

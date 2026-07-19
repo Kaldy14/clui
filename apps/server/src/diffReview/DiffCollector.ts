@@ -207,7 +207,9 @@ function getFileStats(fileDiff: FileDiffMetadata): { additions: number; deletion
 function scorePathRisk(filePath: string): number {
   const lower = filePath.toLowerCase();
   let score = 0;
-  if (/(^|\/)(package\.json|bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|package-lock\.json)$/u.test(lower)) {
+  if (
+    /(^|\/)(package\.json|bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|package-lock\.json)$/u.test(lower)
+  ) {
     score += 35;
   }
   if (/(^|\/)(migrations?|schema|db|database|sql)(\/|\.|$)/u.test(lower)) score += 35;
@@ -285,7 +287,9 @@ function summarizeFile(fileDiff: FileDiffMetadata, section: string): DiffReviewF
   };
 }
 
-function splitSectionIntoHunkPatches(section: string): Array<{ hunkHeader: string | null; patchText: string }> {
+function splitSectionIntoHunkPatches(
+  section: string,
+): Array<{ hunkHeader: string | null; patchText: string }> {
   const hunkMatches = Array.from(section.matchAll(/^@@ .*$/gm));
   if (hunkMatches.length === 0) return [{ hunkHeader: null, patchText: section }];
 
@@ -351,10 +355,15 @@ function renderSummary(summary: DiffReviewFilePriority): string {
   return `- ${summary.filePath} [${summary.changeType}] +${summary.additions}/-${summary.deletions}, risk ${summary.riskScore}, hunks: ${hunkList}`;
 }
 
-function sortByRiskThenPath<T extends { readonly riskScore: number; readonly filePath: string }>(items: T[]): T[] {
+function sortByRiskThenPath<T extends { readonly riskScore: number; readonly filePath: string }>(
+  items: T[],
+): T[] {
   return items.toSorted((left, right) => {
     if (left.riskScore !== right.riskScore) return right.riskScore - left.riskScore;
-    return left.filePath.localeCompare(right.filePath, undefined, { numeric: true, sensitivity: "base" });
+    return left.filePath.localeCompare(right.filePath, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
   });
 }
 
@@ -368,7 +377,9 @@ function parseDiffReviewFiles(normalizedDiff: string): ParsedDiffReviewFiles | n
     const summaries = files.map((fileDiff, index) =>
       summarizeFile(
         fileDiff,
-        sections[index] ?? sections.find((section) => section.includes(resolveFileDiffPath(fileDiff))) ?? "",
+        sections[index] ??
+          sections.find((section) => section.includes(resolveFileDiffPath(fileDiff))) ??
+          "",
       ),
     );
     return { files, sections, summaries };
@@ -416,7 +427,9 @@ export function rankDiffReviewFiles(diffPatch: string, limit = 12): DiffReviewFi
   const parsed = parseDiffReviewFiles(normalized);
   if (parsed) return sortByRiskThenPath([...parsed.summaries]).slice(0, limit);
 
-  return sortByRiskThenPath(splitPatchIntoFileSections(normalized).map(fallbackPriorityFromSection)).slice(0, limit);
+  return sortByRiskThenPath(
+    splitPatchIntoFileSections(normalized).map(fallbackPriorityFromSection),
+  ).slice(0, limit);
 }
 
 export function buildDiffReviewPromptContext(
@@ -425,7 +438,12 @@ export function buildDiffReviewPromptContext(
 ): DiffReviewPromptContext {
   const normalized = diffPatch.trim();
   if (normalized.length === 0) {
-    return { promptDiff: "No changes", totalFileCount: 0, coveredFileCount: 0, summarizedFileCount: 0 };
+    return {
+      promptDiff: "No changes",
+      totalFileCount: 0,
+      coveredFileCount: 0,
+      summarizedFileCount: 0,
+    };
   }
 
   const parsed = parseDiffReviewFiles(normalized);
@@ -434,7 +452,10 @@ export function buildDiffReviewPromptContext(
   try {
     const { files, sections, summaries } = parsed;
     const chunks = files.flatMap((fileDiff, index) => {
-      const section = sections[index] ?? sections.find((candidate) => candidate.includes(resolveFileDiffPath(fileDiff))) ?? "";
+      const section =
+        sections[index] ??
+        sections.find((candidate) => candidate.includes(resolveFileDiffPath(fileDiff))) ??
+        "";
       return buildChunks(fileDiff, section, summaries[index]!);
     });
 
@@ -466,20 +487,22 @@ export function buildDiffReviewPromptContext(
     }
 
     const coveredFiles = new Set(includedChunks.map((chunk) => chunk.filePath));
-    const includedBlock = includedChunks.length > 0
-      ? [
-          "Selected high-signal file/hunk patches:",
-          ...includedChunks.map((chunk) => chunk.patchText),
-        ].join("\n\n")
-      : "Selected high-signal file/hunk patches:\n(none; use summaries only)";
+    const includedBlock =
+      includedChunks.length > 0
+        ? [
+            "Selected high-signal file/hunk patches:",
+            ...includedChunks.map((chunk) => chunk.patchText),
+          ].join("\n\n")
+        : "Selected high-signal file/hunk patches:\n(none; use summaries only)";
 
     const summarizedOnly = sortedSummaries.filter((summary) => !coveredFiles.has(summary.filePath));
-    const summarizedBlock = summarizedOnly.length > 0
-      ? [
-          "Summarized low-signal files without full patch context:",
-          ...summarizedOnly.map(renderSummary),
-        ].join("\n")
-      : "Summarized low-signal files without full patch context:\n(none)";
+    const summarizedBlock =
+      summarizedOnly.length > 0
+        ? [
+            "Summarized low-signal files without full patch context:",
+            ...summarizedOnly.map(renderSummary),
+          ].join("\n")
+        : "Summarized low-signal files without full patch context:\n(none)";
 
     const promptDiff = [
       `Full patch context coverage: ${coveredFiles.size}/${files.length} files.`,
@@ -503,7 +526,10 @@ export function buildDiffReviewPromptContext(
   }
 }
 
-function untrackedFilesToPatch(cwd: string, runner: GitCommandRunner): Effect.Effect<string, DiffReviewError> {
+function untrackedFilesToPatch(
+  cwd: string,
+  runner: GitCommandRunner,
+): Effect.Effect<string, DiffReviewError> {
   return Effect.gen(function* () {
     const raw = yield* runner.runGitStdout(
       "DiffCollector.untrackedFiles",
@@ -511,7 +537,10 @@ function untrackedFilesToPatch(cwd: string, runner: GitCommandRunner): Effect.Ef
       ["ls-files", "--others", "--exclude-standard", "-z"],
       { allowNonZero: true },
     );
-    const files = raw.split("\0").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+    const files = raw
+      .split("\0")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
     if (files.length === 0) return "";
 
     const patches = yield* Effect.forEach(
@@ -547,7 +576,9 @@ export function collectLocalDiff(
       { allowNonZero: true },
     );
     const untrackedPatch = yield* untrackedFilesToPatch(cwd, runner);
-    const patch = [trackedPatch, untrackedPatch].filter((section) => section.trim().length > 0).join("\n");
+    const patch = [trackedPatch, untrackedPatch]
+      .filter((section) => section.trim().length > 0)
+      .join("\n");
     return {
       patch,
       stat: trackedStat || summarizeUnifiedDiff(patch),
@@ -633,13 +664,20 @@ export function collectBranchDiff(
       remoteDefaultBranch ??
       "main";
     const safetyBecauseDefaultBranch =
-      currentBranch === null || currentBranch === baseBranch || DEFAULT_BRANCH_NAMES.has(currentBranch);
+      currentBranch === null ||
+      currentBranch === baseBranch ||
+      DEFAULT_BRANCH_NAMES.has(currentBranch);
 
     let baseRef: string | null = null;
     if (!safetyBecauseDefaultBranch) {
       baseRef = yield* firstExistingRef(
         cwd,
-        uniqueStrings([configuredBase, baseBranch, remoteRefForBranch(baseBranch), remoteDefaultRef]),
+        uniqueStrings([
+          configuredBase,
+          baseBranch,
+          remoteRefForBranch(baseBranch),
+          remoteDefaultRef,
+        ]),
         runner,
       );
     }
@@ -647,7 +685,9 @@ export function collectBranchDiff(
     const localDiff = yield* collectLocalDiff(cwd, runner);
 
     if (defaultBranchSafety || !baseRef) {
-      const sourceLabel = currentBranch ? `Local changes on ${currentBranch}` : "Local changes on detached HEAD";
+      const sourceLabel = currentBranch
+        ? `Local changes on ${currentBranch}`
+        : "Local changes on detached HEAD";
       return {
         cwd,
         diffPatch: localDiff.patch,
@@ -659,16 +699,19 @@ export function collectBranchDiff(
       };
     }
 
-    const branchPatch = yield* runner.runGitStdout(
-      "DiffCollector.branchPatch",
-      cwd,
-      ["diff", `${baseRef}...HEAD`, "--patch", "--minimal", "--no-color"],
-    );
-    const branchStat = yield* runner.runGitStdout(
-      "DiffCollector.branchStat",
-      cwd,
-      ["diff", `${baseRef}...HEAD`, "--stat", "--no-color"],
-    );
+    const branchPatch = yield* runner.runGitStdout("DiffCollector.branchPatch", cwd, [
+      "diff",
+      `${baseRef}...HEAD`,
+      "--patch",
+      "--minimal",
+      "--no-color",
+    ]);
+    const branchStat = yield* runner.runGitStdout("DiffCollector.branchStat", cwd, [
+      "diff",
+      `${baseRef}...HEAD`,
+      "--stat",
+      "--no-color",
+    ]);
     const combinedPatch = [branchPatch, localDiff.patch]
       .filter((section) => section.trim().length > 0)
       .join("\n");

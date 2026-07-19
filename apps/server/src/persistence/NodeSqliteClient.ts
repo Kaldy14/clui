@@ -162,7 +162,9 @@ const makeWithDatabase = (
         });
 
       const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
-        Effect.flatMap(Cache.get(prepareCache, sql), (prepared) => runStatement(prepared, params, raw));
+        Effect.flatMap(Cache.get(prepareCache, sql), (prepared) =>
+          runStatement(prepared, params, raw),
+        );
 
       const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
         Effect.acquireUseRelease(

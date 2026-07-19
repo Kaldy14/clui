@@ -180,7 +180,9 @@ export function resolveAvailableEditors(
   for (const editor of EDITORS) {
     const command = editor.command ?? fileManagerCommandForPlatform(platform);
     const macBinary = platform === "darwin" ? MAC_APP_BINARY[editor.id] : undefined;
-    if (macBinary ? isCommandAvailable(macBinary) : isCommandAvailable(command, { platform, env })) {
+    if (
+      macBinary ? isCommandAvailable(macBinary) : isCommandAvailable(command, { platform, env })
+    ) {
       available.push(editor.id);
     }
   }
@@ -225,7 +227,8 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
 
   if (editorDef.command) {
     const command =
-      platform === "darwin" && MAC_APP_BINARY[editorDef.id] &&
+      platform === "darwin" &&
+      MAC_APP_BINARY[editorDef.id] &&
       isCommandAvailable(MAC_APP_BINARY[editorDef.id]!)
         ? MAC_APP_BINARY[editorDef.id]!
         : editorDef.command;

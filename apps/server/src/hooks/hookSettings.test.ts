@@ -30,9 +30,13 @@ describe("buildHookSettingsJson", () => {
 
   it("uses correct hook endpoint paths", () => {
     const parsed = JSON.parse(buildHookSettingsJson(3000, "t", "s"));
-    expect(parsed.hooks.UserPromptSubmit[0].hooks[0].command).toContain("/hooks/user-prompt-submit");
+    expect(parsed.hooks.UserPromptSubmit[0].hooks[0].command).toContain(
+      "/hooks/user-prompt-submit",
+    );
     expect(parsed.hooks.PreToolUse[0].hooks[0].command).toContain("/hooks/pre-tool-use");
-    expect(parsed.hooks.PermissionRequest[0].hooks[0].command).toContain("/hooks/permission-request");
+    expect(parsed.hooks.PermissionRequest[0].hooks[0].command).toContain(
+      "/hooks/permission-request",
+    );
     expect(parsed.hooks.PostToolUse[0].hooks[0].command).toContain("/hooks/post-tool-use");
     expect(parsed.hooks.Stop[0].hooks[0].command).toContain("/hooks/stop");
     expect(parsed.hooks.Notification[0].hooks[0].command).toContain("/hooks/notification");
@@ -40,7 +44,14 @@ describe("buildHookSettingsJson", () => {
 
   it("sets timeout to 10 seconds", () => {
     const parsed = JSON.parse(buildHookSettingsJson(3000, "t", "s"));
-    for (const event of ["UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Notification"]) {
+    for (const event of [
+      "UserPromptSubmit",
+      "PreToolUse",
+      "PermissionRequest",
+      "PostToolUse",
+      "Stop",
+      "Notification",
+    ]) {
       expect(parsed.hooks[event][0].hooks[0].timeout).toBe(10);
     }
   });

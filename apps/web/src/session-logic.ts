@@ -7,11 +7,7 @@ import {
   type TurnId,
 } from "@clui/contracts";
 
-import type {
-  ProposedPlan,
-  ThreadSession,
-  TurnDiffSummary,
-} from "./types";
+import type { ProposedPlan, ThreadSession, TurnDiffSummary } from "./types";
 
 export interface PendingApproval {
   requestId: ApprovalRequestId;

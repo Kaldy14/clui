@@ -29,9 +29,7 @@ export interface CheckpointReactorShape {
    * Ensure a baseline checkpoint exists for the thread's current turn count.
    * Called on UserPromptSubmit to capture the "before" state.
    */
-  readonly ensureBaseline: (input: {
-    readonly threadId: ThreadId;
-  }) => Effect.Effect<void>;
+  readonly ensureBaseline: (input: { readonly threadId: ThreadId }) => Effect.Effect<void>;
 
   /**
    * Capture a checkpoint after a terminal turn completes (Stop hook).

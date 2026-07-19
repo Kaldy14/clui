@@ -110,7 +110,14 @@ export function createTerminal(): CachedTerminal {
       window.open(url, "_blank");
     }),
   );
-  return { terminal, fitAddon, searchAddon, container: null, lastAccessedAt: Date.now(), lastServerOffset: 0 };
+  return {
+    terminal,
+    fitAddon,
+    searchAddon,
+    container: null,
+    lastAccessedAt: Date.now(),
+    lastServerOffset: 0,
+  };
 }
 
 /** Update font settings for all cached terminals. */
@@ -193,7 +200,7 @@ function evictDetachedIfOverCap(): void {
 
   const evictable: string[] = [];
   for (const [threadId, entry] of cache) {
-    if (!entry.container && !(isThreadBusy?.(threadId))) {
+    if (!entry.container && !isThreadBusy?.(threadId)) {
       evictable.push(threadId);
     }
   }

@@ -38,7 +38,10 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
     diffAiReviewRun: _diffAiReviewRun,
     ...rest
   } = params;
-  return rest as Omit<T, "diff" | "diffTurnId" | "diffFilePath" | "diffAiReview" | "diffAiReviewRun">;
+  return rest as Omit<
+    T,
+    "diff" | "diffTurnId" | "diffFilePath" | "diffAiReview" | "diffAiReviewRun"
+  >;
 }
 
 export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRouteSearch {

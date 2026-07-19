@@ -147,7 +147,14 @@ function TerminalViewport({
       }
 
       // Ctrl+Z — prevent browser "undo" so SIGTSTP reaches the PTY
-      if (event.type === "keydown" && event.key === "z" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      if (
+        event.type === "keydown" &&
+        event.key === "z" &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
         event.preventDefault();
         event.stopPropagation();
         void sendTerminalInput("\x1a", "Failed to send suspend signal");
@@ -400,10 +407,7 @@ function TerminalViewport({
   return (
     <div className="relative h-full w-full overflow-hidden rounded-[4px]">
       {search.searchOpen && search.searchAddon && (
-        <TerminalSearchBar
-          searchAddon={search.searchAddon}
-          onClose={search.handleSearchClose}
-        />
+        <TerminalSearchBar searchAddon={search.searchAddon} onClose={search.handleSearchClose} />
       )}
       <div ref={containerRef} className="h-full w-full" />
     </div>

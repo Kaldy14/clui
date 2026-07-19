@@ -22,7 +22,7 @@ async function withFakePi<T>(output: string, run: () => Promise<T>): Promise<T> 
     [
       "#!/bin/sh",
       "cat >/dev/null",
-      "node -e 'process.stdout.write(Buffer.from(process.env.CLUI_FAKE_PI_OUTPUT_B64 || \"\", \"base64\").toString(\"utf8\"))'",
+      'node -e \'process.stdout.write(Buffer.from(process.env.CLUI_FAKE_PI_OUTPUT_B64 || "", "base64").toString("utf8"))\'',
       "",
     ].join("\n"),
   );

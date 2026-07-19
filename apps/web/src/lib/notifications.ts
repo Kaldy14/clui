@@ -1,4 +1,8 @@
-import type { OrchestrationThreadActivity, OrchestrationSessionStatus, ClaudeHookStatus } from "@clui/contracts";
+import type {
+  OrchestrationThreadActivity,
+  OrchestrationSessionStatus,
+  ClaudeHookStatus,
+} from "@clui/contracts";
 
 export function requestNotificationPermission(): void {
   if (!("Notification" in window)) return;
@@ -114,12 +118,7 @@ export function dispatchHookNotification(
   onNavigate?: () => void,
 ): void {
   if ((isCurrentThread && isWindowFocused()) || !canNotify()) return;
-  fireNotification(
-    `${subtitle} — ${threadTitle}`,
-    body,
-    `hook:${Date.now()}`,
-    onNavigate,
-  );
+  fireNotification(`${subtitle} — ${threadTitle}`, body, `hook:${Date.now()}`, onNavigate);
 }
 
 // ── Dock badge (macOS) ────────────────────────────────────────────────
@@ -133,8 +132,12 @@ const BADGE_HOOK_STATUSES: ReadonlySet<ClaudeHookStatus> = new Set([
  * Update the macOS dock badge to show how many threads need attention.
  * Call after any hookStatus change. No-ops gracefully outside Electron.
  */
-export function updateDockBadge(threads: ReadonlyArray<{ hookStatus: ClaudeHookStatus | null }>): void {
-  const count = threads.filter((t) => t.hookStatus !== null && BADGE_HOOK_STATUSES.has(t.hookStatus)).length;
+export function updateDockBadge(
+  threads: ReadonlyArray<{ hookStatus: ClaudeHookStatus | null }>,
+): void {
+  const count = threads.filter(
+    (t) => t.hookStatus !== null && BADGE_HOOK_STATUSES.has(t.hookStatus),
+  ).length;
   window.desktopBridge?.setBadgeCount(count);
 }
 

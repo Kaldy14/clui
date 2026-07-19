@@ -78,10 +78,7 @@ function nextId(): string {
 function getOrCreateWorker(): Worker {
   if (worker) return worker;
 
-  worker = new Worker(
-    new URL("../workers/whisperWorker.ts", import.meta.url),
-    { type: "module" },
-  );
+  worker = new Worker(new URL("../workers/whisperWorker.ts", import.meta.url), { type: "module" });
 
   worker.addEventListener("message", (event: MessageEvent<WorkerOutMessage>) => {
     const msg = event.data;
@@ -95,10 +92,7 @@ function getOrCreateWorker(): Worker {
     }
 
     if (msg.type === "progress") {
-      if (
-        pendingLoad?.onProgress !== undefined &&
-        typeof msg.progress.progress === "number"
-      ) {
+      if (pendingLoad?.onProgress !== undefined && typeof msg.progress.progress === "number") {
         pendingLoad.onProgress(msg.progress.progress);
       }
       return;
@@ -146,10 +140,7 @@ function getOrCreateWorker(): Worker {
   return worker;
 }
 
-function ensureModel(
-  modelTier: string,
-  onProgress?: (pct: number) => void,
-): Promise<void> {
+function ensureModel(modelTier: string, onProgress?: (pct: number) => void): Promise<void> {
   const modelId = MODEL_IDS[modelTier];
   if (!modelId) {
     return Promise.reject(
@@ -176,9 +167,7 @@ function ensureModel(
 
 function transcribe(audio: Float32Array, language: string): Promise<string> {
   if (!worker || !modelReady) {
-    return Promise.reject(
-      new Error("Model not ready. Call ensureModel first."),
-    );
+    return Promise.reject(new Error("Model not ready. Call ensureModel first."));
   }
 
   const id = nextId();

@@ -33,9 +33,7 @@ function buildSnippet(text: string, query: string): string {
   const start = Math.max(0, matchIdx - 30);
   const end = Math.min(text.length, matchIdx + query.length + 60);
   return (
-    (start > 0 ? "..." : "") +
-    text.slice(start, end).trim() +
-    (end < text.length ? "..." : "")
+    (start > 0 ? "..." : "") + text.slice(start, end).trim() + (end < text.length ? "..." : "")
   );
 }
 

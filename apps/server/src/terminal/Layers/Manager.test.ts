@@ -2,11 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  DEFAULT_TERMINAL_ID,
-  type TerminalEvent,
-  type TerminalOpenInput,
-} from "@clui/contracts";
+import { DEFAULT_TERMINAL_ID, type TerminalEvent, type TerminalOpenInput } from "@clui/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {

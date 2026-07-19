@@ -101,9 +101,7 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
       continue;
     }
     if (!(yield* fs.exists(targetPath))) {
-      yield* Effect.logWarning(
-        `[cli] Missing development icon target: ${targetPath} — skipping`,
-      );
+      yield* Effect.logWarning(`[cli] Missing development icon target: ${targetPath} — skipping`);
       continue;
     }
 

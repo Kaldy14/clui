@@ -18,7 +18,11 @@
  * The JSON defines lifecycle/tool hooks that POST the hook payload
  * (received on stdin) back to the Clui server via curl.
  */
-export function buildHookSettingsJson(serverPort: number, threadId: string, sessionId: string): string {
+export function buildHookSettingsJson(
+  serverPort: number,
+  threadId: string,
+  sessionId: string,
+): string {
   const baseUrl = `http://127.0.0.1:${serverPort}/hooks`;
   const qs = `thread=${encodeURIComponent(threadId)}&session=${encodeURIComponent(sessionId)}`;
 

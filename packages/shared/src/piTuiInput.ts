@@ -20,7 +20,9 @@ function formatCodePoint(codePoint: number): string {
 export function encodePiTuiPrompt(prompt: string): string {
   const unsafeControl = unsafeControlCodePoint(prompt);
   if (unsafeControl !== null) {
-    throw new Error(`Pi TUI prompts cannot contain control character ${formatCodePoint(unsafeControl)}`);
+    throw new Error(
+      `Pi TUI prompts cannot contain control character ${formatCodePoint(unsafeControl)}`,
+    );
   }
 
   const withoutTrailingSubmitChars = prompt.replace(/[\r\n]+$/u, "");

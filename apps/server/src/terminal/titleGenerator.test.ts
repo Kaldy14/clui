@@ -3,7 +3,11 @@ import { extractPromptText, shouldGenerateTitleFromPrompt } from "./titleGenerat
 
 describe("extractPromptText", () => {
   it("extracts prompt from top-level user_prompt field (Claude Code canonical)", () => {
-    const body = JSON.stringify({ session_id: "abc", user_prompt: "Fix the login bug", cwd: "/tmp" });
+    const body = JSON.stringify({
+      session_id: "abc",
+      user_prompt: "Fix the login bug",
+      cwd: "/tmp",
+    });
     expect(extractPromptText(body)).toBe("Fix the login bug");
   });
 

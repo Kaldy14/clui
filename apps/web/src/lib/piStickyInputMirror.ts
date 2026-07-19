@@ -74,7 +74,10 @@ function isDividerLine(line: string, width: number): boolean {
   const horizontalChars = countHorizontalRuleChars(normalized);
   if (horizontalChars < MIN_DIVIDER_HORIZONTAL_CHARS) return false;
 
-  const minWidthChars = Math.max(MIN_DIVIDER_HORIZONTAL_CHARS, Math.floor(width * MIN_DIVIDER_WIDTH_RATIO));
+  const minWidthChars = Math.max(
+    MIN_DIVIDER_HORIZONTAL_CHARS,
+    Math.floor(width * MIN_DIVIDER_WIDTH_RATIO),
+  );
   if (horizontalChars < minWidthChars) return false;
 
   const nonWhitespaceChars = countNonWhitespaceChars(normalized);
@@ -181,7 +184,9 @@ function resolvePaletteColor(index: number, palette: readonly string[]): string 
 }
 
 function resolveCellColor(
-  cell: NonNullable<ReturnType<Terminal["buffer"]["active"]["getLine"]>> extends infer _T ? any : never,
+  cell: NonNullable<ReturnType<Terminal["buffer"]["active"]["getLine"]>> extends infer _T
+    ? any
+    : never,
   channel: "fg" | "bg",
   palette: readonly string[],
   defaultColor: string,

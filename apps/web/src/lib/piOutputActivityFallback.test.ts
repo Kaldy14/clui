@@ -41,9 +41,9 @@ describe("piOutputActivityFallback", () => {
   });
 
   it("recognizes pi's carriage-return working status line", () => {
-    expect(hasPiWorkingStatusOutput("\x1b[?2026h\r\x1b[2K ⠧ \x1b[38;2;128;128;128mWorking...\x1b[39m")).toBe(
-      true,
-    );
+    expect(
+      hasPiWorkingStatusOutput("\x1b[?2026h\r\x1b[2K ⠧ \x1b[38;2;128;128;128mWorking...\x1b[39m"),
+    ).toBe(true);
     expect(hasPiWorkingStatusOutput("assistant text mentioning Working...")).toBe(false);
   });
 
@@ -62,7 +62,9 @@ describe("piOutputActivityFallback", () => {
     ctx.terminalStatusByThread.set("t1", "active");
     ctx.hookStatusByThread.set("t1", null);
 
-    expect(ctx.fallback.handleOutput("t1", "\x1b[2J\x1b[HUpdate Available\r\n~/project (main)")).toBe(false);
+    expect(
+      ctx.fallback.handleOutput("t1", "\x1b[2J\x1b[HUpdate Available\r\n~/project (main)"),
+    ).toBe(false);
     expect(ctx.hookStatusByThread.get("t1")).toBeNull();
     expect(ctx.onStatusChanged).not.toHaveBeenCalled();
   });

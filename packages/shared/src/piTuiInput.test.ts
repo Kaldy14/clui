@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  encodePiTuiPrompt,
-  PI_TUI_NEWLINE_SEQUENCE,
-  PI_TUI_SUBMIT_SEQUENCE,
-} from "./piTuiInput";
+import { encodePiTuiPrompt, PI_TUI_NEWLINE_SEQUENCE, PI_TUI_SUBMIT_SEQUENCE } from "./piTuiInput";
 
 describe("encodePiTuiPrompt", () => {
   it("exports the exact Pi CSI-u input bytes", () => {

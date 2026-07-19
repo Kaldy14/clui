@@ -137,7 +137,14 @@ function ProjectTerminalViewport({
       }
 
       // Ctrl+Z — prevent browser "undo" so SIGTSTP reaches the PTY
-      if (event.type === "keydown" && event.key === "z" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      if (
+        event.type === "keydown" &&
+        event.key === "z" &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
         event.preventDefault();
         event.stopPropagation();
         void sendTerminalInput("\x1a", "Failed to send suspend signal");
@@ -364,10 +371,7 @@ function ProjectTerminalViewport({
   return (
     <div className="relative h-full w-full overflow-hidden rounded-[4px]">
       {search.searchOpen && search.searchAddon && (
-        <TerminalSearchBar
-          searchAddon={search.searchAddon}
-          onClose={search.handleSearchClose}
-        />
+        <TerminalSearchBar searchAddon={search.searchAddon} onClose={search.handleSearchClose} />
       )}
       <div ref={containerRef} className="h-full w-full" />
     </div>
@@ -412,9 +416,7 @@ export default function ProjectTerminalDrawer({
   );
 
   const terminalIds =
-    terminalState.terminalIds.length > 0
-      ? terminalState.terminalIds
-      : [DEFAULT_THREAD_TERMINAL_ID];
+    terminalState.terminalIds.length > 0 ? terminalState.terminalIds : [DEFAULT_THREAD_TERMINAL_ID];
   const activeTerminalId = terminalIds.includes(terminalState.activeTerminalId)
     ? terminalState.activeTerminalId
     : (terminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);

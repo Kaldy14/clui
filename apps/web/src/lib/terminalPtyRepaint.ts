@@ -47,17 +47,11 @@ export function resolveTerminalRepaintResizeSequence(
 
   const { cols, rows } = normalized;
   if (rows > 1) {
-    return [
-      { cols, rows: rows - 1 },
-      normalized,
-    ];
+    return [{ cols, rows: rows - 1 }, normalized];
   }
 
   if (cols > 1) {
-    return [
-      { cols: cols - 1, rows },
-      normalized,
-    ];
+    return [{ cols: cols - 1, rows }, normalized];
   }
 
   return [];

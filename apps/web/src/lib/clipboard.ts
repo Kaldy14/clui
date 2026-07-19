@@ -27,7 +27,9 @@ export function readFileAsDataUrl(file: File): Promise<string> {
         reject(new Error("Failed to read image file."));
       }
     });
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read image file.")));
+    reader.addEventListener("error", () =>
+      reject(reader.error ?? new Error("Failed to read image file.")),
+    );
     reader.readAsDataURL(file);
   });
 }

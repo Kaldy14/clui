@@ -14,13 +14,10 @@ import type {
   TerminalStatus,
 } from "@clui/contracts";
 
-export class PiSessionError extends Schema.TaggedErrorClass<PiSessionError>()(
-  "PiSessionError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {}
+export class PiSessionError extends Schema.TaggedErrorClass<PiSessionError>()("PiSessionError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect),
+}) {}
 
 export interface PiSessionState {
   threadId: string;
@@ -59,7 +56,10 @@ export interface PiSessionManagerShape {
   ) => Effect.Effect<void, PiSessionError>;
   readonly getCommands: (
     threadId: string,
-  ) => Effect.Effect<ReadonlyArray<{ name: string; description?: string; source?: string }>, PiSessionError>;
+  ) => Effect.Effect<
+    ReadonlyArray<{ name: string; description?: string; source?: string }>,
+    PiSessionError
+  >;
   readonly sendRpcSessionCommand: (
     threadId: string,
     commandType: string,
@@ -79,9 +79,13 @@ export interface PiSessionManagerShape {
   readonly getSessionActivityStatus: (
     threadId: string,
   ) => Effect.Effect<AgentActivityStatus | null>;
-  readonly getPendingExtensionUiRequest: (threadId: string) => Effect.Effect<Record<string, unknown> | null>;
+  readonly getPendingExtensionUiRequest: (
+    threadId: string,
+  ) => Effect.Effect<Record<string, unknown> | null>;
   readonly getExtensionUiState: (threadId: string) => Effect.Effect<PiExtensionUiState>;
-  readonly getSessionUsageStats: (threadId: string) => Effect.Effect<PiSessionUsageStats | null, PiSessionError>;
+  readonly getSessionUsageStats: (
+    threadId: string,
+  ) => Effect.Effect<PiSessionUsageStats | null, PiSessionError>;
   readonly reconcileActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly setMaxActiveSessions: (maxActive: number) => Effect.Effect<void>;
   readonly hibernateAll: () => Effect.Effect<void>;
@@ -95,7 +99,6 @@ export interface PiSessionManagerShape {
   readonly dispose: Effect.Effect<void>;
 }
 
-export class PiSessionManager extends ServiceMap.Service<
-  PiSessionManager,
-  PiSessionManagerShape
->()("clui/terminal/Services/PiSession/PiSessionManager") {}
+export class PiSessionManager extends ServiceMap.Service<PiSessionManager, PiSessionManagerShape>()(
+  "clui/terminal/Services/PiSession/PiSessionManager",
+) {}

@@ -36,7 +36,10 @@ export function sanitizeGeneratedThreadTitle(raw: string | null | undefined): st
   let title = raw.trim();
   if (title.length === 0) return null;
 
-  title = title.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "").trim();
+  title = title
+    .replace(/^```(?:json)?\s*/, "")
+    .replace(/\s*```$/, "")
+    .trim();
 
   if (title.startsWith("{") && title.endsWith("}")) {
     try {
@@ -73,7 +76,8 @@ function normalizeCodexTitleError(error: unknown, fallback: string): TextGenerat
     ) {
       return new TextGenerationError({
         operation: "generateThreadTitle",
-        detail: "Codex CLI (`codex`) is required for title-generation fallback but is not available on PATH.",
+        detail:
+          "Codex CLI (`codex`) is required for title-generation fallback but is not available on PATH.",
         cause: error,
       });
     }
@@ -148,9 +152,12 @@ export const generateThreadTitleWithCodex = (
     );
     const outputPath = yield* writeTempFile("codex-title-output", "");
 
-    const cleanup = Effect.all([schemaPath, outputPath].map((filePath) => safeUnlink(filePath)), {
-      concurrency: "unbounded",
-    }).pipe(Effect.asVoid);
+    const cleanup = Effect.all(
+      [schemaPath, outputPath].map((filePath) => safeUnlink(filePath)),
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(Effect.asVoid);
 
     const runCodexCommand = Effect.gen(function* () {
       const command = ChildProcess.make(
@@ -195,11 +202,13 @@ export const generateThreadTitleWithCodex = (
         },
       );
 
-      const child = yield* commandSpawner.spawn(command).pipe(
-        Effect.mapError((cause) =>
-          normalizeCodexTitleError(cause, "Failed to spawn Codex CLI process"),
-        ),
-      );
+      const child = yield* commandSpawner
+        .spawn(command)
+        .pipe(
+          Effect.mapError((cause) =>
+            normalizeCodexTitleError(cause, "Failed to spawn Codex CLI process"),
+          ),
+        );
 
       const [stdout, stderr, exitCode] = yield* Effect.all(
         [

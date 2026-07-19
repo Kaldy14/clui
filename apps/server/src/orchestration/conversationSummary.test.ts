@@ -6,7 +6,10 @@ import { buildConversationSummary } from "./conversationSummary.ts";
 const now = new Date().toISOString();
 
 function makeMessage(
-  overrides: { id?: string; role?: OrchestrationMessage["role"]; text?: string } & Omit<Partial<OrchestrationMessage>, "id">,
+  overrides: { id?: string; role?: OrchestrationMessage["role"]; text?: string } & Omit<
+    Partial<OrchestrationMessage>,
+    "id"
+  >,
 ): OrchestrationMessage {
   const { id, ...rest } = overrides;
   return {
@@ -27,7 +30,9 @@ describe("buildConversationSummary", () => {
   });
 
   it("returns summary with single user message", () => {
-    const result = buildConversationSummary([makeMessage({ id: "m1", role: "user", text: "Hello world" })]);
+    const result = buildConversationSummary([
+      makeMessage({ id: "m1", role: "user", text: "Hello world" }),
+    ]);
     expect(result).toBeDefined();
     expect(result).toContain("Turn 1 (user): Hello world");
   });
@@ -43,7 +48,9 @@ describe("buildConversationSummary", () => {
 
   it("truncates user messages longer than 200 chars", () => {
     const longText = "a".repeat(250);
-    const result = buildConversationSummary([makeMessage({ id: "m1", role: "user", text: longText })]);
+    const result = buildConversationSummary([
+      makeMessage({ id: "m1", role: "user", text: longText }),
+    ]);
     expect(result).toBeDefined();
     expect(result).toContain("a".repeat(200) + "...");
     expect(result).not.toContain("a".repeat(201));
@@ -51,7 +58,9 @@ describe("buildConversationSummary", () => {
 
   it("truncates assistant messages longer than 500 chars", () => {
     const longText = "b".repeat(600);
-    const result = buildConversationSummary([makeMessage({ id: "m1", role: "assistant", text: longText })]);
+    const result = buildConversationSummary([
+      makeMessage({ id: "m1", role: "assistant", text: longText }),
+    ]);
     expect(result).toBeDefined();
     expect(result).toContain("b".repeat(500) + "...");
     expect(result).not.toContain("b".repeat(501));

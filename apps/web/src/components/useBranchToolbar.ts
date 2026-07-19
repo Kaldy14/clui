@@ -9,8 +9,8 @@ import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 export function useBranchToolbar(threadId: ThreadId) {
   const serverThread = useStore((store) => store.threads.find((thread) => thread.id === threadId));
   const activeProjectId = serverThread?.projectId ?? null;
-  const activeProject = useStore(
-    (store) => store.projects.find((project) => project.id === activeProjectId),
+  const activeProject = useStore((store) =>
+    store.projects.find((project) => project.id === activeProjectId),
   );
   const setThreadBranchAction = useStore((store) => store.setThreadBranch);
   const activeThreadId = serverThread?.id;

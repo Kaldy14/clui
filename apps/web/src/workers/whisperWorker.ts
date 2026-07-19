@@ -1,7 +1,4 @@
-import {
-  pipeline,
-  type AutomaticSpeechRecognitionPipeline,
-} from "@huggingface/transformers";
+import { pipeline, type AutomaticSpeechRecognitionPipeline } from "@huggingface/transformers";
 
 type IncomingMessage =
   | { type: "load"; modelId: string; id: string }
@@ -44,7 +41,9 @@ self.addEventListener("message", async (event: MessageEvent<IncomingMessage>) =>
       let dtype: "fp32" | "fp16" | "q8" | "q4" | "int8" | "uint8" | "auto" = "q8";
       try {
         if (typeof navigator !== "undefined" && "gpu" in navigator) {
-          const gpu = navigator as unknown as { gpu: { requestAdapter(): Promise<unknown | null> } };
+          const gpu = navigator as unknown as {
+            gpu: { requestAdapter(): Promise<unknown | null> };
+          };
           const adapter = await gpu.gpu.requestAdapter();
           if (adapter) {
             device = "webgpu";
@@ -59,11 +58,7 @@ self.addEventListener("message", async (event: MessageEvent<IncomingMessage>) =>
       asr = (await pipeline("automatic-speech-recognition", modelId, {
         device,
         dtype,
-        progress_callback: (progress: {
-          status: string;
-          file?: string;
-          progress?: number;
-        }) => {
+        progress_callback: (progress: { status: string; file?: string; progress?: number }) => {
           self.postMessage({
             type: "progress",
             progress,
@@ -105,9 +100,7 @@ self.addEventListener("message", async (event: MessageEvent<IncomingMessage>) =>
         stride_length_s: 5,
       });
 
-      const text = Array.isArray(result)
-        ? (result[0]?.text ?? "")
-        : (result.text ?? "");
+      const text = Array.isArray(result) ? (result[0]?.text ?? "") : (result.text ?? "");
 
       self.postMessage({ type: "result", text, id } satisfies OutgoingMessage);
     } catch (err) {

@@ -289,9 +289,7 @@ export default function ProjectScriptsControl({
             title={`Run ${primaryScript.name}`}
           >
             <ScriptIcon icon={primaryScript.icon} />
-            <span className="ml-0.5">
-              {primaryScript.name}
-            </span>
+            <span className="ml-0.5">{primaryScript.name}</span>
           </Button>
           <GroupSeparator />
           <Menu highlightItemOnHover={false}>
@@ -354,9 +352,7 @@ export default function ProjectScriptsControl({
       ) : (
         <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
           <PlusIcon className="size-3.5" />
-          <span className="ml-0.5">
-            Add action
-          </span>
+          <span className="ml-0.5">Add action</span>
         </Button>
       )}
 
@@ -480,9 +476,7 @@ export default function ProjectScriptsControl({
                 <label className="flex items-center gap-2 rounded-md border border-border/70 px-3 py-2 text-sm">
                   <Checkbox
                     checked={openTerminalOnWorktreeCreate}
-                    onCheckedChange={(checked) =>
-                      setOpenTerminalOnWorktreeCreate(checked === true)
-                    }
+                    onCheckedChange={(checked) => setOpenTerminalOnWorktreeCreate(checked === true)}
                   />
                   <span>Open terminal while running</span>
                 </label>

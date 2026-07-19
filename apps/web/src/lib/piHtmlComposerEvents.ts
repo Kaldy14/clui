@@ -21,7 +21,9 @@ function isPiHtmlComposerInsertDetail(value: unknown): value is PiHtmlComposerIn
 }
 
 export function dispatchPiHtmlComposerInsert(detail: PiHtmlComposerInsertDetail): void {
-  window.dispatchEvent(new CustomEvent<PiHtmlComposerInsertDetail>(PI_HTML_COMPOSER_INSERT_EVENT, { detail }));
+  window.dispatchEvent(
+    new CustomEvent<PiHtmlComposerInsertDetail>(PI_HTML_COMPOSER_INSERT_EVENT, { detail }),
+  );
 }
 
 export function addPiHtmlComposerInsertListener(

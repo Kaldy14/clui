@@ -4,7 +4,12 @@ export const ATTACHMENTS_ROUTE_PREFIX = "/attachments";
 
 export function normalizeAttachmentRelativePath(rawRelativePath: string): string | null {
   const normalized = path.normalize(rawRelativePath).replace(/^[/\\]+/, "");
-  if (normalized.length === 0 || normalized === "." || normalized.startsWith("..") || normalized.includes("\0")) {
+  if (
+    normalized.length === 0 ||
+    normalized === "." ||
+    normalized.startsWith("..") ||
+    normalized.includes("\0")
+  ) {
     return null;
   }
   return normalized.replace(/\\/g, "/");

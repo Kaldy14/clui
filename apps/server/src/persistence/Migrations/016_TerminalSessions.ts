@@ -6,9 +6,7 @@ export default Effect.gen(function* () {
 
   // Check existing columns to make migration idempotent
   const columns = yield* sql`PRAGMA table_info(projection_threads)`;
-  const columnNames = new Set(
-    (columns as ReadonlyArray<{ name: string }>).map((c) => c.name),
-  );
+  const columnNames = new Set((columns as ReadonlyArray<{ name: string }>).map((c) => c.name));
 
   if (!columnNames.has("claude_session_id")) {
     yield* sql`

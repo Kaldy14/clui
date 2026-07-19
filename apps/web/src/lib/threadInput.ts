@@ -21,9 +21,7 @@ export function writeHarnessInput(
   threadId: ThreadId,
   data: string,
 ): Promise<void> {
-  return harness === "pi"
-    ? api.pi.write({ threadId, data })
-    : api.claude.write({ threadId, data });
+  return harness === "pi" ? api.pi.write({ threadId, data }) : api.claude.write({ threadId, data });
 }
 
 export function submitThreadPrompt(

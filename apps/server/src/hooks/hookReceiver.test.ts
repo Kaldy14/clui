@@ -35,9 +35,7 @@ describe("parseHookInput", () => {
   });
 
   it("extracts session_id from nested notification object", () => {
-    const result = parseHookInput(
-      JSON.stringify({ notification: { session_id: "nested-1" } }),
-    );
+    const result = parseHookInput(JSON.stringify({ notification: { session_id: "nested-1" } }));
     expect(result.sessionId).toBe("nested-1");
   });
 
@@ -47,9 +45,7 @@ describe("parseHookInput", () => {
   });
 
   it("extracts working_directory from root", () => {
-    const result = parseHookInput(
-      JSON.stringify({ working_directory: "/tmp/work" }),
-    );
+    const result = parseHookInput(JSON.stringify({ working_directory: "/tmp/work" }));
     expect(result.cwd).toBe("/tmp/work");
   });
 });
@@ -91,9 +87,7 @@ describe("summarizeNotification", () => {
 
   it("truncates long body to 180 chars", () => {
     const longMessage = "x".repeat(300);
-    const result = summarizeNotification(
-      JSON.stringify({ message: longMessage }),
-    );
+    const result = summarizeNotification(JSON.stringify({ message: longMessage }));
     expect(result.body.length).toBeLessThanOrEqual(180);
     expect(result.body.endsWith("\u2026")).toBe(true);
   });
@@ -179,7 +173,10 @@ describe("buildPermissionRequestEvents", () => {
   });
 
   it("returns needsInput for AskUserQuestion tool", () => {
-    const events = buildPermissionRequestEvents("thread-1", JSON.stringify({ tool_name: "AskUserQuestion" }));
+    const events = buildPermissionRequestEvents(
+      "thread-1",
+      JSON.stringify({ tool_name: "AskUserQuestion" }),
+    );
     expect(events).toHaveLength(1);
     if (events[0]!.type === "hookStatus") {
       expect(events[0]!.hookStatus).toBe("needsInput");
@@ -187,7 +184,10 @@ describe("buildPermissionRequestEvents", () => {
   });
 
   it("returns needsInput for AskFollowupQuestion tool", () => {
-    const events = buildPermissionRequestEvents("thread-1", JSON.stringify({ tool_name: "AskFollowupQuestion" }));
+    const events = buildPermissionRequestEvents(
+      "thread-1",
+      JSON.stringify({ tool_name: "AskFollowupQuestion" }),
+    );
     expect(events).toHaveLength(1);
     if (events[0]!.type === "hookStatus") {
       expect(events[0]!.hookStatus).toBe("needsInput");
@@ -243,10 +243,7 @@ describe("buildNotificationEvents", () => {
   });
 
   it("does not emit hookStatus for waiting notifications", () => {
-    const events = buildNotificationEvents(
-      "thread-5",
-      JSON.stringify({ type: "idle" }),
-    );
+    const events = buildNotificationEvents("thread-5", JSON.stringify({ type: "idle" }));
     expect(events).toHaveLength(1);
     expect(events[0]!.type).toBe("hookNotification");
   });

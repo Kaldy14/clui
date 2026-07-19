@@ -70,7 +70,9 @@ export function useSpeechToText(threadId: ThreadId, harness: CodingHarness): Use
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const isPermission = msg.includes("NotAllowedError") || msg.includes("Permission");
-        setError(isPermission ? "Microphone permission denied. Check your browser/system settings." : msg);
+        setError(
+          isPermission ? "Microphone permission denied. Check your browser/system settings." : msg,
+        );
         setStatus("idle");
       }
     })();
@@ -109,7 +111,9 @@ export function useSpeechToText(threadId: ThreadId, harness: CodingHarness): Use
           setError("Failed to send transcription to terminal");
         } else {
           await submitThreadPrompt(api, harness, threadId, prompt).catch((err) => {
-            setError(err instanceof Error ? err.message : "Failed to send transcription to terminal");
+            setError(
+              err instanceof Error ? err.message : "Failed to send transcription to terminal",
+            );
           });
         }
         setStatus("idle");

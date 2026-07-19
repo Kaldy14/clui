@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-19 — Normalize repository formatting
+
+**Problem:** `bun run fmt:check` failed in CI because `oxfmt --check` reported formatting issues in 94 tracked files.
+
+**Root cause:** The checked-in source, tests, styles, scripts, and project documentation were not normalized to the formatting rules enforced by the repository's current `oxfmt` version.
+
+**Fix:** Ran the repository formatter across the reported files and verified the result with the formatting check, lint, and TypeScript typecheck.
+
+**Affected files:**
+
+- The 94 files reported by `oxfmt --check` across root documentation, `apps/desktop`, `apps/server`, `apps/web`, `assets`, `packages/shared`, and `scripts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-19 — Use standard GitHub-hosted runners and limit macOS to arm64
 
 **Problem:** CI depended on a third-party Blacksmith runner, and desktop releases built an unnecessary macOS Intel artifact alongside macOS arm64, Linux x64, and Windows x64.

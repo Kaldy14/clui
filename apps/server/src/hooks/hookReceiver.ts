@@ -6,7 +6,11 @@
  *
  * @module hookReceiver
  */
-import type { AgentActivityStatus, ClaudeHookNotificationCategory, ClaudeSessionEvent } from "@clui/contracts";
+import type {
+  AgentActivityStatus,
+  ClaudeHookNotificationCategory,
+  ClaudeSessionEvent,
+} from "@clui/contracts";
 import { classifyAgentActivityFromTool } from "@clui/shared/agentActivity";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -20,10 +24,7 @@ interface ParsedHookInput {
   rawObject: Record<string, unknown> | null;
 }
 
-function firstString(
-  obj: Record<string, unknown>,
-  keys: string[],
-): string | null {
+function firstString(obj: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = obj[key];
     if (typeof value === "string" && value.length > 0) return value;
@@ -38,7 +39,11 @@ function extractSessionId(obj: Record<string, unknown>): string | null {
   for (const nestedKey of ["notification", "data", "session", "context"]) {
     const nested = obj[nestedKey];
     if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-      const found = firstString(nested as Record<string, unknown>, ["session_id", "sessionId", "id"]);
+      const found = firstString(nested as Record<string, unknown>, [
+        "session_id",
+        "sessionId",
+        "id",
+      ]);
       if (found) return found;
     }
   }
@@ -46,12 +51,22 @@ function extractSessionId(obj: Record<string, unknown>): string | null {
 }
 
 function extractCwd(obj: Record<string, unknown>): string | null {
-  const direct = firstString(obj, ["cwd", "working_directory", "workingDirectory", "project_dir", "projectDir"]);
+  const direct = firstString(obj, [
+    "cwd",
+    "working_directory",
+    "workingDirectory",
+    "project_dir",
+    "projectDir",
+  ]);
   if (direct) return direct;
   for (const nestedKey of ["notification", "data", "context"]) {
     const nested = obj[nestedKey];
     if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-      const found = firstString(nested as Record<string, unknown>, ["cwd", "working_directory", "workingDirectory"]);
+      const found = firstString(nested as Record<string, unknown>, [
+        "cwd",
+        "working_directory",
+        "workingDirectory",
+      ]);
       if (found) return found;
     }
   }
@@ -80,7 +95,10 @@ export function parseHookInput(rawBody: string): ParsedHookInput {
 
 // ── Notification classification ───────────────────────────────────────
 
-function classifyNotification(signal: string, message: string): { subtitle: string; body: string; category: ClaudeHookNotificationCategory } {
+function classifyNotification(
+  signal: string,
+  message: string,
+): { subtitle: string; body: string; category: ClaudeHookNotificationCategory } {
   const lower = `${signal} ${message}`.toLowerCase();
 
   if (lower.includes("permission") || lower.includes("approve") || lower.includes("approval")) {
@@ -99,7 +117,13 @@ function classifyNotification(signal: string, message: string): { subtitle: stri
     };
   }
 
-  if (lower.includes("idle") || lower.includes("wait") || lower.includes("input") || lower.includes("prompt") || lower.includes("question")) {
+  if (
+    lower.includes("idle") ||
+    lower.includes("wait") ||
+    lower.includes("input") ||
+    lower.includes("prompt") ||
+    lower.includes("question")
+  ) {
     return {
       subtitle: "Waiting",
       body: message || "Claude is waiting for your input",
@@ -123,7 +147,12 @@ function truncate(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength - 1)}\u2026`;
 }
 
-export function summarizeNotification(rawBody: string): { title: string; subtitle: string; body: string; category: ClaudeHookNotificationCategory } {
+export function summarizeNotification(rawBody: string): {
+  title: string;
+  subtitle: string;
+  body: string;
+  category: ClaudeHookNotificationCategory;
+} {
   const { rawObject } = parseHookInput(rawBody);
   const title = "Claude Code";
 
@@ -134,22 +163,34 @@ export function summarizeNotification(rawBody: string): { title: string; subtitl
   }
 
   // Extract signal parts (event type, kind, reason)
-  const nested = (rawObject.notification as Record<string, unknown>) ??
-    (rawObject.data as Record<string, unknown>) ?? {};
+  const nested =
+    (rawObject.notification as Record<string, unknown>) ??
+    (rawObject.data as Record<string, unknown>) ??
+    {};
 
   const signalParts = [
     firstString(rawObject, ["event", "event_name", "hook_event_name", "type", "kind"]),
     firstString(rawObject, ["notification_type", "matcher", "reason"]),
-    typeof nested === "object" && nested !== null ? firstString(nested as Record<string, unknown>, ["type", "kind", "reason"]) : null,
+    typeof nested === "object" && nested !== null
+      ? firstString(nested as Record<string, unknown>, ["type", "kind", "reason"])
+      : null,
   ].filter(Boolean);
 
   // Extract message
-  const message = [
-    firstString(rawObject, ["message", "body", "text", "prompt", "error", "description"]),
-    typeof nested === "object" && nested !== null
-      ? firstString(nested as Record<string, unknown>, ["message", "body", "text", "prompt", "error", "description"])
-      : null,
-  ].find(Boolean) ?? "Claude needs your input";
+  const message =
+    [
+      firstString(rawObject, ["message", "body", "text", "prompt", "error", "description"]),
+      typeof nested === "object" && nested !== null
+        ? firstString(nested as Record<string, unknown>, [
+            "message",
+            "body",
+            "text",
+            "prompt",
+            "error",
+            "description",
+          ])
+        : null,
+    ].find(Boolean) ?? "Claude needs your input";
   const normalizedMessage = normalizeWhitespace(message);
   const signal = signalParts.join(" ");
   const classified = classifyNotification(signal, normalizedMessage);
@@ -231,12 +272,13 @@ export function buildPreToolUseEvents(threadId: string, rawBody: string): Claude
   return buildActivityStatusEventsFromTool(threadId, rawBody);
 }
 
-export function buildPermissionRequestEvents(threadId: string, rawBody: string): ClaudeSessionEvent[] {
+export function buildPermissionRequestEvents(
+  threadId: string,
+  rawBody: string,
+): ClaudeSessionEvent[] {
   if (isAskTool(rawBody)) {
     // Ask tools are not permission requests — they're questions to the user
-    return [
-      { type: "hookStatus", threadId, createdAt: now(), hookStatus: "needsInput" },
-    ];
+    return [{ type: "hookStatus", threadId, createdAt: now(), hookStatus: "needsInput" }];
   }
   return [
     ...buildActivityStatusEventsFromTool(threadId, rawBody),
@@ -256,9 +298,7 @@ export function buildPostToolUseEvents(threadId: string): ClaudeSessionEvent[] {
 export function buildStopEvents(threadId: string): ClaudeSessionEvent[] {
   // Claude finished responding — clear status.
   // Matches cmux's clearClaudeStatus() on stop.
-  return [
-    { type: "hookStatus", threadId, createdAt: now(), hookStatus: "completed" },
-  ];
+  return [{ type: "hookStatus", threadId, createdAt: now(), hookStatus: "completed" }];
 }
 
 export function buildNotificationEvents(threadId: string, rawBody: string): ClaudeSessionEvent[] {
@@ -284,7 +324,9 @@ export function buildNotificationEvents(threadId: string, rawBody: string): Clau
 
 // ── HTTP body reader ──────────────────────────────────────────────────
 
-export function readRequestBody(req: { on: (event: string, cb: (...args: unknown[]) => void) => void }): Promise<string> {
+export function readRequestBody(req: {
+  on: (event: string, cb: (...args: unknown[]) => void) => void;
+}): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalBytes = 0;

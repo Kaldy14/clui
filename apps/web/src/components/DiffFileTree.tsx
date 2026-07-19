@@ -18,7 +18,9 @@ interface DiffFileTreeProps {
   onToggleViewed: (filePath: string) => void;
   resolveFilePath: (fileDiff: FileDiffMetadata) => string;
   getFileStats: (fileDiff: FileDiffMetadata) => { additions: number; deletions: number };
-  reviewDecorations?: ReadonlyMap<string, { rank: number; significance: "high" | "medium" | "low" }> | undefined;
+  reviewDecorations?:
+    | ReadonlyMap<string, { rank: number; significance: "high" | "medium" | "low" }>
+    | undefined;
 }
 
 type ChangeKind = GitStatusEntry["status"];

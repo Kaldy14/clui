@@ -38,9 +38,7 @@ const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 function ProjectTerminalDrawers() {
   const projects = useStore((s) => s.projects);
   const terminalStateByThreadId = useTerminalStateStore((s) => s.terminalStateByThreadId);
-  const projectTerminalCwdByThreadId = useTerminalStateStore(
-    (s) => s.projectTerminalCwdByThreadId,
-  );
+  const projectTerminalCwdByThreadId = useTerminalStateStore((s) => s.projectTerminalCwdByThreadId);
   const setProjectTerminalOpen = useTerminalStateStore((s) => s.setProjectTerminalOpen);
   const setTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
 
@@ -144,7 +142,9 @@ function ChatRouteLayout() {
             params: { threadId: routeThreadId },
             search: (previous: Record<string, unknown>) => {
               const rest = stripDiffSearchParams(previous);
-              return previous.diff === "1" && previous.diffAiReview !== "1" ? rest : { ...rest, diff: "1" };
+              return previous.diff === "1" && previous.diffAiReview !== "1"
+                ? rest
+                : { ...rest, diff: "1" };
             },
           });
         }
@@ -186,7 +186,8 @@ function ChatRouteLayout() {
           const tsState = useTerminalStateStore.getState();
           const syntheticId = projectTerminalThreadId(currentThread.projectId);
           const terminalState = tsState.terminalStateByThreadId[syntheticId];
-          const currentCwd = tsState.projectTerminalCwdByThreadId[syntheticId] ?? project?.cwd ?? null;
+          const currentCwd =
+            tsState.projectTerminalCwdByThreadId[syntheticId] ?? project?.cwd ?? null;
           const shouldClose = terminalState?.terminalOpen === true && currentCwd === targetCwd;
           tsState.setProjectTerminalOpen(syntheticId, !shouldClose, targetCwd);
         }
@@ -197,7 +198,9 @@ function ChatRouteLayout() {
       if (isThreadNextShortcut(event, keybindings) || isThreadPrevShortcut(event, keybindings)) {
         event.preventDefault();
         const isNext = isThreadNextShortcut(event, keybindings);
-        const allThreads = useStore.getState().threads.filter((t) => t.terminalStatus !== undefined);
+        const allThreads = useStore
+          .getState()
+          .threads.filter((t) => t.terminalStatus !== undefined);
         if (allThreads.length === 0) return;
         const currentIndex = allThreads.findIndex((t) => t.id === routeThreadId);
         const nextIndex = isNext
@@ -223,7 +226,9 @@ function ChatRouteLayout() {
             });
             return;
           }
-          window.dispatchEvent(new CustomEvent("clui:speech-toggle", { detail: { threadId: routeThreadId } }));
+          window.dispatchEvent(
+            new CustomEvent("clui:speech-toggle", { detail: { threadId: routeThreadId } }),
+          );
         }
         return;
       }
@@ -258,7 +263,12 @@ function ChatRouteLayout() {
             if (project) {
               const script = project.scripts.find((s) => s.id === scriptId);
               if (script) {
-                runProjectScriptInTerminal(script, currentThread.id, project, currentThread.worktreePath);
+                runProjectScriptInTerminal(
+                  script,
+                  currentThread.id,
+                  project,
+                  currentThread.worktreePath,
+                );
               }
             }
           }

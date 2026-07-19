@@ -36,11 +36,14 @@ export function SpeechControl({
     void whisperManager.isModelCached(tier).then((cached) => {
       if (!cached) return;
       // Model files are in the Cache API — load silently (instant from cache)
-      void whisperManager.ensureModel(tier).then(() => {
-        useSpeechStore.getState().setModelDownloaded(true);
-      }).catch(() => {
-        // Model load failed — user will see download popover next time
-      });
+      void whisperManager
+        .ensureModel(tier)
+        .then(() => {
+          useSpeechStore.getState().setModelDownloaded(true);
+        })
+        .catch(() => {
+          // Model load failed — user will see download popover next time
+        });
     });
   }, [modelDownloaded]);
 
@@ -85,7 +88,9 @@ export function SpeechControl({
             <MicIcon className="absolute inset-0 m-auto size-3" />
           </svg>
         </TooltipTrigger>
-        <TooltipPopup side="bottom">Downloading model ({Math.round(downloadProgress)}%)</TooltipPopup>
+        <TooltipPopup side="bottom">
+          Downloading model ({Math.round(downloadProgress)}%)
+        </TooltipPopup>
       </Tooltip>
     );
   }
@@ -143,9 +148,7 @@ export function SpeechControl({
             />
           ))}
         </span>
-        {prefix && (
-          <span className="ml-0.5 text-[10px] font-medium text-red-400">{prefix}</span>
-        )}
+        {prefix && <span className="ml-0.5 text-[10px] font-medium text-red-400">{prefix}</span>}
       </button>
     );
   }
@@ -172,11 +175,7 @@ export function SpeechControl({
         <MicIcon className="size-3" aria-hidden="true" />
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        {error
-          ? error
-          : prefix
-            ? `Voice input — prefix: "${prefix}" (⌘⇧V)`
-            : "Voice input (⌘⇧V)"}
+        {error ? error : prefix ? `Voice input — prefix: "${prefix}" (⌘⇧V)` : "Voice input (⌘⇧V)"}
       </TooltipPopup>
     </Tooltip>
   );
@@ -214,7 +213,9 @@ function SpeechDownloadPopover({ threadId: _threadId }: { threadId: ThreadId }) 
   const handleOpenSettings = useCallback(() => {
     void navigate({ to: "/settings", hash: "speech-to-text" }).then(() => {
       requestAnimationFrame(() => {
-        document.getElementById("speech-to-text")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        document
+          .getElementById("speech-to-text")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     });
   }, [navigate]);

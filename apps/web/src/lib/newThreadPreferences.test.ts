@@ -66,7 +66,11 @@ describe("newThreadPreferences", () => {
 
   it("keeps preferences isolated per project cwd", () => {
     writeNewThreadPreference("/repo-a", { envMode: "local", branch: "main", fastMode: false });
-    writeNewThreadPreference("/repo-b", { envMode: "worktree", branch: "origin/main", fastMode: false });
+    writeNewThreadPreference("/repo-b", {
+      envMode: "worktree",
+      branch: "origin/main",
+      fastMode: false,
+    });
     expect(readNewThreadPreference("/repo-a")).toEqual({
       envMode: "local",
       branch: "main",

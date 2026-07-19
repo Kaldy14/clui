@@ -63,21 +63,26 @@ export default function MemoryPressureBanner() {
     <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-700 dark:border-amber-400/15 dark:bg-amber-400/5 dark:text-amber-400">
       <MemoryStickIcon className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        {stats.clearableCount} idle terminal{stats.clearableCount !== 1 ? "s" : ""} using
-        ~{formatMB(stats.clearableEstimatedBytes)} of memory
+        {stats.clearableCount} idle terminal{stats.clearableCount !== 1 ? "s" : ""} using ~
+        {formatMB(stats.clearableEstimatedBytes)} of memory
       </span>
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button size="xs" variant="outline" onClick={handleClear} className="h-5 border-amber-500/30 text-[10px] text-amber-700 hover:bg-amber-500/10 dark:border-amber-400/20 dark:text-amber-400 dark:hover:bg-amber-400/10" />
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={handleClear}
+                className="h-5 border-amber-500/30 text-[10px] text-amber-700 hover:bg-amber-500/10 dark:border-amber-400/20 dark:text-amber-400 dark:hover:bg-amber-400/10"
+              />
             }
           >
             Clear idle
           </TooltipTrigger>
           <TooltipPopup side="bottom">
-            Free memory by disposing cached terminal buffers for inactive threads.
-            Active, working, and recently used terminals are kept safe.
+            Free memory by disposing cached terminal buffers for inactive threads. Active, working,
+            and recently used terminals are kept safe.
           </TooltipPopup>
         </Tooltip>
       </TooltipProvider>

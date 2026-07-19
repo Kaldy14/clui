@@ -64,10 +64,7 @@ describe("harness output subscriptions", () => {
     calls.push("after-register");
     await Promise.resolve();
 
-    expect(calls).toEqual([
-      { claudeThreadIds: [], piThreadIds: ["thread-1"] },
-      "after-register",
-    ]);
+    expect(calls).toEqual([{ claudeThreadIds: [], piThreadIds: ["thread-1"] }, "after-register"]);
     expect(ready).toBe(false);
 
     acknowledge();

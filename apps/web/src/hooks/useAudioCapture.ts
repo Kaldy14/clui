@@ -14,11 +14,7 @@ export interface UseAudioCaptureReturn {
  * Linearly interpolate to resample from `inputRate` to `outputRate`.
  * This avoids the unreliable AudioContext/OfflineAudioContext resampling path.
  */
-function resamplePCM(
-  input: Float32Array,
-  inputRate: number,
-  outputRate: number,
-): Float32Array {
+function resamplePCM(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
   if (inputRate === outputRate) return input;
   const ratio = inputRate / outputRate;
   const outputLength = Math.round(input.length / ratio);
@@ -154,8 +150,7 @@ export function useAudioCapture(): UseAudioCaptureReturn {
       startLevelLoop(analyser);
       setIsRecording(true);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to start recording";
+      const msg = err instanceof Error ? err.message : "Failed to start recording";
       setError(msg);
     }
   }, [startLevelLoop]);

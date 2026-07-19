@@ -29,7 +29,10 @@ import remarkGfm from "remark-gfm";
 import { useAppSettings } from "../appSettings";
 import { clipboardImageFiles, readFileAsDataUrl } from "../lib/clipboard";
 import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscriptions";
-import { addPiHtmlComposerInsertListener, dispatchPiHtmlComposerInsert } from "../lib/piHtmlComposerEvents";
+import {
+  addPiHtmlComposerInsertListener,
+  dispatchPiHtmlComposerInsert,
+} from "../lib/piHtmlComposerEvents";
 import { TERMINAL_LINE_HEIGHT } from "../lib/terminalSurfaceTheme";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { readNativeApi } from "../nativeApi";
@@ -161,7 +164,12 @@ type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" |
 type PendingPromptPreview = { id: number; text: string; transcriptBaselineCount: number };
 type PiLocalNotice = { id: number; text: string; isError: boolean; createdAt: string };
 type PiVirtualTranscriptRow =
-  | { readonly type: "item"; readonly key: string; readonly item: DisplayTranscriptItem; readonly itemIndex: number }
+  | {
+      readonly type: "item";
+      readonly key: string;
+      readonly item: DisplayTranscriptItem;
+      readonly itemIndex: number;
+    }
   | { readonly type: "thinking"; readonly key: string }
   | { readonly type: "error"; readonly key: string; readonly text: string };
 
@@ -172,7 +180,9 @@ interface PiHtmlThreadViewProps {
 }
 
 function piHtmlThemeFromApp(baseTheme: ITheme): PiHtmlTheme {
-  const piColors = document.documentElement.classList.contains("dark") ? PI_DARK_COLORS : PI_LIGHT_COLORS;
+  const piColors = document.documentElement.classList.contains("dark")
+    ? PI_DARK_COLORS
+    : PI_LIGHT_COLORS;
   return {
     ...piColors,
     terminal: {
@@ -195,7 +205,10 @@ function piHtmlThemeFromApp(baseTheme: ITheme): PiHtmlTheme {
   };
 }
 
-function appendUniqueItems(current: PiTranscriptItem[], next: readonly PiTranscriptItem[]): PiTranscriptItem[] {
+function appendUniqueItems(
+  current: PiTranscriptItem[],
+  next: readonly PiTranscriptItem[],
+): PiTranscriptItem[] {
   if (next.length === 0) return current;
   const seen = new Set(current.map((item) => item.id));
   let changed = false;
@@ -254,7 +267,10 @@ function usePiTranscript(threadId: ThreadId) {
   const [items, setItems] = useState<PiTranscriptItem[]>([]);
   const [liveItems, setLiveItems] = useState<LiveTranscriptItem[]>([]);
   const [uiRequest, setUiRequest] = useState<ExtensionUiRequest | null>(null);
-  const [extensionUiState, setExtensionUiState] = useState<PiExtensionUiState>({ statuses: {}, widgets: [] });
+  const [extensionUiState, setExtensionUiState] = useState<PiExtensionUiState>({
+    statuses: {},
+    widgets: [],
+  });
   const [editorTextRequest, setEditorTextRequest] = useState<EditorTextRequest | null>(null);
   const [usageStats, setUsageStats] = useState<PiSessionUsageStats | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
@@ -360,9 +376,13 @@ function usePiTranscript(threadId: ThreadId) {
           setUiRequest(extensionUiRequest);
           return;
         }
-        const handledExtensionUi = applyExtensionUiRequest(setExtensionUiState, event.event, (text) => {
-          setEditorTextRequest({ text, nonce: Date.now() });
-        });
+        const handledExtensionUi = applyExtensionUiRequest(
+          setExtensionUiState,
+          event.event,
+          (text) => {
+            setEditorTextRequest({ text, nonce: Date.now() });
+          },
+        );
         if (handledExtensionUi) return;
         const liveItem = liveItemFromRpcEvent(event.event, event.createdAt);
         if (liveItem) setLiveItems((current) => mergeLiveItem(current, liveItem));
@@ -370,12 +390,22 @@ function usePiTranscript(threadId: ThreadId) {
         return;
       }
       if (event.type === "error") {
-        const liveItem = liveNoticeItem({ id: `session-error:${event.createdAt}:${event.message}`, text: event.message, createdAt: event.createdAt, isError: true });
+        const liveItem = liveNoticeItem({
+          id: `session-error:${event.createdAt}:${event.message}`,
+          text: event.message,
+          createdAt: event.createdAt,
+          isError: true,
+        });
         if (liveItem) setLiveItems((current) => mergeLiveItem(current, liveItem));
         return;
       }
       if (event.type === "exited" && event.exitCode !== null && event.exitCode !== 0) {
-        const liveItem = liveNoticeItem({ id: `session-exited:${event.createdAt}:${event.exitCode}`, text: `Pi exited with code ${event.exitCode}.`, createdAt: event.createdAt, isError: true });
+        const liveItem = liveNoticeItem({
+          id: `session-exited:${event.createdAt}:${event.exitCode}`,
+          text: `Pi exited with code ${event.exitCode}.`,
+          createdAt: event.createdAt,
+          isError: true,
+        });
         if (liveItem) setLiveItems((current) => mergeLiveItem(current, liveItem));
         return;
       }
@@ -405,7 +435,17 @@ function usePiTranscript(threadId: ThreadId) {
     setUiRequest((current) => (current?.id === id ? null : current));
   }, []);
 
-  return { items, liveItems, uiRequest, extensionUiState, editorTextRequest, usageStats, clearUiRequest, loadState, error };
+  return {
+    items,
+    liveItems,
+    uiRequest,
+    extensionUiState,
+    editorTextRequest,
+    usageStats,
+    clearUiRequest,
+    loadState,
+    error,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -413,7 +453,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function modelOptionFromUnknown(value: unknown): PiModelOption | null {
-  if (!isRecord(value) || typeof value.provider !== "string" || typeof value.id !== "string") return null;
+  if (!isRecord(value) || typeof value.provider !== "string" || typeof value.id !== "string")
+    return null;
   return { provider: value.provider, id: value.id, label: `${value.provider}/${value.id}` };
 }
 
@@ -490,13 +531,29 @@ function normalizeQuestion(rawQuestion: unknown, index: number): QuestionnaireQu
   if (typeof rawQuestion.id !== "string" || typeof rawQuestion.prompt !== "string") return null;
   const options = Array.isArray(rawQuestion.options)
     ? rawQuestion.options.flatMap((rawOption): QuestionOption[] => {
-        if (!isRecord(rawOption) || typeof rawOption.value !== "string" || typeof rawOption.label !== "string") return [];
-        return [{ value: rawOption.value, label: rawOption.label, ...(typeof rawOption.description === "string" ? { description: rawOption.description } : {}) }];
+        if (
+          !isRecord(rawOption) ||
+          typeof rawOption.value !== "string" ||
+          typeof rawOption.label !== "string"
+        )
+          return [];
+        return [
+          {
+            value: rawOption.value,
+            label: rawOption.label,
+            ...(typeof rawOption.description === "string"
+              ? { description: rawOption.description }
+              : {}),
+          },
+        ];
       })
     : [];
   return {
     id: rawQuestion.id,
-    label: typeof rawQuestion.label === "string" && rawQuestion.label.trim() ? rawQuestion.label : `Q${index + 1}`,
+    label:
+      typeof rawQuestion.label === "string" && rawQuestion.label.trim()
+        ? rawQuestion.label
+        : `Q${index + 1}`,
     prompt: rawQuestion.prompt,
     ...(typeof rawQuestion.context === "string" ? { context: rawQuestion.context } : {}),
     options,
@@ -528,7 +585,8 @@ function planReviewRequestFromTitle(id: string, title: string): ExtensionUiReque
 function extensionUiRequestFromRpcEvent(event: unknown): ExtensionUiRequest | null {
   if (!isRecord(event) || event.type !== "extension_ui_request") return null;
   const method = event.method;
-  if (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor") return null;
+  if (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor")
+    return null;
   if (typeof event.id !== "string" || event.id.length === 0) return null;
   if (method === "select" && typeof event.title === "string") {
     const questionnaire = questionnaireRequestFromTitle(event.id, event.title);
@@ -541,7 +599,9 @@ function extensionUiRequestFromRpcEvent(event: unknown): ExtensionUiRequest | nu
     method,
     ...(typeof event.title === "string" ? { title: event.title } : {}),
     ...(typeof event.message === "string" ? { message: event.message } : {}),
-    ...(Array.isArray(event.options) ? { options: event.options.filter((option): option is string => typeof option === "string") } : {}),
+    ...(Array.isArray(event.options)
+      ? { options: event.options.filter((option): option is string => typeof option === "string") }
+      : {}),
     ...(typeof event.placeholder === "string" ? { placeholder: event.placeholder } : {}),
     ...(typeof event.prefill === "string" ? { prefill: event.prefill } : {}),
   };
@@ -597,7 +657,8 @@ function applyExtensionUiRequest(
   return event.method === "notify" || event.method === "setTitle";
 }
 
-const TERMINAL_CONTROL_SEQUENCE_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/gu;
+const TERMINAL_CONTROL_SEQUENCE_PATTERN =
+  /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/gu;
 
 function cleanTranscriptText(text: string): string {
   return text.replace(TERMINAL_CONTROL_SEQUENCE_PATTERN, "");
@@ -625,7 +686,7 @@ const ANSI_COLOR_MAP: Record<number, string> = {
 function ansi256Color(index: number): string | null {
   if (index >= 0 && index <= 15) {
     const base = [30, 31, 32, 33, 34, 35, 36, 37, 90, 91, 92, 93, 94, 95, 96, 97][index];
-    return base !== undefined ? ANSI_COLOR_MAP[base] ?? null : null;
+    return base !== undefined ? (ANSI_COLOR_MAP[base] ?? null) : null;
   }
   if (index >= 16 && index <= 231) {
     const value = index - 16;
@@ -713,7 +774,10 @@ function compactJson(value: unknown): string {
   }
 }
 
-function firstStringField(record: Record<string, unknown>, fields: readonly string[]): string | null {
+function firstStringField(
+  record: Record<string, unknown>,
+  fields: readonly string[],
+): string | null {
   for (const field of fields) {
     const value = record[field];
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
@@ -776,7 +840,8 @@ function itemText(item: PiTranscriptItem): string {
 }
 
 function rpcContentParts(content: unknown): PiTranscriptPart[] {
-  if (typeof content === "string") return content.length > 0 ? [{ type: "text", text: content }] : [];
+  if (typeof content === "string")
+    return content.length > 0 ? [{ type: "text", text: content }] : [];
   if (!Array.isArray(content)) return [];
 
   const parts: PiTranscriptPart[] = [];
@@ -792,7 +857,8 @@ function rpcContentParts(content: unknown): PiTranscriptPart[] {
       continue;
     }
     if (rawPart.type === "toolCall") {
-      const name = typeof rawPart.name === "string" && rawPart.name.length > 0 ? rawPart.name : "tool";
+      const name =
+        typeof rawPart.name === "string" && rawPart.name.length > 0 ? rawPart.name : "tool";
       parts.push({
         type: "toolCall",
         name,
@@ -814,7 +880,12 @@ function rpcContentParts(content: unknown): PiTranscriptPart[] {
   return parts;
 }
 
-function liveNoticeItem(input: { id: string; text: string; createdAt?: string | null; isError?: boolean }): LiveTranscriptItem | null {
+function liveNoticeItem(input: {
+  id: string;
+  text: string;
+  createdAt?: string | null;
+  isError?: boolean;
+}): LiveTranscriptItem | null {
   const text = input.text.trim();
   if (!text) return null;
   return {
@@ -828,9 +899,16 @@ function liveNoticeItem(input: { id: string; text: string; createdAt?: string | 
   };
 }
 
-function liveCompactionSummaryItem(event: Record<string, unknown>, createdAt?: string): LiveTranscriptItem | null {
-  if (event.type !== "compaction_end" || event.aborted === true || !isRecord(event.result)) return null;
-  const summary = typeof event.result.summary === "string" ? stripTrailingReadFilesSection(event.result.summary) : "";
+function liveCompactionSummaryItem(
+  event: Record<string, unknown>,
+  createdAt?: string,
+): LiveTranscriptItem | null {
+  if (event.type !== "compaction_end" || event.aborted === true || !isRecord(event.result))
+    return null;
+  const summary =
+    typeof event.result.summary === "string"
+      ? stripTrailingReadFilesSection(event.result.summary)
+      : "";
   if (!summary.trim()) return null;
   return {
     id: `rpc-compaction:${createdAt ?? ""}:${summary}`,
@@ -881,7 +959,8 @@ function liveItemFromRpcMessage(event: Record<string, unknown>): LiveTranscriptI
   const text = parts.map(renderPartText).filter(Boolean).join("\n");
   if (!text.trim()) return null;
 
-  const idSuffix = typeof message.id === "string" && message.id.length > 0 ? message.id : String(role);
+  const idSuffix =
+    typeof message.id === "string" && message.id.length > 0 ? message.id : String(role);
   const hasToolCall = parts.some((part) => part.type === "toolCall");
   return {
     id: `rpc-message:${idSuffix}`,
@@ -898,9 +977,17 @@ function liveItemFromRpcMessage(event: Record<string, unknown>): LiveTranscriptI
 }
 
 function liveItemFromRpcToolExecution(event: Record<string, unknown>): LiveTranscriptItem | null {
-  const toolName = typeof event.toolName === "string" && event.toolName.length > 0 ? event.toolName : "tool";
-  const toolCallId = typeof event.toolCallId === "string" && event.toolCallId.length > 0 ? event.toolCallId : toolName;
-  const result = isRecord(event.partialResult) ? event.partialResult : isRecord(event.result) ? event.result : null;
+  const toolName =
+    typeof event.toolName === "string" && event.toolName.length > 0 ? event.toolName : "tool";
+  const toolCallId =
+    typeof event.toolCallId === "string" && event.toolCallId.length > 0
+      ? event.toolCallId
+      : toolName;
+  const result = isRecord(event.partialResult)
+    ? event.partialResult
+    : isRecord(event.result)
+      ? event.result
+      : null;
   const resultParts = result ? rpcContentParts(result.content) : [];
   const toolCallPart: PiTranscriptPart = {
     type: "toolCall",
@@ -908,7 +995,8 @@ function liveItemFromRpcToolExecution(event: Record<string, unknown>): LiveTrans
     input: event.args ?? {},
     id: toolCallId,
   };
-  const parts: PiTranscriptPart[] = resultParts.length > 0 ? [toolCallPart, ...resultParts] : [toolCallPart];
+  const parts: PiTranscriptPart[] =
+    resultParts.length > 0 ? [toolCallPart, ...resultParts] : [toolCallPart];
   const text = parts.map(renderPartText).filter(Boolean).join("\n");
   return {
     id: `rpc-tool:${toolCallId}`,
@@ -927,7 +1015,13 @@ function liveItemFromRpcToolExecution(event: Record<string, unknown>): LiveTrans
 function liveItemFromRpcEvent(event: unknown, createdAt?: string): LiveTranscriptItem | null {
   if (!isRecord(event)) return null;
   const errorText = rpcErrorEventText(event);
-  if (errorText) return liveNoticeItem({ id: `rpc-error:${createdAt ?? ""}:${event.type}:${errorText}`, text: errorText, createdAt: createdAt ?? null, isError: true });
+  if (errorText)
+    return liveNoticeItem({
+      id: `rpc-error:${createdAt ?? ""}:${event.type}:${errorText}`,
+      text: errorText,
+      createdAt: createdAt ?? null,
+      isError: true,
+    });
   const compactionSummary = liveCompactionSummaryItem(event, createdAt);
   if (compactionSummary) return compactionSummary;
   switch (event.type) {
@@ -944,16 +1038,20 @@ function liveItemFromRpcEvent(event: unknown, createdAt?: string): LiveTranscrip
   }
 }
 
-function mergeLiveItem(current: LiveTranscriptItem[], item: LiveTranscriptItem): LiveTranscriptItem[] {
+function mergeLiveItem(
+  current: LiveTranscriptItem[],
+  item: LiveTranscriptItem,
+): LiveTranscriptItem[] {
   const next = current.filter((existing) => existing.id !== item.id);
   return [...next, item];
 }
 
 function transcriptSignature(item: PiTranscriptItem): string {
   if (item.role === "toolResult" && item.toolCallId) return `toolResult\u0000${item.toolCallId}`;
-  const text = item.role === "summary" && item.summaryKind === "compaction"
-    ? stripTrailingReadFilesSection(itemText(item))
-    : itemText(item).trim();
+  const text =
+    item.role === "summary" && item.summaryKind === "compaction"
+      ? stripTrailingReadFilesSection(itemText(item))
+      : itemText(item).trim();
   return `${item.role}\u0000${item.summaryKind ?? ""}\u0000${text}`;
 }
 
@@ -981,15 +1079,21 @@ function formatPiUsageTokenCount(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
-function formatPiUsageStats(stats: PiSessionUsageStats | null, usingCodexSubscription: boolean): string | null {
+function formatPiUsageStats(
+  stats: PiSessionUsageStats | null,
+  usingCodexSubscription: boolean,
+): string | null {
   if (!stats) return null;
   const parts: string[] = [];
   if (stats.tokens.input > 0) parts.push(`↑${formatPiUsageTokenCount(stats.tokens.input)}`);
   if (stats.tokens.output > 0) parts.push(`↓${formatPiUsageTokenCount(stats.tokens.output)}`);
   if (stats.tokens.cacheRead > 0) parts.push(`R${formatPiUsageTokenCount(stats.tokens.cacheRead)}`);
-  if (stats.tokens.cacheWrite > 0) parts.push(`W${formatPiUsageTokenCount(stats.tokens.cacheWrite)}`);
+  if (stats.tokens.cacheWrite > 0)
+    parts.push(`W${formatPiUsageTokenCount(stats.tokens.cacheWrite)}`);
   const promptTokenTotal = stats.tokens.input + stats.tokens.cacheRead + stats.tokens.cacheWrite;
-  const cacheHitRate = stats.latestCacheHitRate ?? (promptTokenTotal > 0 ? (stats.tokens.cacheRead / promptTokenTotal) * 100 : undefined);
+  const cacheHitRate =
+    stats.latestCacheHitRate ??
+    (promptTokenTotal > 0 ? (stats.tokens.cacheRead / promptTokenTotal) * 100 : undefined);
   if ((stats.tokens.cacheRead > 0 || stats.tokens.cacheWrite > 0) && cacheHitRate !== undefined) {
     parts.push(`CH${cacheHitRate.toFixed(1)}%`);
   }
@@ -997,20 +1101,25 @@ function formatPiUsageStats(stats: PiSessionUsageStats | null, usingCodexSubscri
     parts.push(`$${stats.cost.toFixed(3)}${usingCodexSubscription ? " (sub)" : ""}`);
   }
   if (stats.contextUsage) {
-    const percent = stats.contextUsage.percent === null ? "?" : stats.contextUsage.percent.toFixed(1);
+    const percent =
+      stats.contextUsage.percent === null ? "?" : stats.contextUsage.percent.toFixed(1);
     parts.push(`${percent}%/${formatPiUsageTokenCount(stats.contextUsage.contextWindow)} (auto)`);
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
-function estimatePiTranscriptRowHeight(row: PiVirtualTranscriptRow | undefined, terminalFontSize: number): number {
+function estimatePiTranscriptRowHeight(
+  row: PiVirtualTranscriptRow | undefined,
+  terminalFontSize: number,
+): number {
   const lineHeightPx = Math.max(12, terminalFontSize * TERMINAL_LINE_HEIGHT);
   if (!row || row.type === "thinking" || row.type === "error") return Math.ceil(lineHeightPx);
 
   const textLineCount = Math.max(1, itemText(row.item).split("\n").length);
   const estimatedTextLines = Math.min(PI_HTML_ESTIMATED_MAX_ROW_LINES, textLineCount);
   const extraLines =
-    row.item.role === "user" || (row.item.role === "summary" && row.item.summaryKind === "compaction")
+    row.item.role === "user" ||
+    (row.item.role === "summary" && row.item.summaryKind === "compaction")
       ? 2.8
       : row.item.role === "toolResult" || row.item.role === "bashExecution"
         ? 3.2
@@ -1018,10 +1127,21 @@ function estimatePiTranscriptRowHeight(row: PiVirtualTranscriptRow | undefined, 
   return Math.ceil((estimatedTextLines + extraLines) * lineHeightPx);
 }
 
-function piVirtualRowOuterMarginEm(row: PiVirtualTranscriptRow | undefined, toolsExpanded: boolean): number {
+function piVirtualRowOuterMarginEm(
+  row: PiVirtualTranscriptRow | undefined,
+  toolsExpanded: boolean,
+): number {
   if (!row || row.type !== "item") return 0;
-  if (row.item.role === "user" || (row.item.role === "summary" && row.item.summaryKind === "compaction")) return 1.2;
-  if ((row.item.role === "toolResult" || row.item.role === "bashExecution") && !shouldHideStandaloneToolResult(row.item, toolsExpanded)) return 1.2;
+  if (
+    row.item.role === "user" ||
+    (row.item.role === "summary" && row.item.summaryKind === "compaction")
+  )
+    return 1.2;
+  if (
+    (row.item.role === "toolResult" || row.item.role === "bashExecution") &&
+    !shouldHideStandaloneToolResult(row.item, toolsExpanded)
+  )
+    return 1.2;
   return row.item.parts.some((part) => part.type === "toolCall") ? 1.2 : 0;
 }
 
@@ -1106,13 +1226,24 @@ function PiTextBlock(props: {
         return renderHeading(children);
       },
       strong({ children }) {
-        return <strong style={{ color: props.isThinking ? props.color : props.piTheme.accent, fontWeight: 700 }}>{children}</strong>;
+        return (
+          <strong
+            style={{
+              color: props.isThinking ? props.color : props.piTheme.accent,
+              fontWeight: 700,
+            }}
+          >
+            {children}
+          </strong>
+        );
       },
       em({ children }) {
         return <em style={{ color: props.color, fontStyle: "italic" }}>{children}</em>;
       },
       del({ children }) {
-        return <span style={{ color: props.color, textDecoration: "line-through" }}>{children}</span>;
+        return (
+          <span style={{ color: props.color, textDecoration: "line-through" }}>{children}</span>
+        );
       },
       code({ children, className }) {
         const text = String(children);
@@ -1121,7 +1252,11 @@ function PiTextBlock(props: {
           <code
             className={className}
             style={{
-              color: props.isThinking ? props.color : isBlock ? props.piTheme.mdCodeBlock : props.piTheme.mdCode,
+              color: props.isThinking
+                ? props.color
+                : isBlock
+                  ? props.piTheme.mdCodeBlock
+                  : props.piTheme.mdCode,
               fontFamily: "inherit",
               fontSize: "1em",
               padding: isBlock ? 0 : "0 0.35ch",
@@ -1137,14 +1272,28 @@ function PiTextBlock(props: {
       },
       ul({ children }) {
         return (
-          <ul style={{ ...blockStyle, listStylePosition: "outside", listStyleType: "disc", paddingLeft: "3ch" }}>
+          <ul
+            style={{
+              ...blockStyle,
+              listStylePosition: "outside",
+              listStyleType: "disc",
+              paddingLeft: "3ch",
+            }}
+          >
             {children}
           </ul>
         );
       },
       ol({ children }) {
         return (
-          <ol style={{ ...blockStyle, listStylePosition: "outside", listStyleType: "decimal", paddingLeft: "3ch" }}>
+          <ol
+            style={{
+              ...blockStyle,
+              listStylePosition: "outside",
+              listStyleType: "decimal",
+              paddingLeft: "3ch",
+            }}
+          >
             {children}
           </ol>
         );
@@ -1177,7 +1326,11 @@ function PiTextBlock(props: {
             rel="noreferrer"
             target="_blank"
             title={title}
-            style={{ color: props.isThinking ? props.color : props.piTheme.mdLink, textDecoration: "underline", textDecorationThickness: "1px" }}
+            style={{
+              color: props.isThinking ? props.color : props.piTheme.mdLink,
+              textDecoration: "underline",
+              textDecorationThickness: "1px",
+            }}
           >
             {children}
           </a>
@@ -1186,12 +1339,25 @@ function PiTextBlock(props: {
       table({ children }) {
         return (
           <div style={{ maxWidth: "100%", overflowX: "auto" }}>
-            <table style={{ ...blockStyle, borderCollapse: "collapse", width: "100%" }}>{children}</table>
+            <table style={{ ...blockStyle, borderCollapse: "collapse", width: "100%" }}>
+              {children}
+            </table>
           </div>
         );
       },
       th({ children }) {
-        return <th style={{ ...tableCellStyle, color: props.isThinking ? props.color : props.piTheme.accent, fontWeight: 700, textAlign: "left" }}>{children}</th>;
+        return (
+          <th
+            style={{
+              ...tableCellStyle,
+              color: props.isThinking ? props.color : props.piTheme.accent,
+              fontWeight: 700,
+              textAlign: "left",
+            }}
+          >
+            {children}
+          </th>
+        );
       },
       td({ children }) {
         return <td style={tableCellStyle}>{children}</td>;
@@ -1200,7 +1366,11 @@ function PiTextBlock(props: {
         return <pre style={{ ...terminalBlockStyle, color: props.color }}>{"─".repeat(80)}</pre>;
       },
       img({ alt, src }) {
-        return <span style={{ color: props.color }}>{alt ? `[image: ${alt}]` : src ? `[image: ${src}]` : "[image]"}</span>;
+        return (
+          <span style={{ color: props.color }}>
+            {alt ? `[image: ${alt}]` : src ? `[image: ${src}]` : "[image]"}
+          </span>
+        );
       },
     };
   }, [props.color, props.isThinking, props.piTheme]);
@@ -1209,7 +1379,12 @@ function PiTextBlock(props: {
   return (
     <div
       className={`m-0 min-w-0 break-words text-[1em] ${props.className ?? ""}`}
-      style={{ color: props.color, fontFamily: "inherit", fontSize: "1em", lineHeight: TERMINAL_LINE_HEIGHT }}
+      style={{
+        color: props.color,
+        fontFamily: "inherit",
+        fontSize: "1em",
+        lineHeight: TERMINAL_LINE_HEIGHT,
+      }}
     >
       <ReactMarkdown components={components} remarkPlugins={[remarkGfm]}>
         {props.text}
@@ -1263,7 +1438,10 @@ function PiCompactionSummaryCard(props: { text: string; piTheme: PiHtmlTheme }) 
     >
       <span
         className="absolute left-[1ch] top-0 -translate-y-1/2 px-[0.5ch] text-[1em]"
-        style={{ backgroundColor: props.piTheme.terminal.background, color: props.piTheme.compactionLabel }}
+        style={{
+          backgroundColor: props.piTheme.terminal.background,
+          color: props.piTheme.compactionLabel,
+        }}
       >
         compaction
       </span>
@@ -1287,7 +1465,11 @@ function renderToolCallInline(name: string, input: unknown, piTheme: PiHtmlTheme
   const path = toolPathFromInput(input);
   if (normalized === "bash") {
     const command = isRecord(input) ? firstStringField(input, ["command", "cmd"]) : null;
-    return <span style={{ color: piTheme.text, fontWeight: 700 }}>{command ? `$ ${command}` : "$ bash"}</span>;
+    return (
+      <span style={{ color: piTheme.text, fontWeight: 700 }}>
+        {command ? `$ ${command}` : "$ bash"}
+      </span>
+    );
   }
   if (normalized === "read") {
     return (
@@ -1308,17 +1490,25 @@ function renderToolCallInline(name: string, input: unknown, piTheme: PiHtmlTheme
   if (normalized === "questionnaire" && isRecord(input) && Array.isArray(input.questions)) {
     const labels = input.questions.flatMap((question) => {
       if (!isRecord(question)) return [];
-      return typeof question.label === "string" && question.label.trim() ? [question.label.trim()] : [];
+      return typeof question.label === "string" && question.label.trim()
+        ? [question.label.trim()]
+        : [];
     });
     return (
       <>
         <span style={{ color: piTheme.text, fontWeight: 700 }}>questionnaire</span>
-        <span style={{ color: piTheme.muted }}>{` ${input.questions.length} ${input.questions.length === 1 ? "question" : "questions"}`}</span>
-        {labels.length > 0 && <span style={{ color: piTheme.muted }}>{` (${labels.join(", ")})`}</span>}
+        <span
+          style={{ color: piTheme.muted }}
+        >{` ${input.questions.length} ${input.questions.length === 1 ? "question" : "questions"}`}</span>
+        {labels.length > 0 && (
+          <span style={{ color: piTheme.muted }}>{` (${labels.join(", ")})`}</span>
+        )}
       </>
     );
   }
-  return <span style={{ color: piTheme.text, fontWeight: 700 }}>{formatToolCall(name, input)}</span>;
+  return (
+    <span style={{ color: piTheme.text, fontWeight: 700 }}>{formatToolCall(name, input)}</span>
+  );
 }
 
 const COLLAPSED_RESULT_TOOLS = new Set([
@@ -1349,8 +1539,14 @@ function editPreviewFromInput(input: unknown): string | null {
     const newText = typeof edit.newText === "string" ? edit.newText : null;
     if (oldText === null || newText === null) continue;
     lines.push(
-      ...oldText.split("\n").filter((line) => line.length > 0).map((line, index) => `-${index + 1} ${line}`),
-      ...newText.split("\n").filter((line) => line.length > 0).map((line, index) => `+${index + 1} ${line}`),
+      ...oldText
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line, index) => `-${index + 1} ${line}`),
+      ...newText
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line, index) => `+${index + 1} ${line}`),
     );
   }
   return lines.length > 0 ? lines.join("\n") : null;
@@ -1369,7 +1565,12 @@ function tailToolOutput(normalizedName: string, output: string): string {
   return `[last ${MAX_VISIBLE_TOOL_OUTPUT_LINES} of ${lines.length} lines]\n${lines.slice(-MAX_VISIBLE_TOOL_OUTPUT_LINES).join("\n")}`;
 }
 
-function displayToolOutput(normalizedName: string, input: unknown, fallback: string, isError: boolean): string {
+function displayToolOutput(
+  normalizedName: string,
+  input: unknown,
+  fallback: string,
+  isError: boolean,
+): string {
   if (isError) return tailToolOutput(normalizedName, fallback);
   if (normalizedName === "write") return writePreviewFromInput(input) ?? fallback;
   if (normalizedName === "edit") return editPreviewFromInput(input) ?? fallback;
@@ -1383,19 +1584,46 @@ function shouldShowToolOutput(name: string, item: PiTranscriptItem): boolean {
   return !COLLAPSED_RESULT_TOOLS.has(normalized);
 }
 
-function PiToolOutput(props: { output: string; normalizedName: string; piTheme: PiHtmlTheme; isError?: boolean }) {
+function PiToolOutput(props: {
+  output: string;
+  normalizedName: string;
+  piTheme: PiHtmlTheme;
+  isError?: boolean;
+}) {
   if (props.normalizedName !== "edit") {
-    return <PiTextBlock text={`\n${props.output}`} color={props.isError ? props.piTheme.error : props.piTheme.muted} piTheme={props.piTheme} />;
+    return (
+      <PiTextBlock
+        text={`\n${props.output}`}
+        color={props.isError ? props.piTheme.error : props.piTheme.muted}
+        piTheme={props.piTheme}
+      />
+    );
   }
 
   const lines = props.output.split("\n");
   return (
-    <pre className="m-0 whitespace-pre-wrap break-words pt-[1em] text-[1em]" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}>
+    <pre
+      className="m-0 whitespace-pre-wrap break-words pt-[1em] text-[1em]"
+      style={{ lineHeight: TERMINAL_LINE_HEIGHT }}
+    >
       {lines.map((line, index) => {
-        const isRemoval = /^-\d*\s/u.test(line) || (line.startsWith("-") && !line.startsWith("---"));
-        const isAddition = /^\+\d*\s/u.test(line) || (line.startsWith("+") && !line.startsWith("+++"));
+        const isRemoval =
+          /^-\d*\s/u.test(line) || (line.startsWith("-") && !line.startsWith("---"));
+        const isAddition =
+          /^\+\d*\s/u.test(line) || (line.startsWith("+") && !line.startsWith("+++"));
         return (
-          <span key={index} style={{ color: props.isError ? props.piTheme.error : isRemoval ? props.piTheme.error : isAddition ? props.piTheme.success : props.piTheme.muted }}>
+          <span
+            key={index}
+            style={{
+              color: props.isError
+                ? props.piTheme.error
+                : isRemoval
+                  ? props.piTheme.error
+                  : isAddition
+                    ? props.piTheme.success
+                    : props.piTheme.muted,
+            }}
+          >
             {line}
             {index < lines.length - 1 ? "\n" : ""}
           </span>
@@ -1405,7 +1633,12 @@ function PiToolOutput(props: { output: string; normalizedName: string; piTheme: 
   );
 }
 
-function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<PiTranscriptPart, { type: "toolCall" }>; piTheme: PiHtmlTheme; expanded?: boolean }) {
+function PiToolBlock(props: {
+  item: DisplayTranscriptItem;
+  toolCall?: Extract<PiTranscriptPart, { type: "toolCall" }>;
+  piTheme: PiHtmlTheme;
+  expanded?: boolean;
+}) {
   const name = props.toolCall?.name ?? props.item.toolName ?? "tool";
   const normalizedName = normalizedToolName(name);
   const input = props.toolCall?.input ?? {};
@@ -1415,7 +1648,8 @@ function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<Pi
     props.item.mergedToolOutput ?? toolOutputText(props.item.parts),
     props.item.isError === true,
   );
-  const showOutput = output.trim().length > 0 && (props.expanded === true || shouldShowToolOutput(name, props.item));
+  const showOutput =
+    output.trim().length > 0 && (props.expanded === true || shouldShowToolOutput(name, props.item));
   const liveState = props.item as PiTranscriptItem & { live?: boolean; pending?: boolean };
   const isPending = liveState.live === true && liveState.pending === true;
   return (
@@ -1431,10 +1665,20 @@ function PiToolBlock(props: { item: DisplayTranscriptItem; toolCall?: Extract<Pi
         lineHeight: TERMINAL_LINE_HEIGHT,
       }}
     >
-      <pre className="m-0 whitespace-pre-wrap break-words text-[1em]" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}>
+      <pre
+        className="m-0 whitespace-pre-wrap break-words text-[1em]"
+        style={{ lineHeight: TERMINAL_LINE_HEIGHT }}
+      >
         {renderToolCallInline(name, input, props.piTheme)}
       </pre>
-      {showOutput && <PiToolOutput output={output} normalizedName={normalizedName} piTheme={props.piTheme} isError={props.item.isError === true} />}
+      {showOutput && (
+        <PiToolOutput
+          output={output}
+          normalizedName={normalizedName}
+          piTheme={props.piTheme}
+          isError={props.item.isError === true}
+        />
+      )}
     </div>
   );
 }
@@ -1452,7 +1696,13 @@ function systemDisplayText(item: PiTranscriptItem, text: string): string {
   return modelMatch ? `Model scope: ${modelMatch[2]}` : text;
 }
 
-function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; piTheme: PiHtmlTheme; toolsExpanded?: boolean; thinkingVisible?: boolean }) {
+function PiTranscriptRow(props: {
+  item: DisplayTranscriptItem;
+  theme: ITheme;
+  piTheme: PiHtmlTheme;
+  toolsExpanded?: boolean;
+  thinkingVisible?: boolean;
+}) {
   const text = systemDisplayText(props.item, itemText(props.item));
   if (!text.trim()) return null;
 
@@ -1475,7 +1725,15 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
       <>
         {props.item.parts.map((part, index) => {
           if (part.type === "toolCall") {
-            return <PiToolBlock key={`${props.item.id}:tool:${index}`} item={props.item} toolCall={part} piTheme={props.piTheme} expanded={props.toolsExpanded === true} />;
+            return (
+              <PiToolBlock
+                key={`${props.item.id}:tool:${index}`}
+                item={props.item}
+                toolCall={part}
+                piTheme={props.piTheme}
+                expanded={props.toolsExpanded === true}
+              />
+            );
           }
           if (part.type === "thinking" && props.thinkingVisible === false) return null;
           const partText = renderPartText(part);
@@ -1483,7 +1741,11 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
             <PiTextBlock
               key={`${props.item.id}:part:${index}`}
               text={partText}
-              color={part.type === "thinking" ? props.piTheme.muted : (rowStyle(props.item, props.theme).color as string)}
+              color={
+                part.type === "thinking"
+                  ? props.piTheme.muted
+                  : (rowStyle(props.item, props.theme).color as string)
+              }
               piTheme={props.piTheme}
               isThinking={part.type === "thinking"}
             />
@@ -1494,15 +1756,30 @@ function PiTranscriptRow(props: { item: DisplayTranscriptItem; theme: ITheme; pi
   }
 
   if (props.item.role === "toolResult" || props.item.role === "bashExecution") {
-    return <PiToolBlock item={props.item} piTheme={props.piTheme} expanded={props.toolsExpanded === true} />;
+    return (
+      <PiToolBlock
+        item={props.item}
+        piTheme={props.piTheme}
+        expanded={props.toolsExpanded === true}
+      />
+    );
   }
 
-  return <PiTextBlock text={text} color={rowStyle(props.item, props.theme).color as string} piTheme={props.piTheme} />;
+  return (
+    <PiTextBlock
+      text={text}
+      color={rowStyle(props.item, props.theme).color as string}
+      piTheme={props.piTheme}
+    />
+  );
 }
 
 const MemoizedPiTranscriptRow = memo(PiTranscriptRow);
 
-function findCommandToken(value: string, cursor = value.length): { query: string; start: number; end: number } | null {
+function findCommandToken(
+  value: string,
+  cursor = value.length,
+): { query: string; start: number; end: number } | null {
   const beforeCursor = value.slice(0, cursor);
   const afterCursor = value.slice(cursor);
   if (!beforeCursor.startsWith("/")) return null;
@@ -1510,7 +1787,10 @@ function findCommandToken(value: string, cursor = value.length): { query: string
   return { query: beforeCursor.slice(1).toLowerCase(), start: 0, end: cursor };
 }
 
-function findFileToken(value: string, cursor = value.length): { prefix: string; query: string; start: number; end: number } | null {
+function findFileToken(
+  value: string,
+  cursor = value.length,
+): { prefix: string; query: string; start: number; end: number } | null {
   const beforeCursor = value.slice(0, cursor);
   const afterCursor = value.slice(cursor);
   if (/^\S/u.test(afterCursor)) return null;
@@ -1551,8 +1831,12 @@ function parseCompactSlashCommand(message: string): string | null {
   return match[1]?.trim() ?? "";
 }
 
-function suggestionTokenKey(commandToken: ReturnType<typeof findCommandToken>, fileToken: ReturnType<typeof findFileToken>): string | null {
-  if (commandToken) return `command:${commandToken.start}:${commandToken.end}:${commandToken.query}`;
+function suggestionTokenKey(
+  commandToken: ReturnType<typeof findCommandToken>,
+  fileToken: ReturnType<typeof findFileToken>,
+): string | null {
+  if (commandToken)
+    return `command:${commandToken.start}:${commandToken.end}:${commandToken.query}`;
   if (fileToken) return `file:${fileToken.start}:${fileToken.end}:${fileToken.query}`;
   return null;
 }
@@ -1620,7 +1904,10 @@ function clearPersistentDraft(key: string): void {
   browserSessionStorage()?.removeItem(fullKey);
 }
 
-function usePersistentDraftState<T>(key: string, fallback: () => T): [T, Dispatch<SetStateAction<T>>, () => void] {
+function usePersistentDraftState<T>(
+  key: string,
+  fallback: () => T,
+): [T, Dispatch<SetStateAction<T>>, () => void] {
   const [value, setValue] = useState<T>(() => readPersistentDraft(key, fallback));
   const setPersistentValue = useCallback<Dispatch<SetStateAction<T>>>(
     (action) => {
@@ -1685,11 +1972,12 @@ function normalizePendingPromptText(text: string): string {
 
 function countTranscriptPromptText(transcriptUserTexts: readonly string[], text: string): number {
   const normalizedText = normalizePendingPromptText(text);
-  return transcriptUserTexts.filter((item) => normalizePendingPromptText(item) === normalizedText).length;
+  return transcriptUserTexts.filter((item) => normalizePendingPromptText(item) === normalizedText)
+    .length;
 }
 
 function transcriptUserTexts(items: readonly PiTranscriptItem[]): string[] {
-  return items.flatMap((item) => item.role === "user" ? [itemText(item)] : []);
+  return items.flatMap((item) => (item.role === "user" ? [itemText(item)] : []));
 }
 
 function transcriptPromptHistory(items: readonly PiTranscriptItem[]): string[] {
@@ -1732,18 +2020,32 @@ function pasteMarkerFor(id: number, text: string): string {
 }
 
 function isLargePaste(text: string): boolean {
-  return text.split("\n").length > LARGE_PASTE_LINE_THRESHOLD || text.length > LARGE_PASTE_CHAR_THRESHOLD;
+  return (
+    text.split("\n").length > LARGE_PASTE_LINE_THRESHOLD || text.length > LARGE_PASTE_CHAR_THRESHOLD
+  );
 }
 
 function nextPasteId(pastes: PasteDrafts): number {
-  return Math.max(0, ...Object.keys(pastes).map((key) => Number(key)).filter(Number.isFinite)) + 1;
+  return (
+    Math.max(
+      0,
+      ...Object.keys(pastes)
+        .map((key) => Number(key))
+        .filter(Number.isFinite),
+    ) + 1
+  );
 }
 
 function expandPasteMarkers(text: string, pastes: PasteDrafts): string {
   return text.replace(PASTE_MARKER_REGEX, (marker, id: string) => pastes[id] ?? marker);
 }
 
-function insertTextIntoControlValue(value: string, insert: string, start: number, end: number): { value: string; cursor: number } {
+function insertTextIntoControlValue(
+  value: string,
+  insert: string,
+  start: number,
+  end: number,
+): { value: string; cursor: number } {
   const safeStart = Math.max(0, Math.min(start, value.length));
   const safeEnd = Math.max(safeStart, Math.min(end, value.length));
   return {
@@ -1769,7 +2071,10 @@ function markerAfterCursor(value: string, cursor: number): RegExpMatchArray | nu
   return null;
 }
 
-function markerContainingOffset(value: string, offset: number): { start: number; end: number; text: string } | null {
+function markerContainingOffset(
+  value: string,
+  offset: number,
+): { start: number; end: number; text: string } | null {
   for (const match of value.matchAll(PASTE_MARKER_REGEX)) {
     const start = match.index ?? 0;
     const end = start + match[0].length;
@@ -1778,7 +2083,11 @@ function markerContainingOffset(value: string, offset: number): { start: number;
   return null;
 }
 
-function markerIntersectingRange(value: string, start: number, end: number): { start: number; end: number; text: string } | null {
+function markerIntersectingRange(
+  value: string,
+  start: number,
+  end: number,
+): { start: number; end: number; text: string } | null {
   if (start === end) return markerContainingOffset(value, start);
   for (const match of value.matchAll(PASTE_MARKER_REGEX)) {
     const markerStart = match.index ?? 0;
@@ -1821,7 +2130,11 @@ function nextWordEnd(value: string, cursor: number): number {
   return index;
 }
 
-function extendSelectionByWord(value: string, selection: TextSelectionDraft, direction: "left" | "right"): TextSelectionDraft {
+function extendSelectionByWord(
+  value: string,
+  selection: TextSelectionDraft,
+  direction: "left" | "right",
+): TextSelectionDraft {
   const collapsed = selection.start === selection.end;
   const anchor = collapsed
     ? selection.start
@@ -1841,7 +2154,8 @@ function extendSelectionByWord(value: string, selection: TextSelectionDraft, dir
         : direction === "left"
           ? selection.start
           : selection.end;
-  const nextFocus = direction === "left" ? previousWordStart(value, focus) : nextWordEnd(value, focus);
+  const nextFocus =
+    direction === "left" ? previousWordStart(value, focus) : nextWordEnd(value, focus);
   if (nextFocus < anchor) return { start: nextFocus, end: anchor, direction: "backward" };
   if (nextFocus > anchor) return { start: anchor, end: nextFocus, direction: "forward" };
   return { start: anchor, end: anchor, direction: "none" };
@@ -1853,7 +2167,12 @@ function clampSelectionForValue(value: string, selection: TextSelectionDraft): T
   return { start, end, direction: selection.direction ?? "none" };
 }
 
-function replaceRange(value: string, start: number, end: number, insert = ""): { value: string; selection: TextSelectionDraft } {
+function replaceRange(
+  value: string,
+  start: number,
+  end: number,
+  insert = "",
+): { value: string; selection: TextSelectionDraft } {
   const safeStart = Math.max(0, Math.min(start, value.length));
   const safeEnd = Math.max(safeStart, Math.min(end, value.length));
   const nextValue = `${value.slice(0, safeStart)}${insert}${value.slice(safeEnd)}`;
@@ -1878,7 +2197,11 @@ function focusElementSoon(getElement: () => HTMLElement | null): () => void {
 }
 
 type TextControlElement = HTMLInputElement | HTMLTextAreaElement;
-type TextSelectionDraft = { start: number; end: number; direction?: "forward" | "backward" | "none" };
+type TextSelectionDraft = {
+  start: number;
+  end: number;
+  direction?: "forward" | "backward" | "none";
+};
 
 function textSelectionKey(key: string): string {
   return `${key}:selection`;
@@ -1892,9 +2215,12 @@ function clampTextSelection(value: string, selection: unknown): TextSelectionDra
   const max = value.length;
   const start = Math.max(0, Math.min(max, rawStart));
   const end = Math.max(0, Math.min(max, rawEnd));
-  const direction = selection.direction === "forward" || selection.direction === "backward" || selection.direction === "none"
-    ? selection.direction
-    : "none";
+  const direction =
+    selection.direction === "forward" ||
+    selection.direction === "backward" ||
+    selection.direction === "none"
+      ? selection.direction
+      : "none";
   return { start, end, direction };
 }
 
@@ -1911,10 +2237,12 @@ function persistTextSelection(key: string, element: TextControlElement): void {
 }
 
 function readTextSelectionDraft(key: string, value: string): TextSelectionDraft {
-  return clampTextSelection(
-    value,
-    readPersistentDraft<unknown>(textSelectionKey(key), () => null),
-  ) ?? { start: value.length, end: value.length, direction: "none" as const };
+  return (
+    clampTextSelection(
+      value,
+      readPersistentDraft<unknown>(textSelectionKey(key), () => null),
+    ) ?? { start: value.length, end: value.length, direction: "none" as const }
+  );
 }
 
 function restoreTextSelection(key: string, element: TextControlElement): void {
@@ -1935,7 +2263,10 @@ function focusTextControl(key: string, element: TextControlElement | null): void
   writeTextSelectionDraft(key, selection);
 }
 
-function focusTextControlSoon(key: string, getElement: () => TextControlElement | null): () => void {
+function focusTextControlSoon(
+  key: string,
+  getElement: () => TextControlElement | null,
+): () => void {
   let animationFrame: number | null = null;
   let timeout: number | null = null;
   const focus = () => focusTextControl(key, getElement());
@@ -1951,7 +2282,11 @@ type ExtensionUiResponse = { value?: string; confirmed?: boolean; cancelled?: bo
 type QuestionnaireRenderOption = QuestionOption & { isOther?: boolean };
 type QuestionnaireEditorMode = "custom-answer" | "note";
 
-async function sendExtensionUiResponse(threadId: ThreadId, id: string, response: ExtensionUiResponse): Promise<void> {
+async function sendExtensionUiResponse(
+  threadId: ThreadId,
+  id: string,
+  response: ExtensionUiResponse,
+): Promise<void> {
   const api = readNativeApi();
   if (!api) return;
   await api.pi.respondExtensionUi({ threadId, id, ...response });
@@ -1977,10 +2312,20 @@ function selectedStyle(theme: ITheme): CSSProperties {
 }
 
 function renderBorder(theme: ITheme): ReactNode {
-  return <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: themeAccent(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>;
+  return (
+    <pre
+      className="m-0 overflow-hidden whitespace-pre"
+      style={{ color: themeAccent(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+    >
+      {"─".repeat(180)}
+    </pre>
+  );
 }
 
-function answerArray(questions: readonly QuestionnaireQuestion[], answers: Record<string, QuestionnaireAnswer>): QuestionnaireAnswer[] {
+function answerArray(
+  questions: readonly QuestionnaireQuestion[],
+  answers: Record<string, QuestionnaireAnswer>,
+): QuestionnaireAnswer[] {
   return questions.flatMap((question) => {
     const answer = answers[question.id];
     return answer ? [answer] : [];
@@ -1995,7 +2340,10 @@ function optionsForQuestion(question: QuestionnaireQuestion): QuestionnaireRende
   return options;
 }
 
-function questionOptionIndex(question: QuestionnaireQuestion, answers: Record<string, QuestionnaireAnswer>): number {
+function questionOptionIndex(
+  question: QuestionnaireQuestion,
+  answers: Record<string, QuestionnaireAnswer>,
+): number {
   const options = optionsForQuestion(question);
   if (options.length === 0) return 0;
   const answer = answers[question.id];
@@ -2020,13 +2368,30 @@ function PiQuestionnairePrompt(props: {
   const submitTab = request.questions.length;
   const totalTabs = request.questions.length + 1;
   const draftKey = `questionnaire:${props.threadId}:${request.id}`;
-  const [currentTab, setCurrentTab, clearCurrentTab] = usePersistentDraftState(`${draftKey}:currentTab`, () => 0);
-  const [optionIndex, setOptionIndex, clearOptionIndex] = usePersistentDraftState(`${draftKey}:optionIndex`, () => 0);
-  const [answers, setAnswers, clearAnswers] = usePersistentDraftState<Record<string, QuestionnaireAnswer>>(`${draftKey}:answers`, () => ({}));
-  const [notes, setNotes, clearNotes] = usePersistentDraftState<Record<string, string>>(`${draftKey}:notes`, () => ({}));
-  const [editorMode, setEditorMode, clearEditorMode] = usePersistentDraftState<QuestionnaireEditorMode | null>(`${draftKey}:editorMode`, () => null);
-  const [editorQuestionId, setEditorQuestionId, clearEditorQuestionId] = usePersistentDraftState<string | null>(`${draftKey}:editorQuestionId`, () => null);
-  const [editorValue, setEditorValue, clearEditorValue] = usePersistentDraftState(`${draftKey}:editorValue`, () => "");
+  const [currentTab, setCurrentTab, clearCurrentTab] = usePersistentDraftState(
+    `${draftKey}:currentTab`,
+    () => 0,
+  );
+  const [optionIndex, setOptionIndex, clearOptionIndex] = usePersistentDraftState(
+    `${draftKey}:optionIndex`,
+    () => 0,
+  );
+  const [answers, setAnswers, clearAnswers] = usePersistentDraftState<
+    Record<string, QuestionnaireAnswer>
+  >(`${draftKey}:answers`, () => ({}));
+  const [notes, setNotes, clearNotes] = usePersistentDraftState<Record<string, string>>(
+    `${draftKey}:notes`,
+    () => ({}),
+  );
+  const [editorMode, setEditorMode, clearEditorMode] =
+    usePersistentDraftState<QuestionnaireEditorMode | null>(`${draftKey}:editorMode`, () => null);
+  const [editorQuestionId, setEditorQuestionId, clearEditorQuestionId] = usePersistentDraftState<
+    string | null
+  >(`${draftKey}:editorQuestionId`, () => null);
+  const [editorValue, setEditorValue, clearEditorValue] = usePersistentDraftState(
+    `${draftKey}:editorValue`,
+    () => "",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const promptRef = useRef<HTMLDivElement>(null);
@@ -2042,7 +2407,16 @@ function PiQuestionnairePrompt(props: {
     clearEditorQuestionId();
     clearEditorValue();
     clearTextSelectionDraft(editorValueKey);
-  }, [clearAnswers, clearCurrentTab, clearEditorMode, clearEditorQuestionId, clearEditorValue, clearNotes, clearOptionIndex, editorValueKey]);
+  }, [
+    clearAnswers,
+    clearCurrentTab,
+    clearEditorMode,
+    clearEditorQuestionId,
+    clearEditorValue,
+    clearNotes,
+    clearOptionIndex,
+    editorValueKey,
+  ]);
 
   useLayoutEffect(() => {
     setSubmitting(false);
@@ -2057,7 +2431,8 @@ function PiQuestionnairePrompt(props: {
   }, [editorMode, editorValueKey]);
 
   const allAnswered = request.questions.every((question) => answers[question.id]);
-  const currentQuestion = currentTab < request.questions.length ? request.questions[currentTab] : undefined;
+  const currentQuestion =
+    currentTab < request.questions.length ? request.questions[currentTab] : undefined;
   const currentOptions = currentQuestion ? optionsForQuestion(currentQuestion) : [];
   const currentNote = currentQuestion ? notes[currentQuestion.id] : undefined;
 
@@ -2095,7 +2470,12 @@ function PiQuestionnairePrompt(props: {
   );
 
   const saveAnswer = useCallback(
-    (question: QuestionnaireQuestion, option: QuestionnaireRenderOption, index: number, customValue?: string) => {
+    (
+      question: QuestionnaireQuestion,
+      option: QuestionnaireRenderOption,
+      index: number,
+      customValue?: string,
+    ) => {
       const trimmedCustom = customValue?.trim();
       const answer: QuestionnaireAnswer = option.isOther
         ? {
@@ -2125,12 +2505,21 @@ function PiQuestionnairePrompt(props: {
     [answers, currentTab, isMulti, notes, request.questions, respond, selectTab, submitTab],
   );
 
-  const openEditor = useCallback((mode: QuestionnaireEditorMode, question: QuestionnaireQuestion) => {
-    setEditorMode(mode);
-    setEditorQuestionId(question.id);
-    const existingAnswer = answers[question.id];
-    setEditorValue(mode === "note" ? (notes[question.id] ?? "") : (existingAnswer?.wasCustom ? existingAnswer.value : ""));
-  }, [answers, notes]);
+  const openEditor = useCallback(
+    (mode: QuestionnaireEditorMode, question: QuestionnaireQuestion) => {
+      setEditorMode(mode);
+      setEditorQuestionId(question.id);
+      const existingAnswer = answers[question.id];
+      setEditorValue(
+        mode === "note"
+          ? (notes[question.id] ?? "")
+          : existingAnswer?.wasCustom
+            ? existingAnswer.value
+            : "",
+      );
+    },
+    [answers, notes],
+  );
 
   const closeEditor = useCallback(() => {
     setEditorMode(null);
@@ -2146,7 +2535,12 @@ function PiQuestionnairePrompt(props: {
     if (editorMode === "custom-answer") {
       const options = optionsForQuestion(question);
       const customIndex = options.findIndex((option) => option.isOther === true);
-      saveAnswer(question, options[customIndex] ?? { value: "__other__", label: "Type something.", isOther: true }, Math.max(0, customIndex), editorValue);
+      saveAnswer(
+        question,
+        options[customIndex] ?? { value: "__other__", label: "Type something.", isOther: true },
+        Math.max(0, customIndex),
+        editorValue,
+      );
       closeEditor();
       return;
     }
@@ -2175,7 +2569,13 @@ function PiQuestionnairePrompt(props: {
         closeEditor();
         return;
       }
-      if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
         captureTerminalPromptKey(event);
         saveEditor();
         return;
@@ -2204,7 +2604,8 @@ function PiQuestionnairePrompt(props: {
       if (currentTab === submitTab) {
         if (event.key === "Enter") {
           captureTerminalPromptKey(event);
-          if (allAnswered) void respond({ answers: answerArray(request.questions, answers), cancelled: false });
+          if (allAnswered)
+            void respond({ answers: answerArray(request.questions, answers), cancelled: false });
           return;
         }
         if (event.key === "Escape") {
@@ -2242,33 +2643,84 @@ function PiQuestionnairePrompt(props: {
         void respond({ cancelled: true });
       }
     },
-    [allAnswered, answers, currentOptions, currentQuestion, currentTab, isMulti, openEditor, optionIndex, request.questions, respond, saveAnswer, selectTab, submitTab, submitting],
+    [
+      allAnswered,
+      answers,
+      currentOptions,
+      currentQuestion,
+      currentTab,
+      isMulti,
+      openEditor,
+      optionIndex,
+      request.questions,
+      respond,
+      saveAnswer,
+      selectTab,
+      submitTab,
+      submitting,
+    ],
   );
 
   return (
     <div className="shrink-0" style={promptShellStyle(theme)}>
       {renderBorder(theme)}
       {isMulti && (
-        <pre className="m-0 whitespace-pre-wrap" style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>
+        <pre
+          className="m-0 whitespace-pre-wrap"
+          style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+        >
           <span> ← </span>
           {request.questions.map((question, index) => {
             const active = index === currentTab;
             const answered = answers[question.id] !== undefined;
             return (
-              <span key={question.id} style={active ? selectedStyle(theme) : { color: answered ? theme.green ?? themeText(theme) : themeMuted(theme) }}>
+              <span
+                key={question.id}
+                style={
+                  active
+                    ? selectedStyle(theme)
+                    : { color: answered ? (theme.green ?? themeText(theme)) : themeMuted(theme) }
+                }
+              >
                 {` ${answered ? "■" : "□"} ${question.label} `}
               </span>
             );
           })}
-          <span style={currentTab === submitTab ? selectedStyle(theme) : { color: allAnswered ? theme.green ?? themeText(theme) : themeDim(theme) }}> ✓ Submit </span>
+          <span
+            style={
+              currentTab === submitTab
+                ? selectedStyle(theme)
+                : { color: allAnswered ? (theme.green ?? themeText(theme)) : themeDim(theme) }
+            }
+          >
+            {" "}
+            ✓ Submit{" "}
+          </span>
           <span> →</span>
         </pre>
       )}
       {editorMode && currentQuestion ? (
         <div>
-          <pre className="m-0 whitespace-pre-wrap" style={{ color: themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{currentQuestion.prompt}</pre>
-          {currentQuestion.context && <pre className="m-0 whitespace-pre-wrap" style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{currentQuestion.context}</pre>}
-          <pre className="m-0" style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{editorMode === "note" ? " Additional note:" : " Your answer:"}</pre>
+          <pre
+            className="m-0 whitespace-pre-wrap"
+            style={{ color: themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            {currentQuestion.prompt}
+          </pre>
+          {currentQuestion.context && (
+            <pre
+              className="m-0 whitespace-pre-wrap"
+              style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+            >
+              {currentQuestion.context}
+            </pre>
+          )}
+          <pre
+            className="m-0"
+            style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            {editorMode === "note" ? " Additional note:" : " Your answer:"}
+          </pre>
           <textarea
             ref={editorRef}
             value={editorValue}
@@ -2284,43 +2736,126 @@ function PiQuestionnairePrompt(props: {
             rows={1}
             spellCheck={false}
             className="w-full resize-none border-0 bg-transparent p-0 outline-none"
-            style={{ color: themeText(theme), caretColor: theme.cursor ?? themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+            style={{
+              color: themeText(theme),
+              caretColor: theme.cursor ?? themeText(theme),
+              lineHeight: TERMINAL_LINE_HEIGHT,
+            }}
           />
-          <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{editorMode === "note" ? " Enter to save note • Esc to cancel" : " Enter to submit • Esc to cancel"}</pre>
+          <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>
+            {editorMode === "note"
+              ? " Enter to save note • Esc to cancel"
+              : " Enter to submit • Esc to cancel"}
+          </pre>
         </div>
       ) : currentTab === submitTab ? (
         <div ref={promptRef} tabIndex={0} onKeyDown={handlePromptKeyDown} className="outline-none">
-          <pre className="m-0" style={{ color: themeAccent(theme), lineHeight: TERMINAL_LINE_HEIGHT }}> Ready to submit</pre>
+          <pre
+            className="m-0"
+            style={{ color: themeAccent(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            {" "}
+            Ready to submit
+          </pre>
           {request.questions.map((question) => {
             const answer = answers[question.id];
             if (!answer) return null;
             return (
               <div key={question.id}>
-                <pre className="m-0 whitespace-pre-wrap" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}><span style={{ color: themeMuted(theme) }}>{` ${question.label}: `}</span>{answer.wasCustom ? `(wrote) ${answer.label}` : answer.label}</pre>
-                {answer.note && <pre className="m-0 whitespace-pre-wrap" style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{`   note: ${answer.note}`}</pre>}
+                <pre
+                  className="m-0 whitespace-pre-wrap"
+                  style={{ lineHeight: TERMINAL_LINE_HEIGHT }}
+                >
+                  <span style={{ color: themeMuted(theme) }}>{` ${question.label}: `}</span>
+                  {answer.wasCustom ? `(wrote) ${answer.label}` : answer.label}
+                </pre>
+                {answer.note && (
+                  <pre
+                    className="m-0 whitespace-pre-wrap"
+                    style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+                  >{`   note: ${answer.note}`}</pre>
+                )}
               </div>
             );
           })}
-          <pre className="m-0" style={{ color: allAnswered ? theme.green ?? themeText(theme) : theme.yellow ?? themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{allAnswered ? " Press Enter to submit" : ` Unanswered: ${request.questions.filter((question) => !answers[question.id]).map((question) => question.label).join(", ")}`}</pre>
+          <pre
+            className="m-0"
+            style={{
+              color: allAnswered
+                ? (theme.green ?? themeText(theme))
+                : (theme.yellow ?? themeText(theme)),
+              lineHeight: TERMINAL_LINE_HEIGHT,
+            }}
+          >
+            {allAnswered
+              ? " Press Enter to submit"
+              : ` Unanswered: ${request.questions
+                  .filter((question) => !answers[question.id])
+                  .map((question) => question.label)
+                  .join(", ")}`}
+          </pre>
         </div>
       ) : currentQuestion ? (
         <div ref={promptRef} tabIndex={0} onKeyDown={handlePromptKeyDown} className="outline-none">
-          <pre className="m-0 whitespace-pre-wrap" style={{ color: themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}> {currentQuestion.prompt}</pre>
-          {currentQuestion.context && <pre className="m-0 whitespace-pre-wrap" style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}> {currentQuestion.context}</pre>}
+          <pre
+            className="m-0 whitespace-pre-wrap"
+            style={{ color: themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            {" "}
+            {currentQuestion.prompt}
+          </pre>
+          {currentQuestion.context && (
+            <pre
+              className="m-0 whitespace-pre-wrap"
+              style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+            >
+              {" "}
+              {currentQuestion.context}
+            </pre>
+          )}
           {currentOptions.map((option, index) => {
             const selected = index === clampIndex(optionIndex, currentOptions.length);
             return (
               <div key={`${option.value}:${index}`}>
-                <pre className="m-0 whitespace-pre-wrap" style={{ color: selected ? themeAccent(theme) : themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{`${selected ? "> " : "  "}${index + 1}. ${option.label}`}</pre>
-                {option.description && <pre className="m-0 whitespace-pre-wrap" style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{`     ${option.description}`}</pre>}
+                <pre
+                  className="m-0 whitespace-pre-wrap"
+                  style={{
+                    color: selected ? themeAccent(theme) : themeText(theme),
+                    lineHeight: TERMINAL_LINE_HEIGHT,
+                  }}
+                >{`${selected ? "> " : "  "}${index + 1}. ${option.label}`}</pre>
+                {option.description && (
+                  <pre
+                    className="m-0 whitespace-pre-wrap"
+                    style={{ color: themeMuted(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+                  >{`     ${option.description}`}</pre>
+                )}
               </div>
             );
           })}
-          {currentNote && <pre className="m-0 whitespace-pre-wrap" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}><span style={{ color: theme.green ?? themeText(theme) }}> Note: </span><span style={{ color: themeMuted(theme) }}>{currentNote}</span></pre>}
+          {currentNote && (
+            <pre className="m-0 whitespace-pre-wrap" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}>
+              <span style={{ color: theme.green ?? themeText(theme) }}> Note: </span>
+              <span style={{ color: themeMuted(theme) }}>{currentNote}</span>
+            </pre>
+          )}
         </div>
       ) : null}
-      {!editorMode && <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{isMulti ? " Tab/←→ navigate • ↑↓ select • Enter confirm • n note • Esc cancel" : " ↑↓ navigate • Enter select • n note • Esc cancel"}</pre>}
-      {error && <pre className="m-0" style={{ color: theme.red ?? themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{error}</pre>}
+      {!editorMode && (
+        <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>
+          {isMulti
+            ? " Tab/←→ navigate • ↑↓ select • Enter confirm • n note • Esc cancel"
+            : " ↑↓ navigate • Enter select • n note • Esc cancel"}
+        </pre>
+      )}
+      {error && (
+        <pre
+          className="m-0"
+          style={{ color: theme.red ?? themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+        >
+          {error}
+        </pre>
+      )}
       {renderBorder(theme)}
     </div>
   );
@@ -2331,7 +2866,11 @@ function buildLineNotes(planLines: readonly string[], notes: Record<number, stri
     .map(([lineIndex, note]) => ({ lineIndex: Number(lineIndex), note }))
     .filter((entry) => Number.isFinite(entry.lineIndex) && entry.note.trim().length > 0)
     .sort((left, right) => left.lineIndex - right.lineIndex)
-    .map(({ lineIndex, note }) => ({ lineNumber: lineIndex + 1, lineText: planLines[lineIndex] ?? "", note }));
+    .map(({ lineIndex, note }) => ({
+      lineNumber: lineIndex + 1,
+      lineText: planLines[lineIndex] ?? "",
+      note,
+    }));
 }
 
 function annotatePlan(planLines: readonly string[], notes: Record<number, string>): string {
@@ -2361,12 +2900,27 @@ function PiPlanReviewPrompt(props: {
   theme: ITheme;
 }) {
   const { request, theme } = props;
-  const planLines = useMemo(() => (request.plan.length > 0 ? request.plan.split("\n") : [""]), [request.plan]);
+  const planLines = useMemo(
+    () => (request.plan.length > 0 ? request.plan.split("\n") : [""]),
+    [request.plan],
+  );
   const draftKey = `planReview:${props.threadId}:${request.id}`;
-  const [selectedLine, setSelectedLine, clearSelectedLine] = usePersistentDraftState(`${draftKey}:selectedLine`, () => 0);
-  const [notes, setNotes, clearNotes] = usePersistentDraftState<Record<number, string>>(`${draftKey}:notes`, () => ({}));
-  const [noteLine, setNoteLine, clearNoteLine] = usePersistentDraftState<number | null>(`${draftKey}:noteLine`, () => null);
-  const [noteDraft, setNoteDraft, clearNoteDraft] = usePersistentDraftState(`${draftKey}:noteDraft`, () => "");
+  const [selectedLine, setSelectedLine, clearSelectedLine] = usePersistentDraftState(
+    `${draftKey}:selectedLine`,
+    () => 0,
+  );
+  const [notes, setNotes, clearNotes] = usePersistentDraftState<Record<number, string>>(
+    `${draftKey}:notes`,
+    () => ({}),
+  );
+  const [noteLine, setNoteLine, clearNoteLine] = usePersistentDraftState<number | null>(
+    `${draftKey}:noteLine`,
+    () => null,
+  );
+  const [noteDraft, setNoteDraft, clearNoteDraft] = usePersistentDraftState(
+    `${draftKey}:noteDraft`,
+    () => "",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const promptRef = useRef<HTMLDivElement>(null);
@@ -2393,9 +2947,12 @@ function PiPlanReviewPrompt(props: {
     return undefined;
   }, [noteDraftKey, noteLine]);
 
-  const moveSelection = useCallback((delta: number) => {
-    setSelectedLine((line) => clampIndex(line + delta, planLines.length));
-  }, [planLines.length]);
+  const moveSelection = useCallback(
+    (delta: number) => {
+      setSelectedLine((line) => clampIndex(line + delta, planLines.length));
+    },
+    [planLines.length],
+  );
 
   const saveNote = useCallback(() => {
     if (noteLine === null) return;
@@ -2439,26 +2996,32 @@ function PiPlanReviewPrompt(props: {
     [clearDrafts, notes, planLines, props, request.id, request.plan, submitting],
   );
 
-  const startNote = useCallback((text: string) => {
-    setNoteLine(selectedLine);
-    setNoteDraft(`${notes[selectedLine] ?? ""}${text}`);
-  }, [notes, selectedLine]);
+  const startNote = useCallback(
+    (text: string) => {
+      setNoteLine(selectedLine);
+      setNoteDraft(`${notes[selectedLine] ?? ""}${text}`);
+    },
+    [notes, selectedLine],
+  );
 
-  const saveNoteAndMove = useCallback((delta: number) => {
-    if (noteLine === null) return;
-    const line = noteLine;
-    const trimmed = noteDraft.trim();
-    setNotes((current) => {
-      const next = { ...current };
-      if (trimmed) next[line] = trimmed;
-      else delete next[line];
-      return next;
-    });
-    setNoteLine(null);
-    setNoteDraft("");
-    moveSelection(delta);
-    requestAnimationFrame(() => promptRef.current?.focus({ preventScroll: true }));
-  }, [moveSelection, noteDraft, noteLine]);
+  const saveNoteAndMove = useCallback(
+    (delta: number) => {
+      if (noteLine === null) return;
+      const line = noteLine;
+      const trimmed = noteDraft.trim();
+      setNotes((current) => {
+        const next = { ...current };
+        if (trimmed) next[line] = trimmed;
+        else delete next[line];
+        return next;
+      });
+      setNoteLine(null);
+      setNoteDraft("");
+      moveSelection(delta);
+      requestAnimationFrame(() => promptRef.current?.focus({ preventScroll: true }));
+    },
+    [moveSelection, noteDraft, noteLine],
+  );
 
   const handleNoteKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -2548,10 +3111,28 @@ function PiPlanReviewPrompt(props: {
   const visibleLines = planLines.slice(visibleStart, visibleStart + 18);
 
   return (
-    <div ref={promptRef} tabIndex={0} onKeyDown={handlePromptKeyDown} onWheel={handleWheel} className="shrink-0 outline-none" style={promptShellStyle(theme)}>
+    <div
+      ref={promptRef}
+      tabIndex={0}
+      onKeyDown={handlePromptKeyDown}
+      onWheel={handleWheel}
+      className="shrink-0 outline-none"
+      style={promptShellStyle(theme)}
+    >
       {renderBorder(theme)}
-      <pre className="m-0 whitespace-pre-wrap" style={{ color: themeAccent(theme), fontWeight: 700, lineHeight: TERMINAL_LINE_HEIGHT }}> {request.title}</pre>
-      {visibleStart > 0 && <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>  …</pre>}
+      <pre
+        className="m-0 whitespace-pre-wrap"
+        style={{ color: themeAccent(theme), fontWeight: 700, lineHeight: TERMINAL_LINE_HEIGHT }}
+      >
+        {" "}
+        {request.title}
+      </pre>
+      {visibleStart > 0 && (
+        <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>
+          {" "}
+          …
+        </pre>
+      )}
       {visibleLines.map((line, offset) => {
         const index = visibleStart + offset;
         const selected = index === selectedLine;
@@ -2559,13 +3140,28 @@ function PiPlanReviewPrompt(props: {
         return (
           <div key={index}>
             <pre className="m-0 whitespace-pre-wrap" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}>
-              <span style={{ color: selected ? themeAccent(theme) : themeText(theme) }}>{selected ? "> " : "  "}</span>
-              <span style={selected ? selectedStyle(theme) : { color: themeText(theme) }}>{line || " "}</span>
+              <span style={{ color: selected ? themeAccent(theme) : themeText(theme) }}>
+                {selected ? "> " : "  "}
+              </span>
+              <span style={selected ? selectedStyle(theme) : { color: themeText(theme) }}>
+                {line || " "}
+              </span>
             </pre>
-            {savedNote && noteLine !== index && <pre className="m-0 whitespace-pre-wrap" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}><span style={{ color: themeAccent(theme) }}>  note: </span><span style={{ color: themeMuted(theme) }}>{savedNote}</span></pre>}
+            {savedNote && noteLine !== index && (
+              <pre className="m-0 whitespace-pre-wrap" style={{ lineHeight: TERMINAL_LINE_HEIGHT }}>
+                <span style={{ color: themeAccent(theme) }}> note: </span>
+                <span style={{ color: themeMuted(theme) }}>{savedNote}</span>
+              </pre>
+            )}
             {noteLine === index && (
               <div className="flex items-center">
-                <pre className="m-0" style={{ color: themeAccent(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>  note: </pre>
+                <pre
+                  className="m-0"
+                  style={{ color: themeAccent(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+                >
+                  {" "}
+                  note:{" "}
+                </pre>
                 <input
                   ref={inputRef}
                   value={noteDraft}
@@ -2580,16 +3176,38 @@ function PiPlanReviewPrompt(props: {
                   onKeyDown={handleNoteKeyDown}
                   spellCheck={false}
                   className="min-w-0 flex-1 border-0 bg-transparent p-0 outline-none"
-                  style={{ color: themeText(theme), caretColor: theme.cursor ?? themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+                  style={{
+                    color: themeText(theme),
+                    caretColor: theme.cursor ?? themeText(theme),
+                    lineHeight: TERMINAL_LINE_HEIGHT,
+                  }}
                 />
               </div>
             )}
           </div>
         );
       })}
-      {visibleStart + visibleLines.length < planLines.length && <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>  …</pre>}
-      <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{noteLine !== null ? ` wheel/↑↓ save+move • Enter save • Backspace edit • Esc reject • line ${selectedLine + 1}/${planLines.length}` : hasNotes ? ` wheel/↑↓ move • type note • Enter revise • Esc reject • line ${selectedLine + 1}/${planLines.length}` : ` wheel/↑↓ move • type note • Enter approve • Esc reject • line ${selectedLine + 1}/${planLines.length}`}</pre>
-      {error && <pre className="m-0" style={{ color: theme.red ?? themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{error}</pre>}
+      {visibleStart + visibleLines.length < planLines.length && (
+        <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>
+          {" "}
+          …
+        </pre>
+      )}
+      <pre className="m-0" style={{ color: themeDim(theme), lineHeight: TERMINAL_LINE_HEIGHT }}>
+        {noteLine !== null
+          ? ` wheel/↑↓ save+move • Enter save • Backspace edit • Esc reject • line ${selectedLine + 1}/${planLines.length}`
+          : hasNotes
+            ? ` wheel/↑↓ move • type note • Enter revise • Esc reject • line ${selectedLine + 1}/${planLines.length}`
+            : ` wheel/↑↓ move • type note • Enter approve • Esc reject • line ${selectedLine + 1}/${planLines.length}`}
+      </pre>
+      {error && (
+        <pre
+          className="m-0"
+          style={{ color: theme.red ?? themeText(theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+        >
+          {error}
+        </pre>
+      )}
       {renderBorder(theme)}
     </div>
   );
@@ -2602,8 +3220,14 @@ function PiGenericExtensionUiPrompt(props: {
   theme: ITheme;
 }) {
   const draftKey = `genericPrompt:${props.threadId}:${props.request.id}`;
-  const [value, setValue, clearValue] = usePersistentDraftState(`${draftKey}:value`, () => props.request.prefill ?? "");
-  const [selectedIndex, setSelectedIndex, clearSelectedIndex] = usePersistentDraftState(`${draftKey}:selectedIndex`, () => 0);
+  const [value, setValue, clearValue] = usePersistentDraftState(
+    `${draftKey}:value`,
+    () => props.request.prefill ?? "",
+  );
+  const [selectedIndex, setSelectedIndex, clearSelectedIndex] = usePersistentDraftState(
+    `${draftKey}:selectedIndex`,
+    () => 0,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const promptRef = useRef<HTMLDivElement>(null);
@@ -2643,7 +3267,8 @@ function PiGenericExtensionUiPrompt(props: {
   );
 
   const title = props.request.title ?? props.request.method;
-  const optionValues = props.request.method === "confirm" ? ["yes", "no"] : (props.request.options ?? []);
+  const optionValues =
+    props.request.method === "confirm" ? ["yes", "no"] : (props.request.options ?? []);
   const safeSelectedIndex = clampIndex(selectedIndex, optionValues.length);
 
   const submitSelected = useCallback(() => {
@@ -2661,12 +3286,20 @@ function PiGenericExtensionUiPrompt(props: {
         captureTerminalPromptKey(event);
         return;
       }
-      if (event.key === "ArrowDown" || event.key === "ArrowRight" || (event.key === "Tab" && !event.shiftKey)) {
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "ArrowRight" ||
+        (event.key === "Tab" && !event.shiftKey)
+      ) {
         captureTerminalPromptKey(event);
         setSelectedIndex((index) => clampIndex(index + 1, optionValues.length));
         return;
       }
-      if (event.key === "ArrowUp" || event.key === "ArrowLeft" || (event.key === "Tab" && event.shiftKey)) {
+      if (
+        event.key === "ArrowUp" ||
+        event.key === "ArrowLeft" ||
+        (event.key === "Tab" && event.shiftKey)
+      ) {
         captureTerminalPromptKey(event);
         setSelectedIndex((index) => clampIndex(index - 1, optionValues.length));
         return;
@@ -2691,7 +3324,14 @@ function PiGenericExtensionUiPrompt(props: {
         void respond({ cancelled: true });
         return;
       }
-      if (event.key === "Enter" && props.request.method === "input" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (
+        event.key === "Enter" &&
+        props.request.method === "input" &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
         captureTerminalPromptKey(event);
         void respond({ value });
         return;
@@ -2708,15 +3348,47 @@ function PiGenericExtensionUiPrompt(props: {
 
   return (
     <div className="shrink-0" style={promptShellStyle(props.theme)}>
-      <pre className="m-0 whitespace-pre-wrap" style={{ color: themeText(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{title}</pre>
-      {props.request.message && <pre className="m-0 whitespace-pre-wrap" style={{ color: themeMuted(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{props.request.message}</pre>}
+      <pre
+        className="m-0 whitespace-pre-wrap"
+        style={{ color: themeText(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+      >
+        {title}
+      </pre>
+      {props.request.message && (
+        <pre
+          className="m-0 whitespace-pre-wrap"
+          style={{ color: themeMuted(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+        >
+          {props.request.message}
+        </pre>
+      )}
       {(props.request.method === "select" || props.request.method === "confirm") && (
-        <div ref={promptRef} tabIndex={0} role="listbox" onKeyDown={handleChoiceKeyDown} className="outline-none">
+        <div
+          ref={promptRef}
+          tabIndex={0}
+          role="listbox"
+          onKeyDown={handleChoiceKeyDown}
+          className="outline-none"
+        >
           {optionValues.map((option, index) => {
             const selected = index === safeSelectedIndex;
             return (
-              <pre key={`${props.request.id}:${option}`} className="m-0 whitespace-pre-wrap" style={{ color: selected ? themeAccent(props.theme) : themeText(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }} onMouseDown={(event) => event.preventDefault()} onClick={() => { setSelectedIndex(index); if (props.request.method === "confirm") void respond({ confirmed: index === 0 }); else void respond({ value: option }); }}>
-                {selected ? "> " : "  "}{index + 1}. {option}
+              <pre
+                key={`${props.request.id}:${option}`}
+                className="m-0 whitespace-pre-wrap"
+                style={{
+                  color: selected ? themeAccent(props.theme) : themeText(props.theme),
+                  lineHeight: TERMINAL_LINE_HEIGHT,
+                }}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setSelectedIndex(index);
+                  if (props.request.method === "confirm") void respond({ confirmed: index === 0 });
+                  else void respond({ value: option });
+                }}
+              >
+                {selected ? "> " : "  "}
+                {index + 1}. {option}
               </pre>
             );
           })}
@@ -2724,7 +3396,12 @@ function PiGenericExtensionUiPrompt(props: {
       )}
       {(props.request.method === "input" || props.request.method === "editor") && (
         <div className="flex items-start gap-2">
-          <pre className="m-0" style={{ color: themeDim(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}>›</pre>
+          <pre
+            className="m-0"
+            style={{ color: themeDim(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            ›
+          </pre>
           <textarea
             ref={inputRef}
             value={value}
@@ -2741,12 +3418,33 @@ function PiGenericExtensionUiPrompt(props: {
             placeholder={props.request.placeholder}
             spellCheck={false}
             className="min-h-[1.2em] flex-1 resize-none border-0 bg-transparent p-0 outline-none"
-            style={{ color: themeText(props.theme), caretColor: props.theme.cursor ?? themeText(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+            style={{
+              color: themeText(props.theme),
+              caretColor: props.theme.cursor ?? themeText(props.theme),
+              lineHeight: TERMINAL_LINE_HEIGHT,
+            }}
           />
         </div>
       )}
-      <pre className="m-0" style={{ color: themeDim(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{props.request.method === "editor" ? "ctrl+enter submit · esc cancel" : "enter submit · esc cancel"}</pre>
-      {error && <pre className="m-0" style={{ color: props.theme.red ?? themeText(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{error}</pre>}
+      <pre
+        className="m-0"
+        style={{ color: themeDim(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}
+      >
+        {props.request.method === "editor"
+          ? "ctrl+enter submit · esc cancel"
+          : "enter submit · esc cancel"}
+      </pre>
+      {error && (
+        <pre
+          className="m-0"
+          style={{
+            color: props.theme.red ?? themeText(props.theme),
+            lineHeight: TERMINAL_LINE_HEIGHT,
+          }}
+        >
+          {error}
+        </pre>
+      )}
     </div>
   );
 }
@@ -2759,11 +3457,32 @@ function PiExtensionUiPrompt(props: {
 }) {
   switch (props.request.method) {
     case "questionnaire":
-      return <PiQuestionnairePrompt threadId={props.threadId} request={props.request} onDone={props.onDone} theme={props.theme} />;
+      return (
+        <PiQuestionnairePrompt
+          threadId={props.threadId}
+          request={props.request}
+          onDone={props.onDone}
+          theme={props.theme}
+        />
+      );
     case "planReview":
-      return <PiPlanReviewPrompt threadId={props.threadId} request={props.request} onDone={props.onDone} theme={props.theme} />;
+      return (
+        <PiPlanReviewPrompt
+          threadId={props.threadId}
+          request={props.request}
+          onDone={props.onDone}
+          theme={props.theme}
+        />
+      );
     default:
-      return <PiGenericExtensionUiPrompt threadId={props.threadId} request={props.request} onDone={props.onDone} theme={props.theme} />;
+      return (
+        <PiGenericExtensionUiPrompt
+          threadId={props.threadId}
+          request={props.request}
+          onDone={props.onDone}
+          theme={props.theme}
+        />
+      );
   }
 }
 
@@ -2772,7 +3491,9 @@ function PiExtensionWidgets(props: {
   placement: PiExtensionUiWidget["placement"];
   theme: ITheme;
 }) {
-  const widgets = props.widgets.filter((widget) => widget.placement === props.placement && widget.lines.length > 0);
+  const widgets = props.widgets.filter(
+    (widget) => widget.placement === props.placement && widget.lines.length > 0,
+  );
   if (widgets.length === 0) return null;
   const defaultColor = themeText(props.theme);
   return (
@@ -2780,7 +3501,11 @@ function PiExtensionWidgets(props: {
       {widgets.map((widget) => (
         <div key={widget.key}>
           {widget.lines.map((line, index) => (
-            <pre key={`${widget.key}:${index}`} className="m-0 whitespace-pre-wrap" style={{ color: defaultColor, lineHeight: TERMINAL_LINE_HEIGHT }}>
+            <pre
+              key={`${widget.key}:${index}`}
+              className="m-0 whitespace-pre-wrap"
+              style={{ color: defaultColor, lineHeight: TERMINAL_LINE_HEIGHT }}
+            >
               {renderAnsiText(line, defaultColor, `${widget.key}:${index}`)}
             </pre>
           ))}
@@ -2797,7 +3522,12 @@ function isHTMLElement(value: unknown): value is HTMLElement {
 function isEditableTarget(element: HTMLElement | null): boolean {
   if (!element) return false;
   const tagName = element.tagName.toLowerCase();
-  return tagName === "input" || tagName === "textarea" || tagName === "select" || element.isContentEditable;
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    element.isContentEditable
+  );
 }
 
 const INTERACTIVE_TARGET_SELECTOR = [
@@ -2833,7 +3563,9 @@ function isInteractiveTarget(element: HTMLElement | null): boolean {
 }
 
 function isInsideKeyboardOwner(element: HTMLElement | null): boolean {
-  return Boolean(element?.closest(".xterm, [role='dialog'], [aria-modal='true'], [data-radix-dialog-content]"));
+  return Boolean(
+    element?.closest(".xterm, [role='dialog'], [aria-modal='true'], [data-radix-dialog-content]"),
+  );
 }
 
 function usePiBusyFrame(active: boolean): string {
@@ -2855,13 +3587,20 @@ function PiThinkingPlaceholder(props: { active: boolean; piTheme: PiHtmlTheme })
   const busyFrame = usePiBusyFrame(props.active);
   if (!props.active) return null;
   return (
-    <pre className="m-0 whitespace-pre-wrap" style={{ color: props.piTheme.muted, fontStyle: "italic", lineHeight: TERMINAL_LINE_HEIGHT }}>
+    <pre
+      className="m-0 whitespace-pre-wrap"
+      style={{ color: props.piTheme.muted, fontStyle: "italic", lineHeight: TERMINAL_LINE_HEIGHT }}
+    >
       {`${busyFrame} thinking…`}
     </pre>
   );
 }
 
-function PiQueuedPromptPreview(props: { prompts: readonly PendingPromptPreview[]; theme: ITheme; piTheme: PiHtmlTheme }) {
+function PiQueuedPromptPreview(props: {
+  prompts: readonly PendingPromptPreview[];
+  theme: ITheme;
+  piTheme: PiHtmlTheme;
+}) {
   const latest = props.prompts[props.prompts.length - 1];
   if (!latest) return null;
   return (
@@ -2877,7 +3616,9 @@ function PiQueuedPromptPreview(props: { prompts: readonly PendingPromptPreview[]
         whiteSpace: "pre-wrap",
       }}
     >
-      <span style={{ color: props.piTheme.accent }}>{props.prompts.length > 1 ? `queued (${props.prompts.length}): ` : "queued: "}</span>
+      <span style={{ color: props.piTheme.accent }}>
+        {props.prompts.length > 1 ? `queued (${props.prompts.length}): ` : "queued: "}
+      </span>
       {latest.text}
     </div>
   );
@@ -2893,17 +3634,28 @@ function PiHtmlFooterStatus(props: {
   const thread = useStore((s) => s.threads.find((t) => t.id === props.threadId));
   const project = useStore((s) => s.projects.find((p) => p.id === thread?.projectId));
   const cwd = thread?.worktreePath ?? project?.cwd ?? null;
-  const statusEntries = Object.values(props.extensionUiState.statuses).filter((status) => status.trim().length > 0);
-  const hasCodexStatus = statusEntries.some((status) => cleanTranscriptText(status).includes("Codex"));
+  const statusEntries = Object.values(props.extensionUiState.statuses).filter(
+    (status) => status.trim().length > 0,
+  );
+  const hasCodexStatus = statusEntries.some((status) =>
+    cleanTranscriptText(status).includes("Codex"),
+  );
   const usageSummary = formatPiUsageStats(props.usageStats, hasCodexStatus);
   const isWorking = thread?.hookStatus === "working";
   const busyFrame = usePiBusyFrame(isWorking);
-  const workingLabel = thread?.activityStatus ? AGENT_ACTIVITY_LABELS[thread.activityStatus] : "Working";
+  const workingLabel = thread?.activityStatus
+    ? AGENT_ACTIVITY_LABELS[thread.activityStatus]
+    : "Working";
   const statusSegments = useMemo(() => {
-    const segments: Array<{ kind: "ansi" | "text"; text: string }> = statusEntries.map((status) => ({ kind: "ansi", text: status }));
-    if (isWorking) segments.unshift({ kind: "text" as const, text: `${busyFrame} ${workingLabel}` });
+    const segments: Array<{ kind: "ansi" | "text"; text: string }> = statusEntries.map(
+      (status) => ({ kind: "ansi", text: status }),
+    );
+    if (isWorking)
+      segments.unshift({ kind: "text" as const, text: `${busyFrame} ${workingLabel}` });
     if (!usageSummary) return segments;
-    const codexIndex = segments.findIndex((segment) => cleanTranscriptText(segment.text).includes("Codex"));
+    const codexIndex = segments.findIndex((segment) =>
+      cleanTranscriptText(segment.text).includes("Codex"),
+    );
     const insertIndex = codexIndex >= 0 ? codexIndex + 1 : segments.length;
     return [
       ...segments.slice(0, insertIndex),
@@ -2914,13 +3666,18 @@ function PiHtmlFooterStatus(props: {
 
   if (!cwd && statusSegments.length === 0) return null;
   return (
-    <pre className="m-0 whitespace-pre-wrap" style={{ color: props.piTheme.muted, lineHeight: TERMINAL_LINE_HEIGHT }}>
+    <pre
+      className="m-0 whitespace-pre-wrap"
+      style={{ color: props.piTheme.muted, lineHeight: TERMINAL_LINE_HEIGHT }}
+    >
       {cwd ? `${shortenHomePath(cwd)}${thread?.branch ? ` (${thread.branch})` : ""}` : ""}
       {statusSegments.length > 0 && cwd ? "  " : ""}
       {statusSegments.map((status, index) => (
         <span key={`${status.kind}:${index}`}>
           {index > 0 ? " • " : ""}
-          {status.kind === "ansi" ? renderAnsiText(status.text, props.piTheme.muted, `status:${index}`) : status.text}
+          {status.kind === "ansi"
+            ? renderAnsiText(status.text, props.piTheme.muted, `status:${index}`)
+            : status.text}
         </span>
       ))}
     </pre>
@@ -2941,10 +3698,19 @@ function PiHtmlComposer(props: {
   onLocalNotice: (text: string, options?: { isError?: boolean }) => void;
 }) {
   const composerDraftKey = `composer:${props.threadId}`;
-  const [draftValue, setDraftValue, clearDraftValue] = usePersistentDraftState(composerDraftKey, () => "");
+  const [draftValue, setDraftValue, clearDraftValue] = usePersistentDraftState(
+    composerDraftKey,
+    () => "",
+  );
   const [value, setValue] = useState(draftValue);
-  const [pastes, setPastes, clearPastes] = usePersistentDraftState<PasteDrafts>(pasteDraftsKey(composerDraftKey), () => ({}));
-  const [localHistory, setLocalHistory] = usePersistentDraftState<string[]>(promptHistoryKey(props.threadId), () => []);
+  const [pastes, setPastes, clearPastes] = usePersistentDraftState<PasteDrafts>(
+    pasteDraftsKey(composerDraftKey),
+    () => ({}),
+  );
+  const [localHistory, setLocalHistory] = usePersistentDraftState<string[]>(
+    promptHistoryKey(props.threadId),
+    () => [],
+  );
   const [historyIndex, setHistoryIndex] = useState(-1);
   const historyDraftRef = useRef<{ value: string; selection: TextSelectionDraft } | null>(null);
   const [commands, setCommands] = useState<PiCommandSuggestion[]>(() => mergePiCommands([]));
@@ -2972,7 +3738,8 @@ function PiHtmlComposer(props: {
   const hookStatus = thread?.hookStatus ?? null;
   const cwd = thread?.worktreePath ?? project?.cwd ?? null;
   const isBusy = hookStatus === "working";
-  const tokenCursor = textareaRef.current?.selectionStart ?? readTextSelectionDraft(composerDraftKey, value).end;
+  const tokenCursor =
+    textareaRef.current?.selectionStart ?? readTextSelectionDraft(composerDraftKey, value).end;
   const commandToken = useMemo(() => findCommandToken(value, tokenCursor), [tokenCursor, value]);
   const fileToken = useMemo(() => findFileToken(value, tokenCursor), [tokenCursor, value]);
   const activeSuggestionToken = suggestionTokenKey(commandToken, fileToken);
@@ -2981,14 +3748,24 @@ function PiHtmlComposer(props: {
     : fileToken
       ? fileSuggestions
       : [];
-  const suggestions = activeSuggestionToken && activeSuggestionToken === dismissedSuggestionToken ? [] : rawSuggestions;
-  const history = useMemo(() => mergePromptHistory(localHistory, props.history), [localHistory, props.history]);
+  const suggestions =
+    activeSuggestionToken && activeSuggestionToken === dismissedSuggestionToken
+      ? []
+      : rawSuggestions;
+  const history = useMemo(
+    () => mergePromptHistory(localHistory, props.history),
+    [localHistory, props.history],
+  );
   const thinkingLevelLabel = formatThinkingLevel(thinkingLevel);
   const composerRuleColor = thinkingBorderColor(thinkingLevel, props.piTheme);
 
   useEffect(() => {
     setPendingPrompts((current) =>
-      current.filter((prompt) => countTranscriptPromptText(props.transcriptUserTexts, prompt.text) <= prompt.transcriptBaselineCount),
+      current.filter(
+        (prompt) =>
+          countTranscriptPromptText(props.transcriptUserTexts, prompt.text) <=
+          prompt.transcriptBaselineCount,
+      ),
     );
   }, [props.transcriptUserTexts]);
 
@@ -3000,7 +3777,9 @@ function PiHtmlComposer(props: {
     const fontSize = Number.parseFloat(computedStyle.fontSize);
     const lineHeightPx = Number.isFinite(parsedLineHeight)
       ? parsedLineHeight
-      : (Number.isFinite(fontSize) ? fontSize * TERMINAL_LINE_HEIGHT : 18);
+      : Number.isFinite(fontSize)
+        ? fontSize * TERMINAL_LINE_HEIGHT
+        : 18;
     const minHeight = lineHeightPx;
     const maxHeight = lineHeightPx * PI_HTML_COMPOSER_MAX_ROWS;
 
@@ -3027,7 +3806,8 @@ function PiHtmlComposer(props: {
         autosizeComposer();
       });
     };
-    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleAutosize) : null;
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleAutosize) : null;
     resizeObserver?.observe(parent);
     window.addEventListener("resize", scheduleAutosize);
     scheduleAutosize();
@@ -3055,11 +3835,23 @@ function PiHtmlComposer(props: {
     (snapshotValue = valueRef.current, selection?: TextSelectionDraft) => {
       const snapshot = {
         value: snapshotValue,
-        selection: selection ?? (textareaRef.current ? selectionFromTextControl(textareaRef.current) : readTextSelectionDraft(composerDraftKey, snapshotValue)),
+        selection:
+          selection ??
+          (textareaRef.current
+            ? selectionFromTextControl(textareaRef.current)
+            : readTextSelectionDraft(composerDraftKey, snapshotValue)),
       };
       const previous = undoStackRef.current[undoStackRef.current.length - 1];
-      if (previous?.value === snapshot.value && previous.selection.start === snapshot.selection.start && previous.selection.end === snapshot.selection.end) return;
-      undoStackRef.current = [...undoStackRef.current.slice(-(MAX_EDITOR_UNDO_STACK - 1)), snapshot];
+      if (
+        previous?.value === snapshot.value &&
+        previous.selection.start === snapshot.selection.start &&
+        previous.selection.end === snapshot.selection.end
+      )
+        return;
+      undoStackRef.current = [
+        ...undoStackRef.current.slice(-(MAX_EDITOR_UNDO_STACK - 1)),
+        snapshot,
+      ];
     },
     [composerDraftKey],
   );
@@ -3067,14 +3859,16 @@ function PiHtmlComposer(props: {
   const updateDraftValue = useCallback(
     (nextValue: string, selection?: TextSelectionDraft, options?: { recordUndo?: boolean }) => {
       const previousValue = valueRef.current;
-      if (options?.recordUndo !== false && previousValue !== nextValue) pushUndoSnapshot(previousValue);
+      if (options?.recordUndo !== false && previousValue !== nextValue)
+        pushUndoSnapshot(previousValue);
       setHistoryIndex(-1);
       historyDraftRef.current = null;
       lastYankRef.current = null;
       valueRef.current = nextValue;
       setValue(nextValue);
       setDraftValue(nextValue);
-      if (selection) writeTextSelectionDraft(composerDraftKey, clampSelectionForValue(nextValue, selection));
+      if (selection)
+        writeTextSelectionDraft(composerDraftKey, clampSelectionForValue(nextValue, selection));
     },
     [composerDraftKey, pushUndoSnapshot, setDraftValue],
   );
@@ -3088,7 +3882,8 @@ function PiHtmlComposer(props: {
   }, [composerDraftKey, props.autoFocusEnabled, props.registerFocus]);
 
   useLayoutEffect(() => {
-    if (props.autoFocusEnabled) return focusTextControlSoon(composerDraftKey, () => textareaRef.current);
+    if (props.autoFocusEnabled)
+      return focusTextControlSoon(composerDraftKey, () => textareaRef.current);
     return undefined;
   }, [composerDraftKey, props.autoFocusEnabled]);
 
@@ -3180,21 +3975,65 @@ function PiHtmlComposer(props: {
     [composerDraftKey, updateDraftValue],
   );
 
-  const submit = useCallback(async (overrideValue?: string, streamingBehavior?: "steer" | "followUp") => {
-    const sourceValue = overrideValue ?? valueRef.current;
-    const message = expandPasteMarkers(sourceValue, pastes).trim();
-    if (!message || submitting) return;
-    const api = readNativeApi();
-    if (!api) return;
-    const compactInstructions = parseCompactSlashCommand(message);
-    if (compactInstructions !== null) {
+  const submit = useCallback(
+    async (overrideValue?: string, streamingBehavior?: "steer" | "followUp") => {
+      const sourceValue = overrideValue ?? valueRef.current;
+      const message = expandPasteMarkers(sourceValue, pastes).trim();
+      if (!message || submitting) return;
+      const api = readNativeApi();
+      if (!api) return;
+      const compactInstructions = parseCompactSlashCommand(message);
+      if (compactInstructions !== null) {
+        setSubmitting(true);
+        setError(null);
+        try {
+          await api.pi.rpcCommand({
+            threadId: props.threadId,
+            commandType: "compact",
+            ...(compactInstructions
+              ? { payload: { customInstructions: compactInstructions } }
+              : {}),
+          });
+          setLocalHistory((current) => addPromptHistoryEntry(current, message));
+          clearDraftValue();
+          clearPastes();
+          clearTextSelectionDraft(composerDraftKey);
+          undoStackRef.current = [];
+          historyDraftRef.current = null;
+          lastYankRef.current = null;
+          setHistoryIndex(-1);
+          valueRef.current = "";
+          setValue("");
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to compact context.");
+        } finally {
+          setSubmitting(false);
+          requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
+        }
+        return;
+      }
+      const behavior = streamingBehavior ?? (isBusy ? ("steer" as const) : undefined);
+      const pendingPromptId = ++pendingPromptIdRef.current;
+      setPendingPrompts((current) => [
+        ...current,
+        {
+          id: pendingPromptId,
+          text: message,
+          transcriptBaselineCount:
+            countTranscriptPromptText(props.transcriptUserTexts, message) +
+            current.filter(
+              (prompt) =>
+                normalizePendingPromptText(prompt.text) === normalizePendingPromptText(message),
+            ).length,
+        },
+      ]);
       setSubmitting(true);
       setError(null);
       try {
-        await api.pi.rpcCommand({
+        await api.pi.prompt({
           threadId: props.threadId,
-          commandType: "compact",
-          ...(compactInstructions ? { payload: { customInstructions: compactInstructions } } : {}),
+          message,
+          ...(behavior ? { streamingBehavior: behavior } : {}),
         });
         setLocalHistory((current) => addPromptHistoryEntry(current, message));
         clearDraftValue();
@@ -3207,50 +4046,25 @@ function PiHtmlComposer(props: {
         valueRef.current = "";
         setValue("");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to compact context.");
+        setPendingPrompts((current) => current.filter((prompt) => prompt.id !== pendingPromptId));
+        setError(err instanceof Error ? err.message : "Failed to send prompt.");
       } finally {
         setSubmitting(false);
         requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
       }
-      return;
-    }
-    const behavior = streamingBehavior ?? (isBusy ? "steer" as const : undefined);
-    const pendingPromptId = ++pendingPromptIdRef.current;
-    setPendingPrompts((current) => [
-      ...current,
-      {
-        id: pendingPromptId,
-        text: message,
-        transcriptBaselineCount: countTranscriptPromptText(props.transcriptUserTexts, message)
-          + current.filter((prompt) => normalizePendingPromptText(prompt.text) === normalizePendingPromptText(message)).length,
-      },
-    ]);
-    setSubmitting(true);
-    setError(null);
-    try {
-      await api.pi.prompt({
-        threadId: props.threadId,
-        message,
-        ...(behavior ? { streamingBehavior: behavior } : {}),
-      });
-      setLocalHistory((current) => addPromptHistoryEntry(current, message));
-      clearDraftValue();
-      clearPastes();
-      clearTextSelectionDraft(composerDraftKey);
-      undoStackRef.current = [];
-      historyDraftRef.current = null;
-      lastYankRef.current = null;
-      setHistoryIndex(-1);
-      valueRef.current = "";
-      setValue("");
-    } catch (err) {
-      setPendingPrompts((current) => current.filter((prompt) => prompt.id !== pendingPromptId));
-      setError(err instanceof Error ? err.message : "Failed to send prompt.");
-    } finally {
-      setSubmitting(false);
-      requestAnimationFrame(() => focusTextControl(composerDraftKey, textareaRef.current));
-    }
-  }, [clearDraftValue, clearPastes, composerDraftKey, isBusy, pastes, props.threadId, props.transcriptUserTexts, setLocalHistory, submitting]);
+    },
+    [
+      clearDraftValue,
+      clearPastes,
+      composerDraftKey,
+      isBusy,
+      pastes,
+      props.threadId,
+      props.transcriptUserTexts,
+      setLocalHistory,
+      submitting,
+    ],
+  );
 
   const abort = useCallback(async () => {
     const api = readNativeApi();
@@ -3380,7 +4194,8 @@ function PiHtmlComposer(props: {
 
     const handlePasteShortcutFallback = (event: globalThis.KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if (key !== "v" || event.altKey || event.shiftKey || (!event.metaKey && !event.ctrlKey)) return;
+      if (key !== "v" || event.altKey || event.shiftKey || (!event.metaKey && !event.ctrlKey))
+        return;
       const target = isHTMLElement(event.target) ? event.target : null;
       if (target !== textareaRef.current) {
         if (isEditableTarget(target)) return;
@@ -3389,17 +4204,20 @@ function PiHtmlComposer(props: {
       const readText = navigator.clipboard?.readText;
       if (!readText) return;
       const requestedAt = Date.now();
-      void readText.call(navigator.clipboard).then((text) => {
-        window.setTimeout(() => {
-          if (!text || lastPasteHandledAtRef.current >= requestedAt) return;
-          insertPastedText(text);
-        }, 120);
-      }).catch(() => {
-        window.setTimeout(() => {
-          if (lastPasteHandledAtRef.current >= requestedAt) return;
-          setError("Clipboard read denied. Click the input and paste again.");
-        }, 120);
-      });
+      void readText
+        .call(navigator.clipboard)
+        .then((text) => {
+          window.setTimeout(() => {
+            if (!text || lastPasteHandledAtRef.current >= requestedAt) return;
+            insertPastedText(text);
+          }, 120);
+        })
+        .catch(() => {
+          window.setTimeout(() => {
+            if (lastPasteHandledAtRef.current >= requestedAt) return;
+            setError("Clipboard read denied. Click the input and paste again.");
+          }, 120);
+        });
     };
 
     document.addEventListener("paste", handleDocumentPaste, true);
@@ -3421,7 +4239,9 @@ function PiHtmlComposer(props: {
         const currentValue = valueRef.current;
         historyDraftRef.current = {
           value: currentValue,
-          selection: textarea ? selectionFromTextControl(textarea) : readTextSelectionDraft(composerDraftKey, currentValue),
+          selection: textarea
+            ? selectionFromTextControl(textarea)
+            : readTextSelectionDraft(composerDraftKey, currentValue),
         };
       }
 
@@ -3462,7 +4282,11 @@ function PiHtmlComposer(props: {
         const textarea = textareaRef.current;
         if (!textarea) return;
         textarea.focus({ preventScroll: true });
-        textarea.setSelectionRange(nextSelection.start, nextSelection.end, nextSelection.direction ?? "none");
+        textarea.setSelectionRange(
+          nextSelection.start,
+          nextSelection.end,
+          nextSelection.direction ?? "none",
+        );
       });
     },
     [composerDraftKey],
@@ -3478,7 +4302,10 @@ function PiHtmlComposer(props: {
 
   const addKillRingText = useCallback((text: string) => {
     if (!text) return;
-    killRingRef.current = [text, ...killRingRef.current.filter((entry) => entry !== text)].slice(0, 20);
+    killRingRef.current = [text, ...killRingRef.current.filter((entry) => entry !== text)].slice(
+      0,
+      20,
+    );
   }, []);
 
   const snapSelectionAwayFromPasteMarker = useCallback(
@@ -3499,7 +4326,8 @@ function PiHtmlComposer(props: {
       }
       const marker = markerContainingOffset(current, selection.start);
       if (!marker) return false;
-      const cursor = selection.start - marker.start < marker.end - selection.start ? marker.start : marker.end;
+      const cursor =
+        selection.start - marker.start < marker.end - selection.start ? marker.start : marker.end;
       element.setSelectionRange(cursor, cursor, "none");
       writeTextSelectionDraft(composerDraftKey, { start: cursor, end: cursor, direction: "none" });
       return true;
@@ -3556,10 +4384,23 @@ function PiHtmlComposer(props: {
       }
       if (start !== end) return false;
 
-      const plainArrowLeft = event.key === "ArrowLeft" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
-      const plainArrowRight = event.key === "ArrowRight" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+      const plainArrowLeft =
+        event.key === "ArrowLeft" &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey;
+      const plainArrowRight =
+        event.key === "ArrowRight" &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey;
       const inside = markerContainingOffset(current, start);
-      if (inside && (plainArrowLeft || plainArrowRight || event.key === "Backspace" || event.key === "Delete")) {
+      if (
+        inside &&
+        (plainArrowLeft || plainArrowRight || event.key === "Backspace" || event.key === "Delete")
+      ) {
         event.preventDefault();
         const cursor = plainArrowLeft || event.key === "Backspace" ? inside.start : inside.end;
         setComposerSelection({ start: cursor, end: cursor, direction: "none" });
@@ -3570,7 +4411,11 @@ function PiHtmlComposer(props: {
       const after = markerAfterCursor(current, start);
       if (plainArrowLeft && before) {
         event.preventDefault();
-        setComposerSelection({ start: before.index ?? 0, end: before.index ?? 0, direction: "none" });
+        setComposerSelection({
+          start: before.index ?? 0,
+          end: before.index ?? 0,
+          direction: "none",
+        });
         return true;
       }
       if (plainArrowRight && after) {
@@ -3629,7 +4474,9 @@ function PiHtmlComposer(props: {
     (insert: string): boolean => {
       const textarea = textareaRef.current;
       const current = valueRef.current;
-      const selection = textarea ? selectionFromTextControl(textarea) : readTextSelectionDraft(composerDraftKey, current);
+      const selection = textarea
+        ? selectionFromTextControl(textarea)
+        : readTextSelectionDraft(composerDraftKey, current);
       const next = replaceRange(current, selection.start, selection.end, insert);
       applyEditorValue(next.value, next.selection);
       return true;
@@ -3642,10 +4489,16 @@ function PiHtmlComposer(props: {
     if (!text) return false;
     const textarea = textareaRef.current;
     const current = valueRef.current;
-    const selection = textarea ? selectionFromTextControl(textarea) : readTextSelectionDraft(composerDraftKey, current);
+    const selection = textarea
+      ? selectionFromTextControl(textarea)
+      : readTextSelectionDraft(composerDraftKey, current);
     const next = replaceRange(current, selection.start, selection.end, text);
     applyEditorValue(next.value, next.selection);
-    lastYankRef.current = { start: next.selection.start - text.length, end: next.selection.start, ringIndex: 0 };
+    lastYankRef.current = {
+      start: next.selection.start - text.length,
+      end: next.selection.start,
+      ringIndex: 0,
+    };
     return true;
   }, [applyEditorValue, composerDraftKey]);
 
@@ -3657,7 +4510,11 @@ function PiHtmlComposer(props: {
     const current = valueRef.current;
     const next = replaceRange(current, lastYank.start, lastYank.end, text);
     applyEditorValue(next.value, next.selection);
-    lastYankRef.current = { start: next.selection.start - text.length, end: next.selection.start, ringIndex: nextRingIndex };
+    lastYankRef.current = {
+      start: next.selection.start - text.length,
+      end: next.selection.start,
+      ringIndex: nextRingIndex,
+    };
     return true;
   }, [applyEditorValue]);
 
@@ -3675,7 +4532,11 @@ function PiHtmlComposer(props: {
     async (commandType: string, payload?: Record<string, unknown>): Promise<unknown> => {
       const api = readNativeApi();
       if (!api) return null;
-      const result = await api.pi.rpcCommand({ threadId: props.threadId, commandType, ...(payload ? { payload } : {}) });
+      const result = await api.pi.rpcCommand({
+        threadId: props.threadId,
+        commandType,
+        ...(payload ? { payload } : {}),
+      });
       return result.data;
     },
     [props.threadId],
@@ -3709,16 +4570,22 @@ function PiHtmlComposer(props: {
       try {
         const state = await runPiRpcCommand("get_state");
         const modelsResponse = await runPiRpcCommand("get_available_models");
-        const models = isRecord(modelsResponse) && Array.isArray(modelsResponse.models)
-          ? modelsResponse.models.flatMap((model) => {
-              const option = modelOptionFromUnknown(model);
-              return option ? [option] : [];
-            })
-          : [];
+        const models =
+          isRecord(modelsResponse) && Array.isArray(modelsResponse.models)
+            ? modelsResponse.models.flatMap((model) => {
+                const option = modelOptionFromUnknown(model);
+                return option ? [option] : [];
+              })
+            : [];
         if (models.length === 0) return;
         const currentModel = isRecord(state) ? modelOptionFromUnknown(state.model) : null;
-        const currentIndex = currentModel ? models.findIndex((model) => model.provider === currentModel.provider && model.id === currentModel.id) : -1;
-        const next = models[(currentIndex + direction + models.length) % models.length] ?? models[0];
+        const currentIndex = currentModel
+          ? models.findIndex(
+              (model) => model.provider === currentModel.provider && model.id === currentModel.id,
+            )
+          : -1;
+        const next =
+          models[(currentIndex + direction + models.length) % models.length] ?? models[0];
         if (!next) return;
         await runPiRpcCommand("set_model", { provider: next.provider, modelId: next.id });
         await refreshPiSessionState();
@@ -3746,14 +4613,19 @@ function PiHtmlComposer(props: {
     try {
       const state = await runPiRpcCommand("get_state");
       const modelsResponse = await runPiRpcCommand("get_available_models");
-      const models = isRecord(modelsResponse) && Array.isArray(modelsResponse.models)
-        ? modelsResponse.models.flatMap((model) => {
-            const option = modelOptionFromUnknown(model);
-            return option ? [option] : [];
-          })
-        : [];
+      const models =
+        isRecord(modelsResponse) && Array.isArray(modelsResponse.models)
+          ? modelsResponse.models.flatMap((model) => {
+              const option = modelOptionFromUnknown(model);
+              return option ? [option] : [];
+            })
+          : [];
       const currentModel = isRecord(state) ? modelOptionFromUnknown(state.model) : null;
-      const selectedIndex = currentModel ? models.findIndex((model) => model.provider === currentModel.provider && model.id === currentModel.id) : -1;
+      const selectedIndex = currentModel
+        ? models.findIndex(
+            (model) => model.provider === currentModel.provider && model.id === currentModel.id,
+          )
+        : -1;
       setModelOptions(models);
       setSelectedModelIndex(Math.max(0, selectedIndex));
       setModelSelectOpen(models.length > 0);
@@ -3784,16 +4656,40 @@ function PiHtmlComposer(props: {
       const key = event.key;
       const lowerKey = key.toLowerCase();
       const mac = isMacLikePlatform();
-      const wordLeft = (mac ? event.altKey && !event.metaKey && !event.ctrlKey : event.ctrlKey && !event.altKey && !event.metaKey) && lowerKey === "arrowleft";
-      const wordRight = (mac ? event.altKey && !event.metaKey && !event.ctrlKey : event.ctrlKey && !event.altKey && !event.metaKey) && lowerKey === "arrowright";
-      const lineLeft = (mac ? event.metaKey && !event.altKey && !event.ctrlKey && lowerKey === "arrowleft" : event.key === "Home") && !event.shiftKey;
-      const lineRight = (mac ? event.metaKey && !event.altKey && !event.ctrlKey && lowerKey === "arrowright" : event.key === "End") && !event.shiftKey;
+      const wordLeft =
+        (mac
+          ? event.altKey && !event.metaKey && !event.ctrlKey
+          : event.ctrlKey && !event.altKey && !event.metaKey) && lowerKey === "arrowleft";
+      const wordRight =
+        (mac
+          ? event.altKey && !event.metaKey && !event.ctrlKey
+          : event.ctrlKey && !event.altKey && !event.metaKey) && lowerKey === "arrowright";
+      const lineLeft =
+        (mac
+          ? event.metaKey && !event.altKey && !event.ctrlKey && lowerKey === "arrowleft"
+          : event.key === "Home") && !event.shiftKey;
+      const lineRight =
+        (mac
+          ? event.metaKey && !event.altKey && !event.ctrlKey && lowerKey === "arrowright"
+          : event.key === "End") && !event.shiftKey;
 
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (key === "-" || key === "_")) {
+      if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (key === "-" || key === "_")
+      ) {
         event.preventDefault();
         return undoEditor();
       }
-      if (event.key === "Tab" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (
+        event.key === "Tab" &&
+        event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
         event.preventDefault();
         void cycleThinkingLevel();
         return true;
@@ -3810,7 +4706,11 @@ function PiHtmlComposer(props: {
       }
       if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "a") {
         event.preventDefault();
-        setComposerSelection({ start: lineStart(current, selection.start), end: lineStart(current, selection.start), direction: "none" });
+        setComposerSelection({
+          start: lineStart(current, selection.start),
+          end: lineStart(current, selection.start),
+          direction: "none",
+        });
         return true;
       }
       if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "e") {
@@ -3860,19 +4760,34 @@ function PiHtmlComposer(props: {
       }
       if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "u") {
         event.preventDefault();
-        return deleteSelectionOrRange(lineStart(current, selection.start), selection.end, true) || true;
+        return (
+          deleteSelectionOrRange(lineStart(current, selection.start), selection.end, true) || true
+        );
       }
-      if ((event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "w") || (event.altKey && !event.metaKey && !event.ctrlKey && key === "Backspace")) {
+      if (
+        (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "w") ||
+        (event.altKey && !event.metaKey && !event.ctrlKey && key === "Backspace")
+      ) {
         event.preventDefault();
         return hasSelection
           ? deleteSelectionOrRange(selection.start, selection.end, true)
-          : deleteSelectionOrRange(previousWordStart(current, selection.start), selection.start, true) || true;
+          : deleteSelectionOrRange(
+              previousWordStart(current, selection.start),
+              selection.start,
+              true,
+            ) || true;
       }
-      if (event.altKey && !event.metaKey && !event.ctrlKey && (lowerKey === "d" || key === "Delete")) {
+      if (
+        event.altKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        (lowerKey === "d" || key === "Delete")
+      ) {
         event.preventDefault();
         return hasSelection
           ? deleteSelectionOrRange(selection.start, selection.end, true)
-          : deleteSelectionOrRange(selection.start, nextWordEnd(current, selection.start), true) || true;
+          : deleteSelectionOrRange(selection.start, nextWordEnd(current, selection.start), true) ||
+              true;
       }
       if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "y") {
         event.preventDefault();
@@ -3890,9 +4805,19 @@ function PiHtmlComposer(props: {
         }
         return hasSelection
           ? deleteSelectionOrRange(selection.start, selection.end)
-          : deleteSelectionOrRange(selection.start, Math.min(current.length, selection.start + 1)) || true;
+          : deleteSelectionOrRange(
+              selection.start,
+              Math.min(current.length, selection.start + 1),
+            ) || true;
       }
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && lowerKey === "c" && !hasSelection) {
+      if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        lowerKey === "c" &&
+        !hasSelection
+      ) {
         event.preventDefault();
         const now = Date.now();
         if (now - lastClearShortcutAtRef.current < 500 && current.length === 0) {
@@ -3908,7 +4833,18 @@ function PiHtmlComposer(props: {
       }
       return false;
     },
-    [applyEditorValue, cycleModel, cycleThinkingLevel, deleteSelectionOrRange, openModelSelector, setComposerSelection, shutdownHtmlSession, undoEditor, yank, yankPop],
+    [
+      applyEditorValue,
+      cycleModel,
+      cycleThinkingLevel,
+      deleteSelectionOrRange,
+      openModelSelector,
+      setComposerSelection,
+      shutdownHtmlSession,
+      undoEditor,
+      yank,
+      yankPop,
+    ],
   );
 
   const handleKeyDown = useCallback(
@@ -3926,7 +4862,10 @@ function PiHtmlComposer(props: {
         }
         if (event.key === "ArrowUp") {
           event.preventDefault();
-          setSelectedModelIndex((index) => (index - 1 + Math.max(1, modelOptions.length)) % Math.max(1, modelOptions.length));
+          setSelectedModelIndex(
+            (index) =>
+              (index - 1 + Math.max(1, modelOptions.length)) % Math.max(1, modelOptions.length),
+          );
           return;
         }
         if (event.key === "Enter") {
@@ -3938,7 +4877,10 @@ function PiHtmlComposer(props: {
       }
       if (handlePasteMarkerKey(event)) return;
       if (suggestions.length > 0) {
-        if (event.key === "Escape" || (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "c")) {
+        if (
+          event.key === "Escape" ||
+          (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "c")
+        ) {
           event.preventDefault();
           setDismissedSuggestionToken(activeSuggestionToken);
           return;
@@ -3950,12 +4892,16 @@ function PiHtmlComposer(props: {
         }
         if (event.key === "ArrowUp") {
           event.preventDefault();
-          setSelectedSuggestionIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
+          setSelectedSuggestionIndex(
+            (index) => (index - 1 + suggestions.length) % suggestions.length,
+          );
           return;
         }
         if (event.key === "PageDown") {
           event.preventDefault();
-          setSelectedSuggestionIndex((index) => Math.min(suggestions.length - 1, index + MAX_SUGGESTIONS));
+          setSelectedSuggestionIndex((index) =>
+            Math.min(suggestions.length - 1, index + MAX_SUGGESTIONS),
+          );
           return;
         }
         if (event.key === "PageUp") {
@@ -3968,7 +4914,13 @@ function PiHtmlComposer(props: {
           applySuggestion(suggestions[selectedSuggestionIndex] ?? suggestions[0]!);
           return;
         }
-        if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (
+          event.key === "Enter" &&
+          !event.shiftKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey
+        ) {
           event.preventDefault();
           const selected = suggestions[selectedSuggestionIndex] ?? suggestions[0]!;
           if (selected.type === "command") {
@@ -3985,7 +4937,14 @@ function PiHtmlComposer(props: {
         return;
       }
 
-      if (isBusy && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c") {
+      if (
+        isBusy &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "c"
+      ) {
         const start = event.currentTarget.selectionStart ?? value.length;
         const end = event.currentTarget.selectionEnd ?? start;
         if (start === end) {
@@ -4001,13 +4960,22 @@ function PiHtmlComposer(props: {
         const start = event.currentTarget.selectionStart ?? value.length;
         const end = event.currentTarget.selectionEnd ?? start;
         const collapsed = start === end;
-        if (event.key === "ArrowUp" && collapsed && (historyIndex > -1 || start === 0 || value.length === 0)) {
+        if (
+          event.key === "ArrowUp" &&
+          collapsed &&
+          (historyIndex > -1 || start === 0 || value.length === 0)
+        ) {
           if (navigateHistory(-1)) {
             event.preventDefault();
             return;
           }
         }
-        if (event.key === "ArrowDown" && collapsed && historyIndex > -1 && value.indexOf("\n", end) === -1) {
+        if (
+          event.key === "ArrowDown" &&
+          collapsed &&
+          historyIndex > -1 &&
+          value.indexOf("\n", end) === -1
+        ) {
           if (navigateHistory(1)) {
             event.preventDefault();
             return;
@@ -4015,7 +4983,12 @@ function PiHtmlComposer(props: {
         }
       }
 
-      if (event.key === "Enter" && (event.shiftKey || event.altKey) && !event.metaKey && !event.ctrlKey) {
+      if (
+        event.key === "Enter" &&
+        (event.shiftKey || event.altKey) &&
+        !event.metaKey &&
+        !event.ctrlKey
+      ) {
         event.preventDefault();
         if (event.altKey) {
           void submit(undefined, isBusy ? "followUp" : undefined);
@@ -4025,7 +4998,13 @@ function PiHtmlComposer(props: {
         return;
       }
 
-      if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
         event.preventDefault();
         const textarea = event.currentTarget;
         const cursor = textarea.selectionStart ?? value.length;
@@ -4043,7 +5022,27 @@ function PiHtmlComposer(props: {
         void abort();
       }
     },
-    [abort, activeSuggestionToken, applyEditorValue, applySuggestion, handleEditorKeymap, handlePasteMarkerKey, historyIndex, insertAtSelection, isBusy, modelOptions, modelSelectOpen, navigateHistory, rawSuggestions.length, selectModel, selectedModelIndex, selectedSuggestionIndex, submit, suggestions, value],
+    [
+      abort,
+      activeSuggestionToken,
+      applyEditorValue,
+      applySuggestion,
+      handleEditorKeymap,
+      handlePasteMarkerKey,
+      historyIndex,
+      insertAtSelection,
+      isBusy,
+      modelOptions,
+      modelSelectOpen,
+      navigateHistory,
+      rawSuggestions.length,
+      selectModel,
+      selectedModelIndex,
+      selectedSuggestionIndex,
+      submit,
+      suggestions,
+      value,
+    ],
   );
 
   return (
@@ -4071,7 +5070,11 @@ function PiHtmlComposer(props: {
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => void selectModel(model)}
               className="flex w-full items-center gap-3 px-[1ch] py-0 text-left text-[1em]"
-              style={index === selectedModelIndex ? selectedStyle(props.theme) : { color: themeText(props.theme) }}
+              style={
+                index === selectedModelIndex
+                  ? selectedStyle(props.theme)
+                  : { color: themeText(props.theme) }
+              }
             >
               <span className="min-w-0 flex-1 truncate">{model.label}</span>
             </button>
@@ -4094,11 +5097,17 @@ function PiHtmlComposer(props: {
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => applySuggestion(suggestion)}
               className="flex w-full items-center gap-3 px-[1ch] py-0 text-left text-[1em]"
-              style={index === selectedSuggestionIndex ? selectedStyle(props.theme) : { color: themeText(props.theme) }}
+              style={
+                index === selectedSuggestionIndex
+                  ? selectedStyle(props.theme)
+                  : { color: themeText(props.theme) }
+              }
             >
               <span className="min-w-0 flex-1 truncate">{suggestion.label}</span>
               {suggestion.description && (
-                <span className="max-w-[50%] truncate" style={{ color: themeMuted(props.theme) }}>{suggestion.description}</span>
+                <span className="max-w-[50%] truncate" style={{ color: themeMuted(props.theme) }}>
+                  {suggestion.description}
+                </span>
               )}
             </button>
           ))}
@@ -4106,11 +5115,20 @@ function PiHtmlComposer(props: {
       )}
       <PiQueuedPromptPreview prompts={pendingPrompts} theme={props.theme} piTheme={props.piTheme} />
       <div className="relative">
-        <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
+        <pre
+          className="m-0 overflow-hidden whitespace-pre"
+          style={{ color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}
+        >
+          {"─".repeat(180)}
+        </pre>
         {thinkingLevelLabel && (
           <span
             className="absolute right-0 top-0 px-[0.5ch] text-[1em]"
-            style={{ backgroundColor: props.theme.background, color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}
+            style={{
+              backgroundColor: props.theme.background,
+              color: composerRuleColor,
+              lineHeight: TERMINAL_LINE_HEIGHT,
+            }}
           >
             {thinkingLevelLabel}
           </span>
@@ -4124,7 +5142,7 @@ function PiHtmlComposer(props: {
             const selection = {
               start: event.currentTarget.selectionStart ?? event.currentTarget.value.length,
               end: event.currentTarget.selectionEnd ?? event.currentTarget.value.length,
-              direction: event.currentTarget.selectionDirection ?? "none" as const,
+              direction: event.currentTarget.selectionDirection ?? ("none" as const),
             };
             updateDraftValue(event.target.value, selection);
           }}
@@ -4146,7 +5164,12 @@ function PiHtmlComposer(props: {
           }}
         />
       </div>
-      <pre className="m-0 overflow-hidden whitespace-pre" style={{ color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}>{"─".repeat(180)}</pre>
+      <pre
+        className="m-0 overflow-hidden whitespace-pre"
+        style={{ color: composerRuleColor, lineHeight: TERMINAL_LINE_HEIGHT }}
+      >
+        {"─".repeat(180)}
+      </pre>
       <PiHtmlFooterStatus
         threadId={props.threadId}
         theme={props.theme}
@@ -4154,14 +5177,41 @@ function PiHtmlComposer(props: {
         extensionUiState={props.extensionUiState}
         usageStats={props.usageStats}
       />
-      {submitting && <pre className="m-0" style={{ color: props.piTheme.muted, lineHeight: TERMINAL_LINE_HEIGHT }}>sending…</pre>}
-      {error && <pre className="m-0" style={{ color: props.theme.red ?? themeText(props.theme), lineHeight: TERMINAL_LINE_HEIGHT }}>{error}</pre>}
+      {submitting && (
+        <pre
+          className="m-0"
+          style={{ color: props.piTheme.muted, lineHeight: TERMINAL_LINE_HEIGHT }}
+        >
+          sending…
+        </pre>
+      )}
+      {error && (
+        <pre
+          className="m-0"
+          style={{
+            color: props.theme.red ?? themeText(props.theme),
+            lineHeight: TERMINAL_LINE_HEIGHT,
+          }}
+        >
+          {error}
+        </pre>
+      )}
     </div>
   );
 }
 
 export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
-  const { items, liveItems, uiRequest, extensionUiState, editorTextRequest, usageStats, clearUiRequest, loadState, error } = usePiTranscript(props.threadId);
+  const {
+    items,
+    liveItems,
+    uiRequest,
+    extensionUiState,
+    editorTextRequest,
+    usageStats,
+    clearUiRequest,
+    loadState,
+    error,
+  } = usePiTranscript(props.threadId);
   const { settings } = useAppSettings();
   const thread = useStore((s) => s.threads.find((t) => t.id === props.threadId));
   const baseTerminalTheme = terminalThemeFromApp();
@@ -4186,26 +5236,42 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
     const persistedSignatures = new Set(items.map(transcriptSignature));
     return liveItems.filter((item) => !persistedSignatures.has(transcriptSignature(item)));
   }, [items, liveItems]);
-  const localNoticeItems = useMemo<PiTranscriptItem[]>(() => localNotices.map((notice) => ({
-    id: `local-notice:${notice.id}`,
-    role: "system",
-    text: notice.text,
-    parts: [{ type: "text", text: notice.text }],
-    createdAt: notice.createdAt,
-    ...(notice.isError ? { isError: true } : {}),
-  })), [localNotices]);
-  const visibleItems = useMemo(() => mergeToolResultsForDisplay([...items, ...visibleLiveItems, ...localNoticeItems]), [items, localNoticeItems, visibleLiveItems]);
-  const showThinkingPlaceholder = thinkingVisible && thread?.hookStatus === "working" && visibleLiveItems.length === 0;
+  const localNoticeItems = useMemo<PiTranscriptItem[]>(
+    () =>
+      localNotices.map((notice) => ({
+        id: `local-notice:${notice.id}`,
+        role: "system",
+        text: notice.text,
+        parts: [{ type: "text", text: notice.text }],
+        createdAt: notice.createdAt,
+        ...(notice.isError ? { isError: true } : {}),
+      })),
+    [localNotices],
+  );
+  const visibleItems = useMemo(
+    () => mergeToolResultsForDisplay([...items, ...visibleLiveItems, ...localNoticeItems]),
+    [items, localNoticeItems, visibleLiveItems],
+  );
+  const showThinkingPlaceholder =
+    thinkingVisible && thread?.hookStatus === "working" && visibleLiveItems.length === 0;
   const promptHistory = useMemo(() => transcriptPromptHistory(items), [items]);
   const promptTranscriptUserTexts = useMemo(() => transcriptUserTexts(items), [items]);
   const searchMatches = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
-    return visibleItems.flatMap((item, index) => itemText(item).toLowerCase().includes(query) ? [index] : []);
+    return visibleItems.flatMap((item, index) =>
+      itemText(item).toLowerCase().includes(query) ? [index] : [],
+    );
   }, [searchQuery, visibleItems]);
-  const activeSearchRowIndex = searchMatches.length > 0 ? (searchMatches[searchIndex % searchMatches.length] ?? null) : null;
+  const activeSearchRowIndex =
+    searchMatches.length > 0 ? (searchMatches[searchIndex % searchMatches.length] ?? null) : null;
   const virtualRows = useMemo<PiVirtualTranscriptRow[]>(() => {
-    const rows = visibleItems.map<PiVirtualTranscriptRow>((item, index) => ({ type: "item", key: `item:${item.id}`, item, itemIndex: index }));
+    const rows = visibleItems.map<PiVirtualTranscriptRow>((item, index) => ({
+      type: "item",
+      key: `item:${item.id}`,
+      item,
+      itemIndex: index,
+    }));
     if (showThinkingPlaceholder) rows.push({ type: "thinking", key: "thinking-placeholder" });
     if (error) rows.push({ type: "error", key: "transcript-error", text: error });
     return rows;
@@ -4213,7 +5279,8 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
   const transcriptVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: virtualRows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => estimatePiTranscriptRowHeight(virtualRows[index], settings.terminalFontSize),
+    estimateSize: (index) =>
+      estimatePiTranscriptRowHeight(virtualRows[index], settings.terminalFontSize),
     getItemKey: (index) => virtualRows[index]?.key ?? index,
     overscan: PI_HTML_TRANSCRIPT_OVERSCAN,
     anchorTo: "end",
@@ -4244,7 +5311,10 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
 
   useEffect(() => {
     if (!searchOpen || activeSearchRowIndex === null) return;
-    transcriptVirtualizer.scrollToIndex(activeSearchRowIndex, { align: "center", behavior: "auto" });
+    transcriptVirtualizer.scrollToIndex(activeSearchRowIndex, {
+      align: "center",
+      behavior: "auto",
+    });
   }, [activeSearchRowIndex, searchOpen, transcriptVirtualizer]);
 
   const onScroll = useCallback(() => {
@@ -4263,14 +5333,22 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
     const id = ++localNoticeIdRef.current;
     setLocalNotices((current) => [
       ...current,
-      { id, text: trimmed, isError: options?.isError === true, createdAt: new Date().toISOString() },
+      {
+        id,
+        text: trimmed,
+        isError: options?.isError === true,
+        createdAt: new Date().toISOString(),
+      },
     ]);
   }, []);
 
-  const goToSearchMatch = useCallback((direction: -1 | 1) => {
-    if (searchMatches.length === 0) return;
-    setSearchIndex((index) => (index + direction + searchMatches.length) % searchMatches.length);
-  }, [searchMatches.length]);
+  const goToSearchMatch = useCallback(
+    (direction: -1 | 1) => {
+      if (searchMatches.length === 0) return;
+      setSearchIndex((index) => (index + direction + searchMatches.length) % searchMatches.length);
+    },
+    [searchMatches.length],
+  );
 
   const scrollToBottom = useCallback(() => {
     transcriptVirtualizer.scrollToEnd({ behavior: "auto" });
@@ -4281,7 +5359,11 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
   const handleRootKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       const key = event.key.toLowerCase();
-      const searchShortcut = key === "f" && !event.altKey && !event.shiftKey && (isMacLikePlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey);
+      const searchShortcut =
+        key === "f" &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (isMacLikePlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey);
       if (searchShortcut) {
         event.preventDefault();
         event.stopPropagation();
@@ -4318,7 +5400,8 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
     (event: ReactClipboardEvent<HTMLDivElement>) => {
       if (!showInputComposer || event.defaultPrevented) return;
       const target = isHTMLElement(event.target) ? event.target : null;
-      if (isEditableTarget(target) || isInteractiveTarget(target) || isInsideKeyboardOwner(target)) return;
+      if (isEditableTarget(target) || isInteractiveTarget(target) || isInsideKeyboardOwner(target))
+        return;
       const text = clipboardPlainText(event.clipboardData);
       if (!text) return;
       event.preventDefault();
@@ -4343,8 +5426,17 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
       pointerStartRef.current = null;
       const target = isHTMLElement(event.target) ? event.target : null;
       const originalTarget = start?.target ?? target;
-      if (isEditableTarget(originalTarget) || isInteractiveTarget(originalTarget) || isInsideKeyboardOwner(originalTarget)) return;
-      if (Math.abs(event.clientX - (start?.x ?? event.clientX)) > 4 || Math.abs(event.clientY - (start?.y ?? event.clientY)) > 4) return;
+      if (
+        isEditableTarget(originalTarget) ||
+        isInteractiveTarget(originalTarget) ||
+        isInsideKeyboardOwner(originalTarget)
+      )
+        return;
+      if (
+        Math.abs(event.clientX - (start?.x ?? event.clientX)) > 4 ||
+        Math.abs(event.clientY - (start?.y ?? event.clientY)) > 4
+      )
+        return;
       if (window.getSelection()?.toString()) return;
       requestAnimationFrame(() => composerFocusRef.current?.());
     },
@@ -4370,7 +5462,11 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
       {searchOpen && (
         <div
           className="flex shrink-0 items-center gap-[1ch] border-b px-[1ch] py-0"
-          style={{ borderColor: piTheme.borderMuted, backgroundColor: terminalTheme.background, color: themeText(terminalTheme) }}
+          style={{
+            borderColor: piTheme.borderMuted,
+            backgroundColor: terminalTheme.background,
+            color: themeText(terminalTheme),
+          }}
         >
           <span style={{ color: piTheme.accent }}>find</span>
           <input
@@ -4392,26 +5488,67 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
               }
             }}
             className="min-w-0 flex-1 border-0 bg-transparent p-0 outline-none"
-            style={{ color: themeText(terminalTheme), caretColor: terminalTheme.cursor ?? themeText(terminalTheme) }}
+            style={{
+              color: themeText(terminalTheme),
+              caretColor: terminalTheme.cursor ?? themeText(terminalTheme),
+            }}
           />
-          <button type="button" onClick={() => goToSearchMatch(-1)} style={{ color: themeText(terminalTheme) }}>↑</button>
-          <button type="button" onClick={() => goToSearchMatch(1)} style={{ color: themeText(terminalTheme) }}>↓</button>
-          <span style={{ color: themeMuted(terminalTheme) }}>{searchMatches.length === 0 ? "0/0" : `${searchIndex + 1}/${searchMatches.length}`}</span>
-          <button type="button" onClick={() => setSearchOpen(false)} style={{ color: themeText(terminalTheme) }}>×</button>
+          <button
+            type="button"
+            onClick={() => goToSearchMatch(-1)}
+            style={{ color: themeText(terminalTheme) }}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => goToSearchMatch(1)}
+            style={{ color: themeText(terminalTheme) }}
+          >
+            ↓
+          </button>
+          <span style={{ color: themeMuted(terminalTheme) }}>
+            {searchMatches.length === 0 ? "0/0" : `${searchIndex + 1}/${searchMatches.length}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(false)}
+            style={{ color: themeText(terminalTheme) }}
+          >
+            ×
+          </button>
         </div>
       )}
-      <div ref={scrollRef} role="log" aria-live="polite" onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        onScroll={onScroll}
+        className="relative min-h-0 flex-1 overflow-y-auto"
+      >
         {virtualRows.length === 0 && loadState !== "error" && (
-          <pre className="m-0" style={{ color: themeMuted(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{loadState === "loading" ? "Loading transcript…" : ""}</pre>
+          <pre
+            className="m-0"
+            style={{ color: themeMuted(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}
+          >
+            {loadState === "loading" ? "Loading transcript…" : ""}
+          </pre>
         )}
-        <div className="relative w-full" style={{ height: `${transcriptVirtualizer.getTotalSize()}px` }}>
+        <div
+          className="relative w-full"
+          style={{ height: `${transcriptVirtualizer.getTotalSize()}px` }}
+        >
           {virtualItems.map((virtualItem) => {
             const row = virtualRows[virtualItem.index];
             if (!row) return null;
             const isActiveSearchRow = row.type === "item" && row.itemIndex === activeSearchRowIndex;
             const rowMarginEm = piVirtualRowOuterMarginEm(row, toolsExpanded);
-            const previousRowMarginEm = piVirtualRowOuterMarginEm(virtualRows[virtualItem.index - 1], toolsExpanded);
-            const gapBeforeEm = virtualItem.index === 0 ? rowMarginEm : Math.max(previousRowMarginEm, rowMarginEm);
+            const previousRowMarginEm = piVirtualRowOuterMarginEm(
+              virtualRows[virtualItem.index - 1],
+              toolsExpanded,
+            );
+            const gapBeforeEm =
+              virtualItem.index === 0 ? rowMarginEm : Math.max(previousRowMarginEm, rowMarginEm);
             const gapAfterEm = virtualItem.index === virtualRows.length - 1 ? rowMarginEm : 0;
             return (
               <div
@@ -4424,15 +5561,31 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
                   paddingTop: gapBeforeEm ? `${gapBeforeEm}em` : undefined,
                   paddingBottom: gapAfterEm ? `${gapAfterEm}em` : undefined,
                   transform: `translateY(${virtualItem.start}px)`,
-                  ...(isActiveSearchRow ? { outline: `1px solid ${piTheme.borderAccent}`, outlineOffset: "-1px" } : {}),
+                  ...(isActiveSearchRow
+                    ? { outline: `1px solid ${piTheme.borderAccent}`, outlineOffset: "-1px" }
+                    : {}),
                 }}
               >
                 {row.type === "item" ? (
-                  <MemoizedPiTranscriptRow item={row.item} theme={terminalTheme} piTheme={piTheme} toolsExpanded={toolsExpanded} thinkingVisible={thinkingVisible} />
+                  <MemoizedPiTranscriptRow
+                    item={row.item}
+                    theme={terminalTheme}
+                    piTheme={piTheme}
+                    toolsExpanded={toolsExpanded}
+                    thinkingVisible={thinkingVisible}
+                  />
                 ) : row.type === "thinking" ? (
                   <PiThinkingPlaceholder active piTheme={piTheme} />
                 ) : (
-                  <pre className="m-0" style={{ color: terminalTheme.red ?? themeText(terminalTheme), lineHeight: TERMINAL_LINE_HEIGHT }}>{row.text}</pre>
+                  <pre
+                    className="m-0"
+                    style={{
+                      color: terminalTheme.red ?? themeText(terminalTheme),
+                      lineHeight: TERMINAL_LINE_HEIGHT,
+                    }}
+                  >
+                    {row.text}
+                  </pre>
                 )}
               </div>
             );
@@ -4443,14 +5596,31 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
             type="button"
             onClick={scrollToBottom}
             className="sticky bottom-0 left-1/2 z-10 block border px-[1ch] py-0 text-[1em]"
-            style={{ borderColor: piTheme.borderMuted, backgroundColor: terminalTheme.background, color: piTheme.accent, lineHeight: TERMINAL_LINE_HEIGHT }}
+            style={{
+              borderColor: piTheme.borderMuted,
+              backgroundColor: terminalTheme.background,
+              color: piTheme.accent,
+              lineHeight: TERMINAL_LINE_HEIGHT,
+            }}
           >
             new output ↓
           </button>
         )}
       </div>
-      <PiExtensionWidgets widgets={extensionUiState.widgets} placement="aboveEditor" theme={terminalTheme} />
-      {uiRequest && <PiExtensionUiPrompt key={`${props.threadId}:${uiRequest.id}`} threadId={props.threadId} request={uiRequest} onDone={clearUiRequest} theme={terminalTheme} />}
+      <PiExtensionWidgets
+        widgets={extensionUiState.widgets}
+        placement="aboveEditor"
+        theme={terminalTheme}
+      />
+      {uiRequest && (
+        <PiExtensionUiPrompt
+          key={`${props.threadId}:${uiRequest.id}`}
+          threadId={props.threadId}
+          request={uiRequest}
+          onDone={clearUiRequest}
+          theme={terminalTheme}
+        />
+      )}
       {showInputComposer ? (
         <PiHtmlComposer
           key={props.threadId}
@@ -4475,7 +5645,11 @@ export default function PiHtmlThreadView(props: PiHtmlThreadViewProps) {
           usageStats={usageStats}
         />
       ) : null}
-      <PiExtensionWidgets widgets={extensionUiState.widgets} placement="belowEditor" theme={terminalTheme} />
+      <PiExtensionWidgets
+        widgets={extensionUiState.widgets}
+        placement="belowEditor"
+        theme={terminalTheme}
+      />
       {props.footer}
     </div>
   );

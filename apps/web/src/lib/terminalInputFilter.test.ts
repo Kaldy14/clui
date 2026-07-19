@@ -19,7 +19,8 @@ describe("stripTerminalResponses", () => {
   });
 
   it("strips multiple responses concatenated", () => {
-    const input = "\x1b]11;rgb:0c0c/0c0c/0c0c\x1b\\\x1b[16;1R\x1b]11;rgb:0c0c/0c0c/0c0c\x1b\\\x1b[16;1R";
+    const input =
+      "\x1b]11;rgb:0c0c/0c0c/0c0c\x1b\\\x1b[16;1R\x1b]11;rgb:0c0c/0c0c/0c0c\x1b\\\x1b[16;1R";
     expect(stripTerminalResponses(input)).toBe("");
   });
 

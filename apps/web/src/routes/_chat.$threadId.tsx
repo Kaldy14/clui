@@ -170,10 +170,14 @@ function ChatThreadRouteView() {
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
   const search = Route.useSearch();
-  const routeThreadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
+  const routeThreadExists = useStore((store) =>
+    store.threads.some((thread) => thread.id === threadId),
+  );
   // Subscribe to completion-related state so the badge-clearing effect below
   // re-fires when a thread completes while we're already viewing it.
-  const hookStatus = useStore((store) => store.threads.find((t) => t.id === threadId)?.hookStatus ?? null);
+  const hookStatus = useStore(
+    (store) => store.threads.find((t) => t.id === threadId)?.hookStatus ?? null,
+  );
   const completedAt = useStore((store) => {
     const thread = store.threads.find((t) => t.id === threadId);
     return thread?.latestTurn?.completedAt ?? thread?.lastCompletedAt ?? null;

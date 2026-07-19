@@ -585,10 +585,7 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
                   next = updateTerminalStateByThreadId(next, existingThreadId, (s) =>
                     setThreadTerminalOpen(s, false),
                   );
-                  nextCwdByThreadId = removeProjectTerminalCwd(
-                    nextCwdByThreadId,
-                    existingThreadId,
-                  );
+                  nextCwdByThreadId = removeProjectTerminalCwd(nextCwdByThreadId, existingThreadId);
                 }
               }
               if (targetCwd !== null && nextCwdByThreadId[threadId] !== targetCwd) {

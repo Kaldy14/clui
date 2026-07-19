@@ -1,10 +1,4 @@
-import {
-  CommandId,
-  EventId,
-  ThreadId,
-  TurnId,
-  type OrchestrationEvent,
-} from "@clui/contracts";
+import { CommandId, EventId, ThreadId, TurnId, type OrchestrationEvent } from "@clui/contracts";
 import { Cause, Effect, Layer, Queue, Stream } from "effect";
 
 import {
@@ -275,17 +269,23 @@ const make = Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find((entry) => entry.id === input.threadId);
       if (!thread) {
-        yield* Effect.logWarning("[checkpoint] ensureBaseline: thread not found", { threadId: input.threadId });
+        yield* Effect.logWarning("[checkpoint] ensureBaseline: thread not found", {
+          threadId: input.threadId,
+        });
         return;
       }
 
       const checkpointCwd = resolveThreadWorkspaceCwd({ thread, projects: readModel.projects });
       if (!checkpointCwd) {
-        yield* Effect.logWarning("[checkpoint] ensureBaseline: no workspace cwd", { threadId: input.threadId });
+        yield* Effect.logWarning("[checkpoint] ensureBaseline: no workspace cwd", {
+          threadId: input.threadId,
+        });
         return;
       }
       if (!(yield* isGitWorkspace(checkpointCwd))) {
-        yield* Effect.logWarning("[checkpoint] ensureBaseline: not a git repo", { cwd: checkpointCwd });
+        yield* Effect.logWarning("[checkpoint] ensureBaseline: not a git repo", {
+          cwd: checkpointCwd,
+        });
         return;
       }
 
@@ -310,19 +310,27 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const captureTerminalTurnCheckpoint: CheckpointReactorShape["captureTerminalTurnCheckpoint"] = (input) =>
+  const captureTerminalTurnCheckpoint: CheckpointReactorShape["captureTerminalTurnCheckpoint"] = (
+    input,
+  ) =>
     Effect.gen(function* () {
-      yield* Effect.logInfo("[checkpoint] captureTerminalTurnCheckpoint called", { threadId: input.threadId });
+      yield* Effect.logInfo("[checkpoint] captureTerminalTurnCheckpoint called", {
+        threadId: input.threadId,
+      });
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find((entry) => entry.id === input.threadId);
       if (!thread) {
-        yield* Effect.logWarning("[checkpoint] capture: thread not found", { threadId: input.threadId });
+        yield* Effect.logWarning("[checkpoint] capture: thread not found", {
+          threadId: input.threadId,
+        });
         return;
       }
 
       const checkpointCwd = resolveThreadWorkspaceCwd({ thread, projects: readModel.projects });
       if (!checkpointCwd) {
-        yield* Effect.logWarning("[checkpoint] capture: no workspace cwd", { threadId: input.threadId });
+        yield* Effect.logWarning("[checkpoint] capture: no workspace cwd", {
+          threadId: input.threadId,
+        });
         return;
       }
       if (!(yield* isGitWorkspace(checkpointCwd))) {
@@ -364,7 +372,10 @@ const make = Effect.gen(function* () {
         fallbackFromToHead: false,
       });
 
-      yield* Effect.logInfo("[checkpoint] diff computed", { cwd: checkpointCwd, diffLength: diff.length });
+      yield* Effect.logInfo("[checkpoint] diff computed", {
+        cwd: checkpointCwd,
+        diffLength: diff.length,
+      });
       const files = parseTurnDiffFilesFromUnifiedDiff(diff);
       yield* Effect.logInfo("[checkpoint] parsed files", { fileCount: files.length });
       if (files.length === 0) {

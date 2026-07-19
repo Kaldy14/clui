@@ -56,7 +56,8 @@ function contentParts(content: unknown): PiTranscriptPart[] {
       continue;
     }
     if (type === "toolCall") {
-      const name = typeof rawPart.name === "string" && rawPart.name.length > 0 ? rawPart.name : "tool";
+      const name =
+        typeof rawPart.name === "string" && rawPart.name.length > 0 ? rawPart.name : "tool";
       parts.push({
         type: "toolCall",
         name,
@@ -82,7 +83,8 @@ function parseMessageEntry(entry: Record<string, unknown>, id: string): PiTransc
   const message = entry.message;
   if (!isRecord(message)) return null;
 
-  const createdAt = isoTimestampFromValue(entry.timestamp) ?? isoTimestampFromValue(message.timestamp);
+  const createdAt =
+    isoTimestampFromValue(entry.timestamp) ?? isoTimestampFromValue(message.timestamp);
   const role = message.role;
   const parts = contentParts(message.content);
   const text = compactText(parts);
@@ -132,8 +134,7 @@ function parseMessageEntry(entry: Record<string, unknown>, id: string): PiTransc
   }
 
   if (role === "branchSummary" || role === "compactionSummary") {
-    const summary =
-      typeof message.summary === "string" ? message.summary : text;
+    const summary = typeof message.summary === "string" ? message.summary : text;
     const summaryParts: PiTranscriptPart[] = summary ? [{ type: "text", text: summary }] : [];
     return {
       id,
@@ -207,7 +208,10 @@ function parseEntryLine(line: string, id: string): PiTranscriptItem | null {
   return null;
 }
 
-export function parsePiTranscriptBuffer(buffer: Buffer, sinceOffset?: number): PiTranscriptReadResult {
+export function parsePiTranscriptBuffer(
+  buffer: Buffer,
+  sinceOffset?: number,
+): PiTranscriptReadResult {
   const totalOffset = buffer.length;
   const startOffset =
     sinceOffset != null && sinceOffset >= 0 && sinceOffset <= totalOffset ? sinceOffset : 0;

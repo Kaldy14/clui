@@ -1,16 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createMarkdownCodeFenceFilter,
-  stripMarkdownCodeFences,
-} from "./terminalOutputMarkdown";
+import { createMarkdownCodeFenceFilter, stripMarkdownCodeFences } from "./terminalOutputMarkdown";
 
 describe("stripMarkdownCodeFences", () => {
   it("removes a basic backtick code block", () => {
     const input = "Here is some code:\n```\nconst x = 1;\n```\nDone.";
-    expect(stripMarkdownCodeFences(input)).toBe(
-      "Here is some code:\nconst x = 1;\nDone.",
-    );
+    expect(stripMarkdownCodeFences(input)).toBe("Here is some code:\nconst x = 1;\nDone.");
   });
 
   it("removes fences with a language tag", () => {
@@ -25,9 +20,7 @@ describe("stripMarkdownCodeFences", () => {
 
   it("keeps content lines that happen to contain backticks", () => {
     const input = "```\nconst s = `hello`;\nconst t = `${x}`;\n```";
-    expect(stripMarkdownCodeFences(input)).toBe(
-      "const s = `hello`;\nconst t = `${x}`;\n",
-    );
+    expect(stripMarkdownCodeFences(input)).toBe("const s = `hello`;\nconst t = `${x}`;\n");
   });
 
   it("handles Windows-style line endings", () => {

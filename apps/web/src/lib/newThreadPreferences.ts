@@ -90,9 +90,8 @@ export function writeNewThreadPreference(
 
   const existing = readRaw()[cwd];
   const nextEnvMode = preference.envMode ?? existing?.envMode;
-  const branch = preference.branch !== undefined
-    ? safeBranch(preference.branch)
-    : safeBranch(existing?.branch);
+  const branch =
+    preference.branch !== undefined ? safeBranch(preference.branch) : safeBranch(existing?.branch);
   if (!branch || (nextEnvMode !== "local" && nextEnvMode !== "worktree")) return;
 
   const all = readRaw();
@@ -105,18 +104,13 @@ export function writeNewThreadPreference(
   writeRaw(all);
 }
 
-export function writeNewThreadFastModePreference(
-  projectCwd: string,
-  fastMode: boolean,
-): void {
+export function writeNewThreadFastModePreference(projectCwd: string, fastMode: boolean): void {
   const cwd = safeProjectCwd(projectCwd);
   if (!cwd) return;
 
   const existing = readRaw()[cwd];
   const envMode =
-    existing?.envMode === "local" || existing?.envMode === "worktree"
-      ? existing.envMode
-      : "local";
+    existing?.envMode === "local" || existing?.envMode === "worktree" ? existing.envMode : "local";
   const all = readRaw();
   all[cwd] = {
     envMode,
@@ -147,9 +141,7 @@ export function writeNewThreadPiRenderModePreference(
 
   const existing = readRaw()[cwd];
   const envMode =
-    existing?.envMode === "local" || existing?.envMode === "worktree"
-      ? existing.envMode
-      : "local";
+    existing?.envMode === "local" || existing?.envMode === "worktree" ? existing.envMode : "local";
   const all = readRaw();
   all[cwd] = {
     envMode,

@@ -95,7 +95,9 @@ function withFakeTitleCliEnv<A, E, R>(
       process.env.T3_FAKE_CLAUDE_OUTPUT = JSON.stringify({
         result: options.claudeTitle ?? "Claude Title",
       });
-      process.env.T3_FAKE_CODEX_OUTPUT = JSON.stringify({ title: options.codexTitle ?? "Codex Title" });
+      process.env.T3_FAKE_CODEX_OUTPUT = JSON.stringify({
+        title: options.codexTitle ?? "Codex Title",
+      });
       if (options.claudeExitCode !== undefined) {
         process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(options.claudeExitCode);
       } else {
@@ -123,11 +125,13 @@ function withFakeTitleCliEnv<A, E, R>(
         else process.env.PATH = previous.previousPath;
         if (previous.previousClaudeOutput === undefined) delete process.env.T3_FAKE_CLAUDE_OUTPUT;
         else process.env.T3_FAKE_CLAUDE_OUTPUT = previous.previousClaudeOutput;
-        if (previous.previousClaudeExitCode === undefined) delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
+        if (previous.previousClaudeExitCode === undefined)
+          delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
         else process.env.T3_FAKE_CLAUDE_EXIT_CODE = previous.previousClaudeExitCode;
         if (previous.previousCodexOutput === undefined) delete process.env.T3_FAKE_CODEX_OUTPUT;
         else process.env.T3_FAKE_CODEX_OUTPUT = previous.previousCodexOutput;
-        if (previous.previousCodexExitCode === undefined) delete process.env.T3_FAKE_CODEX_EXIT_CODE;
+        if (previous.previousCodexExitCode === undefined)
+          delete process.env.T3_FAKE_CODEX_EXIT_CODE;
         else process.env.T3_FAKE_CODEX_EXIT_CODE = previous.previousCodexExitCode;
         fs.rmSync(previous.root, { recursive: true, force: true });
       }),
@@ -148,7 +152,8 @@ function generateTitle(stateDir: string, promptText = "fix title generation") {
 describe("HarnessTextGeneration", () => {
   it.effect("uses Claude as the default thread title provider", () =>
     withTempStateDir((stateDir) =>
-      withFakeTitleCliEnv({ claudeTitle: "Claude Primary", codexTitle: "Codex Fallback" },
+      withFakeTitleCliEnv(
+        { claudeTitle: "Claude Primary", codexTitle: "Codex Fallback" },
         Effect.gen(function* () {
           const result = yield* generateTitle(stateDir);
           expect(result.title).toBe("Claude Primary");
@@ -171,7 +176,8 @@ describe("HarnessTextGeneration", () => {
 
   it.effect("uses Codex first when selected in persisted server settings", () =>
     withTempStateDir((stateDir) =>
-      withFakeTitleCliEnv({ claudeTitle: "Claude Fallback", codexTitle: "Codex Primary" },
+      withFakeTitleCliEnv(
+        { claudeTitle: "Claude Fallback", codexTitle: "Codex Primary" },
         Effect.gen(function* () {
           fs.writeFileSync(
             getServerSettingsPath(stateDir),

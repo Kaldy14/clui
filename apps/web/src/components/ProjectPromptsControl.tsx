@@ -136,7 +136,9 @@ export default function ProjectPromptsControl({
           </Button>
           <GroupSeparator />
           <Menu highlightItemOnHover={false}>
-            <MenuTrigger render={<Button size="icon-xs" variant="outline" aria-label="Prompt actions" />}>
+            <MenuTrigger
+              render={<Button size="icon-xs" variant="outline" aria-label="Prompt actions" />}
+            >
               <ChevronDownIcon className="size-4" />
             </MenuTrigger>
             <MenuPopup align="end">

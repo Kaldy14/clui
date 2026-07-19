@@ -91,7 +91,11 @@ export default function DiffQuickAskPopover({
   }, [autoAsk, initialPrompt]);
 
   return (
-    <div className="fixed inset-0 z-[70]" onClick={onClose} onContextMenu={(e) => e.preventDefault()}>
+    <div
+      className="fixed inset-0 z-[70]"
+      onClick={onClose}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       <section
         className="absolute flex max-h-[420px] w-[420px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
         style={position}

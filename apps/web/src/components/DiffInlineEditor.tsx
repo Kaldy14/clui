@@ -1,4 +1,10 @@
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+} from "@codemirror/view";
 import { EditorState, type Extension } from "@codemirror/state";
 import { bracketMatching } from "@codemirror/language";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -153,9 +159,7 @@ export default function DiffInlineEditor({
         <div className="flex items-center gap-1 min-w-0 text-sm font-mono">
           <span className="text-[#858585] truncate">{dir}</span>
           <span className="text-[#D4D4D4] font-semibold">{base}</span>
-          {isDirtyRef.current && (
-            <span className="text-[#858585] text-xs ml-1">(modified)</span>
-          )}
+          {isDirtyRef.current && <span className="text-[#858585] text-xs ml-1">(modified)</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button

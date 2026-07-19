@@ -25,9 +25,9 @@ describe("resolveAttachmentRelativePath", () => {
   it("resolves normalized paths under the attachment root", () => {
     const stateDir = path.join(path.sep, "tmp", "clui-state");
 
-    expect(resolveAttachmentRelativePath({ stateDir, relativePath: "thread-1/screenshot.png" })).toBe(
-      path.resolve(path.join(stateDir, "attachments", "thread-1/screenshot.png")),
-    );
+    expect(
+      resolveAttachmentRelativePath({ stateDir, relativePath: "thread-1/screenshot.png" }),
+    ).toBe(path.resolve(path.join(stateDir, "attachments", "thread-1/screenshot.png")));
   });
 
   it("rejects traversal outside the attachment root", () => {

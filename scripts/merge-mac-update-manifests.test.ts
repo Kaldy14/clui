@@ -46,12 +46,7 @@ releaseDate: '2026-03-07T10:36:07.540Z'
     assert.equal(merged.releaseDate, "2026-03-07T10:36:07.540Z");
     assert.deepStrictEqual(
       merged.files.map((file) => file.url),
-      [
-        "Clui-0.0.4-arm64.zip",
-        "Clui-0.0.4-arm64.dmg",
-        "Clui-0.0.4-x64.zip",
-        "Clui-0.0.4-x64.dmg",
-      ],
+      ["Clui-0.0.4-arm64.zip", "Clui-0.0.4-arm64.dmg", "Clui-0.0.4-x64.zip", "Clui-0.0.4-x64.dmg"],
     );
 
     const serialized = serializeMacUpdateManifest(merged);
