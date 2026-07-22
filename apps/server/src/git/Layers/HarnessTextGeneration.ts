@@ -14,8 +14,11 @@ export const makeHarnessTextGeneration = Effect.gen(function* () {
   const codex = yield* makeCodexTextGeneration;
   const pi = yield* makePiCliTextGeneration;
 
-  const select = (harness: CodingHarness | undefined): TextGenerationShape =>
-    harness === "pi" ? pi : claude;
+  const select = (harness: CodingHarness | undefined): TextGenerationShape => {
+    if (harness === "pi") return pi;
+    if (harness === "codexCli") return codex;
+    return claude;
+  };
 
   const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = (input) =>
     Effect.promise(() => loadServerSettings(serverConfig.stateDir)).pipe(

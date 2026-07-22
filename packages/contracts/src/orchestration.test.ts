@@ -3,6 +3,7 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  CodingHarness,
   DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -30,6 +31,7 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeProjectScript = Schema.decodeUnknownEffect(ProjectScript);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+const decodeCodingHarness = Schema.decodeUnknownEffect(CodingHarness);
 
 const baseThread = {
   id: "thread-1",
@@ -49,6 +51,13 @@ const baseThread = {
   checkpoints: [],
   session: null,
 };
+
+it.effect("decodes Codex CLI as a coding harness", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeCodingHarness("codexCli");
+    assert.strictEqual(parsed, "codexCli");
+  }),
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {

@@ -722,7 +722,7 @@ export default function TerminalToolbar({
   const handleYoloToggle = useCallback(
     async (enable: boolean) => {
       const api = readNativeApi();
-      if (!api || !thread || thread.harness !== "claudeCode") return;
+      if (!api || !thread || thread.harness === "pi") return;
       const cwd = thread.worktreePath ?? project?.cwd ?? "";
       if (!cwd) return;
       setYoloMode(threadId, enable);
@@ -911,7 +911,7 @@ export default function TerminalToolbar({
         )}
 
         {/* YOLO mode toggle */}
-        {thread.harness === "claudeCode" ? (
+        {thread.harness !== "pi" ? (
           <>
             <div className="h-3.5 w-px bg-border/50 dark:bg-border/30" />
             <Popover>

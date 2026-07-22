@@ -4,6 +4,42 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-22 — Add `codexCli` as a new thread harness option
+
+**Problem:** Clui only exposed Claude Code and pi as thread harness choices, but there was no way to create a thread that explicitly targeted codex-cli through the same terminal UI flow.
+
+**Root cause:** The shared harness contract and UI were modeled around a two-harness union. The PTY manager also always spawned `claude`, generated Claude session IDs locally, and applied one shared LRU bucket, so it could not launch, track, or resume a native Codex CLI process correctly.
+
+**Fix:** Added `codexCli` to the shared contract and selection UI. Reused the established non-pi WebSocket/terminal transport while branching at process launch to run `codex`, mapping YOLO mode to Codex's bypass flag, and selecting Codex for harness-scoped Git text generation. Injected Codex lifecycle hooks, captured the CLI-generated session ID from `SessionStart`, and resume dormant threads with `codex resume <session_id>`. Applied active-session caps independently to Claude Code and Codex CLI, updated provider status/copy/docs, and added contract, hook, manager, WebSocket, settings, subscription, and sidebar coverage.
+
+**Affected files:**
+
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/orchestration.test.ts`
+- `apps/server/src/hooks/hookSettings.ts`
+- `apps/server/src/hooks/hookSettings.test.ts`
+- `apps/server/src/terminal/Services/ClaudeSession.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts`
+- `apps/server/src/terminal/sessionProcessRegistry.ts`
+- `apps/server/src/git/Layers/HarnessTextGeneration.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/appSettings.ts`
+- `apps/web/src/appSettings.test.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/SpeechControl.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `README.md`
+- `PLAN.md`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-07-19 — Restore browser test discovery after ChatView removal
 
 **Problem:** The GitHub Actions browser-test step exited with code 1 because Vitest could not find the configured `src/components/ChatView.browser.tsx` test file.

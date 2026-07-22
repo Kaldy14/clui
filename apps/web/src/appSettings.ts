@@ -31,7 +31,7 @@ export type WhisperModelTier = (typeof WHISPER_MODEL_TIERS)[number]["id"];
 
 const AppSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
-  defaultCodingHarness: Schema.Literals(["claudeCode", "pi"]).pipe(
+  defaultCodingHarness: Schema.Literals(["claudeCode", "pi", "codexCli"]).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_CODING_HARNESS)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
@@ -73,7 +73,13 @@ export interface AppModelOption {
 export const CODING_HARNESS_OPTIONS = [
   "claudeCode",
   "pi",
+  "codexCli",
 ] as const satisfies readonly CodingHarness[];
+export const CODING_HARNESS_LABELS: Record<CodingHarness, string> = {
+  claudeCode: "Claude Code",
+  pi: "pi",
+  codexCli: "Codex CLI",
+};
 
 const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
 

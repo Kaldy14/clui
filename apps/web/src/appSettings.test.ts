@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CODING_HARNESS_LABELS,
+  CODING_HARNESS_OPTIONS,
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
 } from "./appSettings";
+
+describe("coding harness settings", () => {
+  it("exposes Codex CLI as a selectable harness", () => {
+    expect(CODING_HARNESS_OPTIONS).toEqual(["claudeCode", "pi", "codexCli"]);
+    expect(CODING_HARNESS_LABELS.codexCli).toBe("Codex CLI");
+  });
+});
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {

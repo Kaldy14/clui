@@ -238,6 +238,7 @@ const defaultClaudeSessionManager: ClaudeSessionManagerShape = {
   hibernateActiveSessions: () => Effect.succeed([]),
   subscribe: () => Effect.succeed(() => {}),
   getClaudeSessionId: () => Effect.succeed(null),
+  recordCodexSessionId: () => Effect.void,
   destroySession: () => Effect.void,
   purgeInactiveSessions: () => Effect.succeed(0),
   getClaudeCodeProxyStatus: () => Effect.succeed(DEFAULT_TEST_CLAUDE_CODE_PROXY_STATUS),
@@ -2218,7 +2219,7 @@ describe("WebSocket Server", () => {
       threadId: string;
       workspaceRoot: string;
       worktreePath: string | null;
-      harness?: "claudeCode" | "pi";
+      harness?: "claudeCode" | "codexCli" | "pi";
       claudeCodeBackend?: "anthropic" | "codex";
       model?: string;
     },
@@ -2445,6 +2446,10 @@ describe("WebSocket Server", () => {
         hibernateActiveSessions: () => Effect.succeed([]),
         subscribe: () => Effect.succeed(() => {}),
         getClaudeSessionId: () => Effect.succeed(null),
+        recordCodexSessionId: (threadId, sessionId) => {
+          calls.push({ method: "recordCodexSessionId", args: [threadId, sessionId] });
+          return Effect.void;
+        },
         destroySession: () => Effect.void,
         purgeInactiveSessions: () => Effect.succeed(0),
         getClaudeCodeProxyStatus: () => {
@@ -2507,10 +2512,52 @@ describe("WebSocket Server", () => {
       expect(calls[0]!.args[0]).toMatchObject({
         threadId: "thread-1",
         cwd: workspaceRoot,
+        harness: "claudeCode",
         cols: 80,
         rows: 24,
         claudeCodeBackend: "codex",
         model: "gpt-5.6-sol",
+      });
+    });
+
+    it("claude.start launches the Codex CLI harness selected by the thread", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      const workspaceRoot = makeTempDir("clui-ws-codex-start-");
+      server = await createTestServer({ cwd: workspaceRoot, claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws);
+
+      await createProjectedThread(ws, {
+        projectId: "project-codex",
+        threadId: "thread-codex",
+        workspaceRoot,
+        worktreePath: null,
+        harness: "codexCli",
+        model: "gpt-5.6-sol",
+      });
+
+      const response = await sendRequest(ws, WS_METHODS.claudeStart, {
+        threadId: "thread-codex",
+        cwd: workspaceRoot,
+        cols: 100,
+        rows: 30,
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({
+        method: "startSession",
+        args: [
+          {
+            threadId: "thread-codex",
+            harness: "codexCli",
+            model: "gpt-5.6-sol",
+          },
+        ],
       });
     });
 

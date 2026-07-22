@@ -1,4 +1,4 @@
-import { type ThreadId } from "@clui/contracts";
+import { type CodingHarness, type ThreadId } from "@clui/contracts";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DownloadIcon, Loader2Icon, MicIcon, SettingsIcon, SquareIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -16,7 +16,7 @@ export function SpeechControl({
   harness,
 }: {
   threadId: ThreadId;
-  harness: "claudeCode" | "pi";
+  harness: CodingHarness;
 }) {
   const { startRecording, stopRecording } = useSpeechToText(threadId, harness);
   const status = useSpeechStore((s) => s.status);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildHookSettingsJson } from "./hookSettings";
+import { buildCodexHookConfigOverrides, buildHookSettingsJson } from "./hookSettings";
 
 describe("buildHookSettingsJson", () => {
   it("returns a valid JSON string", () => {
@@ -80,5 +80,35 @@ describe("buildHookSettingsJson", () => {
     expect(cmd).toContain("curl -s -X POST");
     expect(cmd).toContain("-d @-");
     expect(cmd).toContain("Content-Type: application/json");
+  });
+});
+
+describe("buildCodexHookConfigOverrides", () => {
+  it("configures session capture and lifecycle callbacks", () => {
+    const overrides = buildCodexHookConfigOverrides(4100, "thread-1");
+
+    expect(overrides).toHaveLength(6);
+    expect(overrides[0]).toContain("hooks.SessionStart");
+    expect(overrides[0]).toContain("startup|resume");
+    expect(overrides).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("hooks.UserPromptSubmit"),
+        expect.stringContaining("hooks.PreToolUse"),
+        expect.stringContaining("hooks.PermissionRequest"),
+        expect.stringContaining("hooks.PostToolUse"),
+        expect.stringContaining("hooks.Stop"),
+      ]),
+    );
+  });
+
+  it("posts hook JSON to the thread-scoped Clui endpoint without writing output", () => {
+    const overrides = buildCodexHookConfigOverrides(4200, "thread with spaces");
+
+    for (const override of overrides) {
+      expect(override).toContain("127.0.0.1:4200");
+      expect(override).toContain("thread=thread%20with%20spaces");
+      expect(override).toContain("-o /dev/null");
+      expect(override).toContain("-d @-");
+    }
   });
 });

@@ -4,13 +4,17 @@ import type {
   ClaudeCodeBackend,
   ClaudeCodeProxyStatus,
   ClaudeSessionEvent,
+  CodingHarness,
   TerminalStatus,
 } from "@clui/contracts";
 import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
 import { Open } from "../../open";
-import { buildHookSettingsJson } from "../../hooks/hookSettings";
+import {
+  buildCodexHookConfigOverrides,
+  buildHookSettingsJson,
+} from "../../hooks/hookSettings";
 import { loadServerSettings } from "../../serverSettings";
 import {
   PtyAdapter,
@@ -108,7 +112,10 @@ class ScrollbackRingBuffer {
 
 // ── Types ─────────────────────────────────────────────────────────────
 
+type PtyCodingHarness = Exclude<CodingHarness, "pi">;
+
 interface ClaudeSessionEntry extends ClaudeSessionState {
+  harness: PtyCodingHarness;
   scrollbackBuffer: ScrollbackRingBuffer;
   process: PtyProcess | null;
   unsubscribeData: (() => void) | null;
@@ -171,6 +178,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   async startSession(input: {
     threadId: string;
     cwd: string;
+    harness?: PtyCodingHarness;
     resumeSessionId?: string;
     cols: number;
     rows: number;
@@ -179,33 +187,36 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     model?: string;
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
+      const harness = input.harness ?? "claudeCode";
       const existing = this.sessions.get(input.threadId);
       if (existing?.process) {
         this.stopProcess(existing);
       }
 
-      // Determine the claude session ID:
-      // - Resuming: reuse the provided session ID with --resume
-      // - New session: generate a UUID and pass --session-id so we know it upfront
-      const claudeSessionId = input.resumeSessionId ?? crypto.randomUUID();
+      // Claude accepts a caller-provided session ID. Codex creates its own ID,
+      // which is recorded from the injected SessionStart hook after launch.
+      const claudeSessionId =
+        harness === "claudeCode" ? (input.resumeSessionId ?? crypto.randomUUID()) : null;
 
       const entry: ClaudeSessionEntry = existing ?? {
         threadId: input.threadId,
+        harness,
         claudeSessionId,
         lastInteractedAt: Date.now(),
         scrollbackBuffer: new ScrollbackRingBuffer(this.historyLineLimit),
         cols: input.cols,
         rows: input.rows,
-        status: "active" as TerminalStatus,
+        status: "new" as TerminalStatus,
         process: null,
         unsubscribeData: null,
         unsubscribeExit: null,
       };
 
+      entry.harness = harness;
       entry.claudeSessionId = claudeSessionId;
       entry.cols = input.cols;
       entry.rows = input.rows;
-      entry.status = "active";
+      entry.status = "new";
       entry.lastInteractedAt = Date.now();
       // Clear old scrollback when starting a new session so the buffer only
       // contains output from the current CLI process. Without this, old output
@@ -216,43 +227,24 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       }
       this.sessions.set(input.threadId, entry);
 
-      const args: string[] = [];
-      if (input.dangerouslySkipPermissions ?? this.dangerouslySkipPermissions) {
-        args.push("--dangerously-skip-permissions");
-      }
-      if (input.resumeSessionId) {
-        args.push("--resume", input.resumeSessionId);
-      } else {
-        args.push("--session-id", claudeSessionId);
-      }
-
-      // Inject hook settings as inline JSON (matching cmux's approach).
-      // Claude Code merges --settings additively with the user's own settings.json.
-      if (this.hookConfig) {
-        const settingsJson = buildHookSettingsJson(
-          this.hookConfig.serverPort,
-          input.threadId,
-          claudeSessionId,
-        );
-        args.push("--settings", settingsJson);
-        this.logger.info("hook settings injected", {
-          threadId: input.threadId,
-          port: this.hookConfig.serverPort,
-        });
-      }
+      const skipPermissions = input.dangerouslySkipPermissions ?? this.dangerouslySkipPermissions;
+      const args =
+        harness === "codexCli"
+          ? this.buildCodexArgs(input, skipPermissions)
+          : this.buildClaudeArgs(input, claudeSessionId!, skipPermissions);
 
       try {
         await assertValidCwd(input.cwd);
 
         const runtimeEnv =
-          input.claudeCodeBackend === "codex"
+          harness === "claudeCode" && input.claudeCodeBackend === "codex"
             ? await this.claudeCodeProxyManager.getClaudeEnvironment(input.model ?? "")
             : undefined;
         const spawnEnv = createSpawnEnv(process.env, runtimeEnv);
 
         const ptyProcess = await Effect.runPromise(
           this.ptyAdapter.spawn({
-            shell: "claude",
+            shell: harness === "codexCli" ? "codex" : "claude",
             args,
             cwd: input.cwd,
             cols: input.cols,
@@ -262,6 +254,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         );
 
         entry.process = ptyProcess;
+        entry.status = "active";
         this.registerProcess(entry, ptyProcess);
         const registerProcessTimer = setTimeout(() => {
           this.registerProcess(entry, ptyProcess);
@@ -279,8 +272,9 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
           this.onProcessExit(entry, event);
         });
 
-        this.logger.info("claude session started", {
+        this.logger.info("terminal coding session started", {
           threadId: input.threadId,
+          harness,
           pid: ptyProcess.pid,
           claudeSessionId,
           resume: !!input.resumeSessionId,
@@ -292,13 +286,16 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
           createdAt: new Date().toISOString(),
         });
 
-        // Emit session ID immediately — we know it upfront via --session-id or --resume
-        this.emitEvent({
-          type: "sessionId",
-          threadId: input.threadId,
-          createdAt: new Date().toISOString(),
-          claudeSessionId,
-        });
+        // Claude session IDs and resumed Codex IDs are known immediately. A
+        // new Codex session reports its generated ID through SessionStart.
+        const knownSessionId =
+          harness === "claudeCode"
+            ? claudeSessionId
+            : (entry.claudeSessionId ?? input.resumeSessionId);
+        if (knownSessionId) {
+          entry.claudeSessionId = knownSessionId;
+          this.emitSessionId(input.threadId, knownSessionId);
+        }
 
         // Fire-and-forget reconciliation
         void this.reconcileActiveSessions(this.maxActiveSessions);
@@ -306,9 +303,10 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         this.unregisterProcess(entry);
         entry.status = "new";
         entry.process = null;
-        const message = error instanceof Error ? error.message : "Failed to start claude session";
-        this.logger.error("failed to start claude session", {
+        const message = error instanceof Error ? error.message : `Failed to start ${harness}`;
+        this.logger.error("failed to start terminal coding session", {
           threadId: input.threadId,
+          harness,
           error: message,
         });
         this.emitEvent({
@@ -382,6 +380,18 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     return entry?.claudeSessionId ?? null;
   }
 
+  recordCodexSessionId(threadId: string, sessionId: string): void {
+    const entry = this.sessions.get(threadId);
+    if (!entry || entry.harness !== "codexCli" || entry.status === "dormant") {
+      throw new Error(`No starting or active Codex CLI session for thread: ${threadId}`);
+    }
+    if (entry.claudeSessionId === sessionId) return;
+    entry.claudeSessionId = sessionId;
+    if (entry.status === "active" && entry.process) {
+      this.emitSessionId(threadId, sessionId);
+    }
+  }
+
   writeToSession(threadId: string, data: string): void {
     const entry = this.sessions.get(threadId);
     if (!entry || !entry.process || entry.status !== "active") {
@@ -408,17 +418,19 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   }
 
   async reconcileActiveSessions(maxActive: number): Promise<void> {
-    const activeSessions = [...this.sessions.values()].filter(
-      (entry) => entry.status === "active" && entry.process !== null,
-    );
+    for (const harness of ["claudeCode", "codexCli"] as const) {
+      const activeSessions = [...this.sessions.values()].filter(
+        (entry) =>
+          entry.harness === harness && entry.status === "active" && entry.process !== null,
+      );
 
-    if (activeSessions.length <= maxActive) return;
+      if (activeSessions.length <= maxActive) continue;
 
-    const sorted = activeSessions.toSorted((a, b) => a.lastInteractedAt - b.lastInteractedAt);
-
-    const toHibernate = sorted.slice(0, sorted.length - maxActive);
-    for (const entry of toHibernate) {
-      await this.hibernateSession(entry.threadId);
+      const sorted = activeSessions.toSorted((a, b) => a.lastInteractedAt - b.lastInteractedAt);
+      const toHibernate = sorted.slice(0, sorted.length - maxActive);
+      for (const entry of toHibernate) {
+        await this.hibernateSession(entry.threadId);
+      }
     }
   }
 
@@ -529,6 +541,70 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
 
   // ── Private ────────────────────────────────────────────────────────
 
+  private buildClaudeArgs(
+    input: { threadId: string; resumeSessionId?: string },
+    sessionId: string,
+    skipPermissions: boolean,
+  ): string[] {
+    const args: string[] = [];
+    if (skipPermissions) {
+      args.push("--dangerously-skip-permissions");
+    }
+    if (input.resumeSessionId) {
+      args.push("--resume", input.resumeSessionId);
+    } else {
+      args.push("--session-id", sessionId);
+    }
+
+    // Claude Code merges inline --settings additively with user settings.
+    if (this.hookConfig) {
+      const settingsJson = buildHookSettingsJson(
+        this.hookConfig.serverPort,
+        input.threadId,
+        sessionId,
+      );
+      args.push("--settings", settingsJson);
+      this.logger.info("Claude Code hook settings injected", {
+        threadId: input.threadId,
+        port: this.hookConfig.serverPort,
+      });
+    }
+    return args;
+  }
+
+  private buildCodexArgs(
+    input: { threadId: string; resumeSessionId?: string; model?: string },
+    skipPermissions: boolean,
+  ): string[] {
+    const args: string[] = input.resumeSessionId ? ["resume"] : [];
+    if (skipPermissions) {
+      args.push("--dangerously-bypass-approvals-and-sandbox");
+    }
+    if (input.model) {
+      args.push("--model", input.model);
+    }
+    if (this.hookConfig) {
+      // The injected commands are generated entirely by Clui. Bypassing the
+      // interactive trust prompt is required for SessionStart to capture the
+      // generated ID before the session can be hibernated.
+      args.push("--dangerously-bypass-hook-trust");
+      for (const override of buildCodexHookConfigOverrides(
+        this.hookConfig.serverPort,
+        input.threadId,
+      )) {
+        args.push("-c", override);
+      }
+      this.logger.info("Codex CLI hook settings injected", {
+        threadId: input.threadId,
+        port: this.hookConfig.serverPort,
+      });
+    }
+    if (input.resumeSessionId) {
+      args.push(input.resumeSessionId);
+    }
+    return args;
+  }
+
   private onProcessData(entry: ClaudeSessionEntry, data: string): void {
     entry.scrollbackBuffer.append(data);
 
@@ -583,7 +659,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       return;
     try {
       writeSessionProcessRegistryEntry(this.processRegistryDir, {
-        harness: "claudeCode",
+        harness: entry.harness,
         threadId: entry.threadId,
         pid: expectedProcess.pid,
       });
@@ -599,7 +675,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private unregisterProcess(entry: ClaudeSessionEntry): void {
     if (!this.processRegistryDir) return;
     try {
-      removeSessionProcessRegistryEntry(this.processRegistryDir, "claudeCode", entry.threadId);
+      removeSessionProcessRegistryEntry(this.processRegistryDir, entry.harness, entry.threadId);
     } catch (error) {
       this.logger.warn("failed to unregister claude session process", {
         threadId: entry.threadId,
@@ -647,6 +723,15 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
 
   private emitEvent(event: ClaudeSessionEvent): void {
     this.emit("event", event);
+  }
+
+  private emitSessionId(threadId: string, sessionId: string): void {
+    this.emitEvent({
+      type: "sessionId",
+      threadId,
+      createdAt: new Date().toISOString(),
+      claudeSessionId: sessionId,
+    });
   }
 
   private runWithThreadLock<T>(threadId: string, task: () => Promise<T>): Promise<T> {
@@ -750,6 +835,15 @@ export const ClaudeSessionManagerLive = Layer.effect(
           };
         }),
       getClaudeSessionId: (threadId) => Effect.sync(() => runtime.getClaudeSessionId(threadId)),
+      recordCodexSessionId: (threadId, sessionId) =>
+        Effect.try({
+          try: () => runtime.recordCodexSessionId(threadId, sessionId),
+          catch: (cause) =>
+            new ClaudeSessionError({
+              message: "Failed to record Codex CLI session ID",
+              cause,
+            }),
+        }),
       destroySession: (threadId) => Effect.promise(() => runtime.destroySession(threadId)),
       purgeInactiveSessions: (excludeThreadIds) =>
         Effect.promise(() => runtime.purgeInactiveSessions(excludeThreadIds)),

@@ -7,7 +7,12 @@
  * @module ClaudeSessionManager
  */
 import { Effect, Schema, ServiceMap } from "effect";
-import type { ClaudeCodeBackend, ClaudeCodeProxyStatus, TerminalStatus } from "@clui/contracts";
+import type {
+  ClaudeCodeBackend,
+  ClaudeCodeProxyStatus,
+  CodingHarness,
+  TerminalStatus,
+} from "@clui/contracts";
 import type { ClaudeSessionEvent } from "@clui/contracts";
 
 export class ClaudeSessionError extends Schema.TaggedErrorClass<ClaudeSessionError>()(
@@ -31,6 +36,7 @@ export interface ClaudeSessionManagerShape {
   readonly startSession: (input: {
     threadId: string;
     cwd: string;
+    harness?: Exclude<CodingHarness, "pi">;
     resumeSessionId?: string;
     cols: number;
     rows: number;
@@ -68,6 +74,10 @@ export interface ClaudeSessionManagerShape {
   ) => Effect.Effect<ReadonlyArray<string>>;
   readonly subscribe: (listener: (event: ClaudeSessionEvent) => void) => Effect.Effect<() => void>;
   readonly getClaudeSessionId: (threadId: string) => Effect.Effect<string | null>;
+  readonly recordCodexSessionId: (
+    threadId: string,
+    sessionId: string,
+  ) => Effect.Effect<void, ClaudeSessionError>;
   /** Kill PTY and remove session from map without emitting lifecycle events. Used for thread deletion. */
   readonly destroySession: (threadId: string) => Effect.Effect<void>;
   /** Kill all dormant sessions except the excluded thread IDs. Returns count of sessions killed. */

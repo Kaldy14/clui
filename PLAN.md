@@ -1,6 +1,6 @@
 # Clui — Implementation Plan
 
-> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code and pi.
+> **The CLI with a UI.** Project-organized, thread-based terminal multiplexer for Claude Code, Codex CLI, and pi.
 
 **Name:** Clui (CLI + UI)
 
@@ -8,7 +8,7 @@
 
 Fork t3code and replace its Agent SDK chat interface with embedded xterm.js terminals running coding-agent CLIs directly. Keep the project → thread sidebar, branch/worktree management, and git workflow. Each thread becomes a terminal session running its selected harness in the thread's worktree cwd.
 
-**Current status update (2026-04-13, amended 2026-04-19):** Clui now ships selectable per-thread coding harnesses (`claudeCode | pi`). Claude threads resume via `claude --resume <session_id>`. pi threads now store sessions in a pi-compatible shared agent directory under server state, preserve an explicit per-thread active session file, and inject a tiny runtime extension so native pi `/resume` works while each thread still reopens its own last-selected session.
+**Current status update (2026-04-13, amended 2026-07-22):** Clui now ships selectable per-thread coding harnesses (`claudeCode | codexCli | pi`). Claude threads resume via `claude --resume <session_id>`, Codex threads via `codex resume <session_id>`, and pi threads store sessions in a pi-compatible shared agent directory under server state while preserving an explicit per-thread active session file.
 
 ---
 
@@ -41,8 +41,8 @@ Fork t3code and replace its Agent SDK chat interface with embedded xterm.js term
 
 ### Future (Post-MVP)
 
-17. Expand harness support beyond Claude Code and pi: Codex CLI, GitHub Copilot CLI, Aider, etc.
-18. Broaden the per-thread harness selector beyond the current `claudeCode | pi` choices.
+17. Expand harness support beyond Claude Code, Codex CLI, and pi: GitHub Copilot CLI, Aider, etc.
+18. Broaden the per-thread harness selector beyond the current `claudeCode | codexCli | pi` choices.
 19. Continue adding harness-specific resume/runtime logic where each CLI has its own session model.
 
 ---

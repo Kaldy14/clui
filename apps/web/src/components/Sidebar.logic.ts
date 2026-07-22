@@ -57,6 +57,7 @@ export function getActiveHarnessSessionStats(input: {
   const activeByHarness: Record<CodingHarness, number> = {
     claudeCode: 0,
     pi: 0,
+    codexCli: 0,
   };
 
   for (const thread of input.threads) {
@@ -64,14 +65,24 @@ export function getActiveHarnessSessionStats(input: {
     activeByHarness[thread.harness] += 1;
   }
 
-  const busiestHarness = activeByHarness.claudeCode >= activeByHarness.pi ? "claudeCode" : "pi";
+  let busiestHarness: CodingHarness = "claudeCode";
+  let busiestHarnessActive = activeByHarness.claudeCode;
+  for (const [harness, activeCount] of Object.entries(activeByHarness) as [
+    CodingHarness,
+    number,
+  ][]) {
+    if (activeCount > busiestHarnessActive) {
+      busiestHarness = harness;
+      busiestHarnessActive = activeCount;
+    }
+  }
 
   return {
     activeByHarness,
-    totalActive: activeByHarness.claudeCode + activeByHarness.pi,
+    totalActive: activeByHarness.claudeCode + activeByHarness.pi + activeByHarness.codexCli,
     maxActivePerHarness: input.maxActivePerHarness,
     busiestHarness,
-    busiestHarnessActive: activeByHarness[busiestHarness],
+    busiestHarnessActive,
   };
 }
 

@@ -94,6 +94,7 @@ import {
   buildPreToolUseEvents,
   buildPermissionRequestEvents,
   buildPostToolUseEvents,
+  parseHookInput,
 } from "./hooks/hookReceiver";
 import { extractPromptText, shouldGenerateTitleFromPrompt } from "./terminal/titleGenerator";
 import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThreads.ts";
@@ -360,7 +361,7 @@ function buildProviderStatuses(): ServerProviderStatus[] {
     {
       provider: "codex",
       command: "codex",
-      usage: "title and Git text generation",
+      usage: "terminal sessions, title generation, and Git text generation",
     },
   ];
 
@@ -794,7 +795,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           const body = await readRequestBody(req);
           let events: ClaudeSessionEvent[] = [];
 
-          if (hookPath === "/hooks/user-prompt-submit") {
+          if (hookPath === "/hooks/session-start") {
+            const { sessionId } = parseHookInput(body);
+            if (!sessionId) {
+              res.writeHead(400, { "Content-Type": "text/plain" });
+              res.end("Missing session ID in hook payload");
+              return;
+            }
+            await Effect.runPromise(
+              claudeSessionManager.recordCodexSessionId(threadId, sessionId),
+            );
+          } else if (hookPath === "/hooks/user-prompt-submit") {
             events = buildUserPromptSubmitEvents(threadId, body);
 
             // A new prompt clears any lingering pending approvals (user may
@@ -1821,10 +1832,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             message: `Thread not found: ${threadId}`,
           });
         }
+        if (threadRow.value.harness === "pi") {
+          return yield* new RouteRequestError({
+            message: `Thread ${threadId} uses the pi terminal transport`,
+          });
+        }
 
         return yield* claudeSessionManager.startSession({
           threadId,
           cwd: resolvedCwd,
+          harness: threadRow.value.harness,
           cols,
           rows,
           ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),

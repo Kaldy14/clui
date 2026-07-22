@@ -52,3 +52,33 @@ export function buildHookSettingsJson(
 
   return JSON.stringify(settings);
 }
+
+/**
+ * Build session-scoped Codex CLI hook overrides passed with repeated `-c` flags.
+ *
+ * Codex has no flag for choosing the ID of a new interactive session. The
+ * SessionStart callback gives Clui that ID so a hibernated terminal can resume
+ * the exact conversation instead of relying on the ambiguous `--last` lookup.
+ */
+export function buildCodexHookConfigOverrides(serverPort: number, threadId: string): string[] {
+  const baseUrl = `http://127.0.0.1:${serverPort}/hooks`;
+  const qs = `thread=${encodeURIComponent(threadId)}`;
+  const events = [
+    ["SessionStart", "session-start", "startup|resume"],
+    ["UserPromptSubmit", "user-prompt-submit", ""],
+    ["PreToolUse", "pre-tool-use", ""],
+    ["PermissionRequest", "permission-request", ""],
+    ["PostToolUse", "post-tool-use", ""],
+    ["Stop", "stop", ""],
+  ] as const;
+
+  return events.map(([event, endpoint, matcher]) => {
+    const command =
+      `curl -sS -o /dev/null -X POST '${baseUrl}/${endpoint}?${qs}' ` +
+      "-H 'Content-Type: application/json' -d @-";
+    return (
+      `hooks.${event}=[{ matcher = ${JSON.stringify(matcher)}, hooks = [` +
+      `{ type = "command", command = ${JSON.stringify(command)}, timeout = 10 }] }]`
+    );
+  });
+}

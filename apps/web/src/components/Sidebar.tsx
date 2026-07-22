@@ -42,6 +42,7 @@ import {
   DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_CLAUDE_CODE_PROXY_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
+  type CodingHarness,
   type DesktopUpdateState,
   ProjectId,
   ThreadId,
@@ -50,7 +51,11 @@ import {
 } from "@clui/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import { useAppSettings } from "../appSettings";
+import {
+  CODING_HARNESS_LABELS,
+  CODING_HARNESS_OPTIONS,
+  useAppSettings,
+} from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
 import { copyTextToClipboard } from "../lib/clipboard";
@@ -135,10 +140,10 @@ function CluiWordmark() {
   );
 }
 
-const HARNESS_SESSION_STAT_ROWS = [
-  { key: "claudeCode", label: "Claude Code" },
-  { key: "pi", label: "pi" },
-] as const;
+const HARNESS_SESSION_STAT_ROWS = CODING_HARNESS_OPTIONS.map((key) => ({
+  key,
+  label: CODING_HARNESS_LABELS[key],
+}));
 
 function SidebarProjectsLoading() {
   return (
@@ -199,8 +204,8 @@ function HarnessSessionUsageBadge({
           <div>
             <p className="font-medium text-foreground">Active thread sessions</p>
             <p className="mt-1 leading-4 text-muted-foreground">
-              Live Claude Code and pi PTY sessions kept awake right now. The cap is per harness; the
-              oldest active thread is hibernated when a harness goes over it.
+              Live Claude Code, pi, and Codex CLI PTY sessions kept awake right now. The cap is per
+              harness; the oldest active thread is hibernated when a harness goes over it.
             </p>
           </div>
 
@@ -327,7 +332,7 @@ type SidebarDragData =
       projectId: ProjectId;
       threadId: ThreadId;
       label: string;
-      harness: string;
+      harness: CodingHarness;
     };
 
 type SidebarDragOverlaySize = {
@@ -758,7 +763,7 @@ function SidebarDragOverlayPreview({
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium">{item.label}</div>
           <div className="truncate text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
-            {item.harness === "claudeCode" ? "Claude Code" : "Pi"}
+            {CODING_HARNESS_LABELS[item.harness]}
           </div>
         </div>
       </div>

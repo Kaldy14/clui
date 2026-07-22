@@ -24,6 +24,7 @@ import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 import { CLAUDE_CODE_PROXY_MODEL_OPTIONS } from "@clui/shared/claudeCodeProxy";
 
 import {
+  CODING_HARNESS_LABELS,
   CODING_HARNESS_OPTIONS,
   DEFAULT_TERMINAL_FONT_FAMILY,
   MAX_CUSTOM_MODEL_LENGTH,
@@ -85,15 +86,10 @@ const TERMINAL_COLOR_THEME_OPTIONS: Array<{
   },
 ];
 
-const CODING_HARNESS_LABELS: Record<CodingHarness, { label: string; description: string }> = {
-  claudeCode: {
-    label: "Claude Code",
-    description: "Use the existing Claude Code terminal harness for new threads.",
-  },
-  pi: {
-    label: "pi",
-    description: "Use the pi coding agent terminal harness for new threads.",
-  },
+const CODING_HARNESS_DESCRIPTIONS: Record<CodingHarness, string> = {
+  claudeCode: "Use the existing Claude Code terminal harness for new threads.",
+  pi: "Use the pi coding agent terminal harness for new threads.",
+  codexCli: "Use the Codex CLI terminal harness for new threads.",
 };
 
 const MODEL_PROVIDER_SETTINGS: Array<{
@@ -687,7 +683,6 @@ function SettingsRouteView() {
               <div className="space-y-2" role="radiogroup" aria-label="Default coding harness">
                 {CODING_HARNESS_OPTIONS.map((option) => {
                   const selected = settings.defaultCodingHarness === option;
-                  const copy = CODING_HARNESS_LABELS[option];
                   return (
                     <button
                       key={option}
@@ -702,8 +697,10 @@ function SettingsRouteView() {
                       onClick={() => updateSettings({ defaultCodingHarness: option })}
                     >
                       <span className="flex flex-col">
-                        <span className="text-sm font-medium">{copy.label}</span>
-                        <span className="text-xs">{copy.description}</span>
+                        <span className="text-sm font-medium">
+                          {CODING_HARNESS_LABELS[option]}
+                        </span>
+                        <span className="text-xs">{CODING_HARNESS_DESCRIPTIONS[option]}</span>
                       </span>
                       {selected ? (
                         <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
@@ -866,7 +863,8 @@ function SettingsRouteView() {
                 <h2 className="text-sm font-medium text-foreground">Session hibernation</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Limit how many active thread PTY sessions Clui keeps per harness before it
-                  hibernates the least recently used one. Claude Code and pi each use their own cap.
+                  hibernates the least recently used one. Claude Code, pi, and Codex CLI each use
+                  their own cap.
                 </p>
               </div>
 
@@ -911,8 +909,8 @@ function SettingsRouteView() {
                         Prevent macOS sleep while a thread is working
                       </label>
                       <p className="text-xs text-muted-foreground">
-                        Keeps your Mac awake with <code>caffeinate</code> while Claude Code or pi is
-                        actively processing a turn. Sleep is allowed again when the thread
+                        Keeps your Mac awake with <code>caffeinate</code> while the active harness is
+                        processing a turn. Sleep is allowed again when the thread
                         completes, exits, hibernates, or waits for input.
                       </p>
                     </div>

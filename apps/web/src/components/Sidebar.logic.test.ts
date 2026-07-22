@@ -44,17 +44,20 @@ describe("getActiveHarnessSessionStats", () => {
           makeHarnessSessionStatsThread("claudeCode", "dormant"),
           makeHarnessSessionStatsThread("pi", "active"),
           makeHarnessSessionStatsThread("pi", "new"),
+          makeHarnessSessionStatsThread("codexCli", "active"),
+          makeHarnessSessionStatsThread("codexCli", "dormant"),
         ],
       }),
     ).toEqual({
       activeByHarness: {
         claudeCode: 2,
         pi: 1,
+        codexCli: 1,
       },
       busiestHarness: "claudeCode",
       busiestHarnessActive: 2,
       maxActivePerHarness: 10,
-      totalActive: 3,
+      totalActive: 4,
     });
   });
 
@@ -62,7 +65,7 @@ describe("getActiveHarnessSessionStats", () => {
     const threads = Array.from({ length: 25 }, () => makeHarnessSessionStatsThread("pi", "active"));
 
     expect(getActiveHarnessSessionStats({ maxActivePerHarness: 20, threads })).toMatchObject({
-      activeByHarness: { claudeCode: 0, pi: 25 },
+      activeByHarness: { claudeCode: 0, pi: 25, codexCli: 0 },
       busiestHarness: "pi",
       busiestHarnessActive: 25,
       maxActivePerHarness: 20,

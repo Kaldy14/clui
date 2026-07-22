@@ -18,7 +18,11 @@ import { Checkbox } from "./ui/checkbox";
 import { Kbd } from "./ui/kbd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useAppSettings } from "../appSettings";
+import {
+  CODING_HARNESS_LABELS,
+  CODING_HARNESS_OPTIONS,
+  useAppSettings,
+} from "../appSettings";
 import { isElectron } from "../env";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import {
@@ -76,6 +80,11 @@ const ALT_BUFFER_WHEEL_PIXELS_PER_LINE = 50;
 const ALT_BUFFER_WHEEL_DELTA_LINE_PIXELS = 40;
 const ALT_BUFFER_WHEEL_MAX_STEPS_PER_FRAME = 24;
 const TERMINAL_RECOVERY_TIMEOUT_MS = [120, 350, 900] as const;
+
+const NEW_THREAD_HARNESS_OPTIONS = CODING_HARNESS_OPTIONS.map((value) => ({
+  value,
+  label: CODING_HARNESS_LABELS[value],
+}));
 function scheduleTerminalRecoveryPasses(runPass: () => void): () => void {
   const rafIds = new Set<number>();
   const timeoutIds = new Set<number>();
@@ -158,7 +167,10 @@ function getHarnessScrollback(
   harness: HarnessKind,
   input: { threadId: ThreadId; sinceOffset?: number },
 ): Promise<{ threadId: string; scrollback: string | null; offset: number; reset?: boolean }> {
-  return harness === "pi" ? api.pi.getScrollback(input) : api.claude.getScrollback(input);
+  if (harness === "pi") {
+    return api.pi.getScrollback(input);
+  }
+  return api.claude.getScrollback(input);
 }
 
 function subscribeHarnessSessionEvents(
@@ -166,7 +178,10 @@ function subscribeHarnessSessionEvents(
   harness: HarnessKind,
   callback: (event: HarnessSessionEvent) => void,
 ): () => void {
-  return harness === "pi" ? api.pi.onSessionEvent(callback) : api.claude.onSessionEvent(callback);
+  if (harness === "pi") {
+    return api.pi.onSessionEvent(callback);
+  }
+  return api.claude.onSessionEvent(callback);
 }
 
 function writeHarnessData(
@@ -175,7 +190,10 @@ function writeHarnessData(
   threadId: ThreadId,
   data: string,
 ): Promise<void> {
-  return harness === "pi" ? api.pi.write({ threadId, data }) : api.claude.write({ threadId, data });
+  if (harness === "pi") {
+    return api.pi.write({ threadId, data });
+  }
+  return api.claude.write({ threadId, data });
 }
 
 function resizeHarnessSession(
@@ -185,9 +203,21 @@ function resizeHarnessSession(
   cols: number,
   rows: number,
 ): Promise<void> {
-  return harness === "pi"
-    ? api.pi.resize({ threadId, cols, rows })
-    : api.claude.resize({ threadId, cols, rows });
+  if (harness === "pi") {
+    return api.pi.resize({ threadId, cols, rows });
+  }
+  return api.claude.resize({ threadId, cols, rows });
+}
+
+function modelForHarnessSelection(
+  harness: HarnessKind,
+  claudeCodeBackend: ClaudeCodeBackend,
+): string | undefined {
+  if (harness === "pi") return undefined;
+  if (harness === "codexCli") return DEFAULT_MODEL_BY_PROVIDER.codex;
+  return claudeCodeBackend === "codex"
+    ? DEFAULT_CLAUDE_CODE_PROXY_MODEL
+    : DEFAULT_MODEL_BY_PROVIDER.claudeCode;
 }
 
 // ── NewThreadView ─────────────────────────────────────────────────────
@@ -448,7 +478,9 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       if (thread.terminalStatus !== "new") return;
       updateSettings({ defaultCodingHarness: harness });
       const api = readNativeApi();
+      const model = modelForHarnessSelection(harness, thread.claudeCodeBackend);
       setThreadHarness(threadId, harness);
+      if (model) setThreadClaudeCodeBackend(threadId, thread.claudeCodeBackend, model);
       requestAnimationFrame(() => initialPromptRef.current?.focus({ preventScroll: true }));
       if (!api) return;
       void api.orchestration.dispatchCommand({
@@ -456,9 +488,17 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         commandId: newCommandId(),
         threadId,
         harness,
+        ...(model ? { model } : {}),
       });
     },
-    [setThreadHarness, thread.terminalStatus, threadId, updateSettings],
+    [
+      setThreadClaudeCodeBackend,
+      setThreadHarness,
+      thread.claudeCodeBackend,
+      thread.terminalStatus,
+      threadId,
+      updateSettings,
+    ],
   );
 
   const handlePiRenderModeChange = useCallback(
@@ -597,7 +637,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         {/* Copy — fixed height to prevent shift */}
         <div className="flex h-12 flex-col items-center justify-center gap-1 text-center">
           <h2 className="text-lg font-semibold tracking-tight text-foreground">
-            {thread.harness === "pi" ? "New pi Session" : "New Claude Code Session"}
+            {`New ${CODING_HARNESS_LABELS[thread.harness]} Session`}
           </h2>
           <p
             className="max-w-sm truncate font-mono text-[11px] text-muted-foreground/60 transition-opacity duration-200"
@@ -674,7 +714,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
             onChange={(event) => setInitialPrompt(event.target.value)}
             onPaste={handleInitialPromptPaste}
             onKeyDown={handlePromptKeyDown}
-            placeholder={`Ask ${thread.harness === "pi" ? "pi" : "Claude Code"} what to do first...`}
+            placeholder={`Ask ${CODING_HARNESS_LABELS[thread.harness]} what to do first...`}
             aria-label="First prompt"
             rows={6}
             spellCheck
@@ -687,10 +727,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                 aria-label="Coding harness"
                 className="flex items-center rounded-md bg-muted/60 p-0.5"
               >
-                {[
-                  { value: "claudeCode" as const, label: "Claude Code" },
-                  { value: "pi" as const, label: "pi" },
-                ].map((option) => (
+                {NEW_THREAD_HARNESS_OPTIONS.map((option) => (
                   <button
                     key={option.value}
                     type="button"
@@ -790,7 +827,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                   Fast mode
                 </label>
               )}
-              {thread.harness === "claudeCode" && (
+              {thread.harness !== "pi" && (
                 <button
                   type="button"
                   role="switch"
@@ -828,7 +865,9 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
               ) : (
                 <>
                   <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
-                  {thread.harness === "pi" ? "Start pi" : "Start Claude Code"}
+                  {thread.harness === "pi"
+                    ? "Start pi"
+                    : `Start ${CODING_HARNESS_LABELS[thread.harness]}`}
                 </>
               )}
             </button>

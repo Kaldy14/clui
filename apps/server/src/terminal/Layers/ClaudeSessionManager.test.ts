@@ -131,6 +131,7 @@ function makeRuntime(
     processKillGraceMs?: number;
     historyLineLimit?: number;
     maxActiveSessions?: number;
+    hookConfig?: { serverPort: number };
     ptyAdapter?: FakePtyAdapter;
     claudeCodeProxyManager?: FakeClaudeCodeProxyManager;
   } = {},
@@ -145,6 +146,7 @@ function makeRuntime(
     ...(options.maxActiveSessions !== undefined && {
       maxActiveSessions: options.maxActiveSessions,
     }),
+    ...(options.hookConfig && { hookConfig: options.hookConfig }),
     ...(options.claudeCodeProxyManager && {
       claudeCodeProxyManager: options.claudeCodeProxyManager,
     }),
@@ -159,8 +161,10 @@ function defaultInput(
     resumeSessionId: string;
     cols: number;
     rows: number;
+    harness: "claudeCode" | "codexCli";
     claudeCodeBackend: "anthropic" | "codex";
     model: string;
+    dangerouslySkipPermissions: boolean;
   }> = {},
 ) {
   return {
@@ -217,6 +221,68 @@ describe("ClaudeSessionManagerRuntime", () => {
 
       const spawnInput = result.ptyAdapter.spawnInputs[0]!;
       expect(spawnInput.args).toEqual(["--resume", "sess-abc-123"]);
+    });
+
+    it("launches Codex CLI with model and managed lifecycle hooks", async () => {
+      const result = makeRuntime({ hookConfig: { serverPort: 4100 } });
+      runtime = result.runtime;
+      const events = collectEvents(runtime);
+
+      await runtime.startSession(
+        defaultInput({ harness: "codexCli", model: "gpt-5.6-sol" }),
+      );
+
+      const spawnInput = result.ptyAdapter.spawnInputs[0]!;
+      expect(spawnInput.shell).toBe("codex");
+      expect(spawnInput.args).toEqual(
+        expect.arrayContaining([
+          "--model",
+          "gpt-5.6-sol",
+          "--dangerously-bypass-hook-trust",
+        ]),
+      );
+      expect(spawnInput.args?.some((arg) => arg.includes("hooks.SessionStart"))).toBe(true);
+      expect(events.filter((event) => event.type === "sessionId")).toHaveLength(0);
+
+      runtime.recordCodexSessionId("thread-1", "codex-session-1");
+
+      expect(runtime.getClaudeSessionId("thread-1")).toBe("codex-session-1");
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "sessionId",
+          threadId: "thread-1",
+          claudeSessionId: "codex-session-1",
+        }),
+      );
+    });
+
+    it("resumes the exact Codex CLI session and maps YOLO mode", async () => {
+      const result = makeRuntime();
+      runtime = result.runtime;
+
+      await runtime.startSession(
+        defaultInput({
+          harness: "codexCli",
+          resumeSessionId: "codex-session-1",
+          model: "gpt-5.6-sol",
+        }),
+      );
+
+      const args = result.ptyAdapter.spawnInputs[0]!.args ?? [];
+      expect(args[0]).toBe("resume");
+      expect(args).toContain("codex-session-1");
+      expect(args).not.toContain("--session-id");
+
+      await runtime.startSession(
+        defaultInput({
+          harness: "codexCli",
+          resumeSessionId: "codex-session-1",
+          dangerouslySkipPermissions: true,
+        }),
+      );
+      expect(result.ptyAdapter.spawnInputs[1]!.args).toContain(
+        "--dangerously-bypass-approvals-and-sandbox",
+      );
     });
 
     it("injects the managed proxy environment for Codex-backed Claude Code", async () => {
@@ -449,6 +515,31 @@ describe("ClaudeSessionManagerRuntime", () => {
   // ── reconcileActiveSessions ────────────────────────────────────
 
   describe("reconcileActiveSessions", () => {
+    it("applies the active-session cap independently to Claude Code and Codex CLI", async () => {
+      const result = makeRuntime({ maxActiveSessions: 100 });
+      runtime = result.runtime;
+
+      await runtime.startSession(defaultInput({ threadId: "claude-1" }));
+      await runtime.startSession(
+        defaultInput({ threadId: "codex-1", harness: "codexCli" }),
+      );
+      await runtime.reconcileActiveSessions(1);
+
+      expect(runtime.getSessionStatus("claude-1")).toBe("active");
+      expect(runtime.getSessionStatus("codex-1")).toBe("active");
+
+      await runtime.startSession(defaultInput({ threadId: "claude-2" }));
+      await runtime.startSession(
+        defaultInput({ threadId: "codex-2", harness: "codexCli" }),
+      );
+      await runtime.reconcileActiveSessions(1);
+
+      expect(runtime.getSessionStatus("claude-1")).toBe("dormant");
+      expect(runtime.getSessionStatus("claude-2")).toBe("active");
+      expect(runtime.getSessionStatus("codex-1")).toBe("dormant");
+      expect(runtime.getSessionStatus("codex-2")).toBe("active");
+    });
+
     it("hibernates oldest sessions when over maxActive limit", async () => {
       const result = makeRuntime({ maxActiveSessions: 100 });
       runtime = result.runtime;
