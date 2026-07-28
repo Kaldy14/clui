@@ -40,7 +40,7 @@ import { selectLatestDiffReviewRunForThread, useAiDiffReviewStore } from "../lib
 import * as claudeCache from "../lib/claudeTerminalCache";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { submitThreadPrompt } from "../lib/threadInput";
-import { claudeTerminalStatusPill } from "../lib/threadStatus";
+import { claudeTerminalStatusPill, type ThreadStatusTone } from "../lib/threadStatus";
 import { isMacPlatform, isWindowsPlatform, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import {
@@ -70,6 +70,15 @@ import { WorktreeIndicator } from "./WorktreeIndicator";
 
 // ── Status Badge ──────────────────────────────────────────────────────
 
+const STATUS_BADGE_BACKGROUND: Record<ThreadStatusTone, string> = {
+  working: "bg-sky-500/10 dark:bg-sky-400/10",
+  input: "bg-yellow-500/10 dark:bg-yellow-400/10",
+  approval: "bg-amber-500/10 dark:bg-amber-400/10",
+  error: "bg-red-500/10 dark:bg-red-400/10",
+  completed: "bg-emerald-500/10 dark:bg-emerald-400/10",
+  plan: "bg-violet-500/10 dark:bg-violet-400/10",
+};
+
 function TerminalStatusBadge({ thread }: { thread: Thread }) {
   const pill = claudeTerminalStatusPill(
     thread.terminalStatus,
@@ -78,16 +87,7 @@ function TerminalStatusBadge({ thread }: { thread: Thread }) {
   );
   if (!pill) return null;
 
-  // Pick background tint based on color class
-  const bgClass = pill.colorClass.includes("sky")
-    ? "bg-sky-500/10 dark:bg-sky-400/10"
-    : pill.colorClass.includes("amber")
-      ? "bg-amber-500/10 dark:bg-amber-400/10"
-      : pill.colorClass.includes("red")
-        ? "bg-red-500/10 dark:bg-red-400/10"
-        : pill.colorClass.includes("emerald")
-          ? "bg-emerald-500/10 dark:bg-emerald-400/10"
-          : "bg-zinc-500/8 dark:bg-zinc-400/8";
+  const bgClass = STATUS_BADGE_BACKGROUND[pill.tone];
 
   return (
     <span

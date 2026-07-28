@@ -28,6 +28,10 @@
       "types": "./src/agentActivity.ts",
       "import": "./src/agentActivity.ts"
     },
+    "./userInputTools": {
+      "types": "./src/userInputTools.ts",
+      "import": "./src/userInputTools.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

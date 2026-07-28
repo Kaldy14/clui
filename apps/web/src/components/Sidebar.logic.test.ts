@@ -13,6 +13,7 @@ import {
   getActiveHarnessSessionStats,
   hasUnseenCompletion,
   resolveSidebarV2Status,
+  resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   shouldClearThreadSelectionOnMouseDown,
@@ -249,6 +250,25 @@ describe("Sidebar v2 status parity", () => {
     ).toBe("input");
   });
 
+  it("presents input as a yellow Needs Input state", () => {
+    expect(resolveSidebarV2TopStatus("input")).toEqual({
+      label: "Needs Input",
+      icon: null,
+      className: "text-yellow-600 dark:text-yellow-300",
+    });
+  });
+
+  it("uses the canonical approval and error labels", () => {
+    expect(resolveSidebarV2TopStatus("approval")).toMatchObject({
+      label: "Pending Approval",
+      className: expect.stringContaining("text-amber"),
+    });
+    expect(resolveSidebarV2TopStatus("failed")).toMatchObject({
+      label: "Error",
+      className: expect.stringContaining("text-red"),
+    });
+  });
+
   it("does not let stale derived blockers override an active working hook", () => {
     expect(
       resolveSidebarV2Status({
@@ -407,7 +427,13 @@ describe("resolveThreadStatusPill", () => {
         hasPendingApprovals: false,
         hasPendingUserInput: true,
       }),
-    ).toMatchObject({ label: "Needs Input", pulse: false });
+    ).toMatchObject({
+      label: "Needs Input",
+      colorClass: expect.stringContaining("text-yellow"),
+      dotClass: expect.stringContaining("bg-yellow"),
+      pulse: false,
+      tone: "input",
+    });
   });
 
   it("falls back to working when the thread is actively running without blockers", () => {

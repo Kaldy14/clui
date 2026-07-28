@@ -920,6 +920,32 @@ describe("PiSessionManagerRuntime", () => {
     expect(events.some((event) => event.type === "hookStatus")).toBe(false);
   });
 
+  it("does not let stale terminal output revive a completed pi turn", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+    const events = collectEvents(runtime);
+
+    await runtime.startSession({ threadId: "thread-1", cwd, cols: 100, rows: 24 });
+    ptyAdapter.processes[0]!.emitData("\x1b[2K\rWorking....");
+
+    const runtimeInternals = runtime as unknown as {
+      sessions: Map<string, unknown>;
+      handleRpcEvent: (entry: unknown, event: Record<string, unknown>) => void;
+    };
+    const entry = runtimeInternals.sessions.get("thread-1");
+    expect(entry).toBeDefined();
+
+    runtimeInternals.handleRpcEvent(entry, { type: "agent_end" });
+    ptyAdapter.processes[0]!.emitData("Final answer\n");
+
+    const statuses = events
+      .filter((event) => event.type === "hookStatus")
+      .map((event) => event.hookStatus);
+    expect(statuses).toEqual(["working", "completed"]);
+  });
+
   it("keeps scrollback readable after hibernation", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);
@@ -1050,6 +1076,11 @@ describe("PiSessionManagerRuntime", () => {
       expect(statuses).toContain("needsInput");
     });
 
+    ptyAdapter.processes[0]!.emitData(
+      "\x1b[?2026h\r\x1b[2K ⠧ \x1b[38;2;128;128;128mWorking...\x1b[39m",
+    );
+    expect(runtime.getSessionHookStatus("thread-1")).toBe("needsInput");
+
     await writeSessionSync(stateDir, ptyAdapter.spawnInputs[0]!, {
       reason: "tool_input_resolved:questionnaire",
       hookStatus: "working",
@@ -1068,6 +1099,7 @@ describe("PiSessionManagerRuntime", () => {
     const cwd = await makeProjectCwd(stateDir);
     const ptyAdapter = new FakePtyAdapter();
     runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+    const events = collectEvents(runtime);
 
     await runtime.startSession({
       threadId: "thread-1",
@@ -1077,8 +1109,15 @@ describe("PiSessionManagerRuntime", () => {
     });
 
     const runtimeInternals = runtime as unknown as {
-      sessions: Map<string, unknown>;
+      sessions: Map<
+        string,
+        {
+          mode: "terminal" | "rpc";
+          rpcProcess: object | null;
+        }
+      >;
       handleRpcEvent: (entry: unknown, event: Record<string, unknown>) => void;
+      sendRpcNotification: (entry: unknown, payload: Record<string, unknown>) => void;
     };
     const entry = runtimeInternals.sessions.get("thread-1");
     expect(entry).toBeDefined();
@@ -1126,8 +1165,15 @@ describe("PiSessionManagerRuntime", () => {
       title: "Choose",
       options: ["Alpha", "Beta"],
     });
+    expect(
+      events.filter((event) => event.type === "hookStatus").map((event) => event.hookStatus),
+    ).toEqual(["needsInput"]);
     expect(runtime.getExtensionUiState("thread-1").statuses).toEqual({ "codex-usage": "Codex ok" });
 
+    runtimeInternals.handleRpcEvent(entry, {
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+    });
     runtimeInternals.handleRpcEvent(entry, {
       type: "extension_ui_request",
       id: "status-2",
@@ -1143,5 +1189,20 @@ describe("PiSessionManagerRuntime", () => {
 
     expect(runtime.getPendingExtensionUiRequest("thread-1")?.id).toBe("dialog-1");
     expect(runtime.getExtensionUiState("thread-1")).toEqual({ statuses: {}, widgets: [] });
+    expect(
+      events.filter((event) => event.type === "hookStatus").map((event) => event.hookStatus),
+    ).toEqual(["needsInput"]);
+
+    vi.spyOn(runtimeInternals, "sendRpcNotification").mockImplementation(() => undefined);
+    entry!.mode = "rpc";
+    entry!.rpcProcess = {};
+    await runtime.respondExtensionUi("thread-1", { id: "dialog-1", value: "Alpha" });
+    entry!.rpcProcess = null;
+    entry!.mode = "terminal";
+
+    expect(runtime.getPendingExtensionUiRequest("thread-1")).toBeNull();
+    expect(
+      events.filter((event) => event.type === "hookStatus").map((event) => event.hookStatus),
+    ).toEqual(["needsInput", "working"]);
   });
 });

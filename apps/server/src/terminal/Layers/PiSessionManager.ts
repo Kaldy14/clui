@@ -19,6 +19,7 @@ import {
 } from "@clui/shared/agentActivity";
 import { encodePiTuiPrompt } from "@clui/shared/piTuiInput";
 import { hasPiWorkingStatusOutput, stripPiTerminalControls } from "@clui/shared/piTerminalStatus";
+import { USER_INPUT_TOOL_NAMES } from "@clui/shared/userInputTools";
 import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
@@ -232,16 +233,7 @@ const sessionSyncNonce = process.env.${CLUI_PI_SESSION_SYNC_NONCE_ENV};
 const fastModeEnabled = process.env.${CLUI_PI_FAST_MODE_ENV} === "1";
 const processRegistryDir = process.env.${CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV};
 const processRegistryOwnerPid = Number(process.env.${CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV} ?? 0);
-const userInputToolNames = new Set([
-  "ask",
-  "askfollowupquestion",
-  "askquestion",
-  "askuser",
-  "askuserquestion",
-  "planreview",
-  "question",
-  "questionnaire",
-]);
+const userInputToolNames = new Set(${JSON.stringify(USER_INPUT_TOOL_NAMES)});
 const pendingUserInputToolCallIds = new Set();
 let lastHookStatus;
 
@@ -818,7 +810,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         pendingPrompt.process.write(pendingPrompt.data);
         current.pendingInitialPromptProcess = null;
         current.lastInteractedAt = Date.now();
-        this.applyHookStatusIfChanged(current, "working");
+        this.applyAuthoritativeHookStatusIfChanged(current, "working");
         this.emitTerminalStarted(current);
       });
     } catch (error) {
@@ -925,6 +917,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }
     if (entry.pendingExtensionUiRequest?.id === response.id) {
       entry.pendingExtensionUiRequest = null;
+      this.applyAuthoritativeHookStatusIfChanged(entry, "working");
     }
     this.sendRpcNotification(entry, { type: "extension_ui_response", ...response });
     entry.lastInteractedAt = Date.now();
@@ -1009,7 +1002,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     await this.runWithThreadLock(threadId, async () => {
       const entry = this.sessions.get(threadId);
       if (!entry?.process || entry.status !== "active") return;
-      this.applyHookStatusIfChanged(entry, "working");
+      this.applyAuthoritativeHookStatusIfChanged(entry, "working");
     });
   }
 
@@ -1558,19 +1551,22 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       case "message_update":
       case "tool_execution_start":
       case "tool_execution_update":
-        this.applyHookStatusIfChanged(entry, "working");
+        if (entry.pendingExtensionUiRequest === null) {
+          this.applyAuthoritativeHookStatusIfChanged(entry, "working");
+        }
         break;
       case "agent_end":
         entry.pendingExtensionUiRequest = null;
-        this.applyHookStatusIfChanged(entry, "completed");
+        this.applyAuthoritativeHookStatusIfChanged(entry, "completed");
         break;
       case "extension_error":
         entry.pendingExtensionUiRequest = null;
-        this.applyHookStatusIfChanged(entry, "error");
+        this.applyAuthoritativeHookStatusIfChanged(entry, "error");
         break;
       case "extension_ui_request":
         if (isExtensionDialogMethod(event.method)) {
           entry.pendingExtensionUiRequest = event;
+          this.applyAuthoritativeHookStatusIfChanged(entry, "needsInput");
         } else {
           this.applyExtensionUiRequest(entry, event);
         }
@@ -1668,9 +1664,17 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     const statusSample = `${entry.statusDetectionTail}${visibleText}`;
     entry.statusDetectionTail = statusSample.slice(-PI_STATUS_DETECTION_TAIL_LENGTH);
 
-    if (entry.status === "active" && hasPiWorkingStatusOutput(statusSample)) {
-      this.applyHookStatusIfChanged(entry, "working");
-    }
+    if (entry.status !== "active" || !hasPiWorkingStatusOutput(statusSample)) return;
+    if (entry.hookStatus !== null) return;
+    this.applyHookStatusIfChanged(entry, "working");
+  }
+
+  private applyAuthoritativeHookStatusIfChanged(
+    entry: PiSessionEntry,
+    status: ClaudeHookStatus | null,
+  ): void {
+    entry.statusDetectionTail = "";
+    this.applyHookStatusIfChanged(entry, status);
   }
 
   private applyHookStatusIfChanged(entry: PiSessionEntry, status: ClaudeHookStatus | null): void {
@@ -1707,7 +1711,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
           if (event.type !== "hookStatus" || event.hookStatus == null) return;
           const current = this.sessions.get(event.threadId);
           if (!current) return;
-          this.applyHookStatusIfChanged(current, event.hookStatus);
+          this.applyAuthoritativeHookStatusIfChanged(current, event.hookStatus);
         },
       });
     }
@@ -1979,7 +1983,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }
 
     if ("hookStatus" in payload) {
-      this.applyHookStatusIfChanged(entry, payload.hookStatus ?? null);
+      this.applyAuthoritativeHookStatusIfChanged(entry, payload.hookStatus ?? null);
     }
   }
 

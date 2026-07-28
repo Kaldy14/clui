@@ -1,4 +1,5 @@
 import type { AgentActivityStatus } from "@clui/contracts";
+import { isUserInputToolName, normalizeToolName } from "./userInputTools";
 
 export const AGENT_ACTIVITY_LABELS: Record<AgentActivityStatus, string> = {
   thinking: "Thinking",
@@ -23,17 +24,6 @@ export const AGENT_ACTIVITY_LABELS: Record<AgentActivityStatus, string> = {
   reviewing: "Reviewing",
   translating: "Translating",
 };
-
-const USER_INPUT_TOOL_NAMES = new Set([
-  "ask",
-  "askfollowupquestion",
-  "askquestion",
-  "askuser",
-  "askuserquestion",
-  "planreview",
-  "question",
-  "questionnaire",
-]);
 
 const AGENT_ACTIVITY_BY_NAME: ReadonlyMap<string, AgentActivityStatus> = new Map([
   ["scout", "scouting"],
@@ -124,12 +114,6 @@ const BASH_PATTERNS: ReadonlyArray<readonly [RegExp, AgentActivityStatus]> = [
   [/\b(?:cat|sed|awk|head|tail|less|ls|tree)\b/u, "reading"],
   [/\b(?:apply_patch|mkdir|touch|mv|cp|rm)\b/u, "coding"],
 ];
-
-function normalizeToolName(toolName: unknown): string {
-  return String(toolName ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
 
 function classifyKnownAgentName(agentName: unknown): AgentActivityStatus | null {
   const normalized = normalizeToolName(agentName);
@@ -234,7 +218,7 @@ export function classifyAgentActivityFromTool(input: {
   readonly agentName?: unknown;
 }): AgentActivityStatus | null {
   const toolName = normalizeToolName(input.toolName);
-  if (!toolName || USER_INPUT_TOOL_NAMES.has(toolName)) return null;
+  if (!toolName || isUserInputToolName(toolName)) return null;
   if (toolName === "bash") {
     const command = extractCommand(input.toolInput, input.command);
     const description = extractDescription(input.toolInput, input.description);

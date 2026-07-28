@@ -121,6 +121,40 @@ export function dispatchHookNotification(
   fireNotification(`${subtitle} — ${threadTitle}`, body, `hook:${Date.now()}`, onNavigate);
 }
 
+// ── Hook-status attention notifications (Pi and other hook-only runtimes) ──
+
+export function buildHookAttentionNotification(
+  hookStatus: ClaudeHookStatus,
+  threadTitle: string,
+): { title: string; body: string } | null {
+  switch (hookStatus) {
+    case "needsInput":
+      return { title: "Input requested", body: threadTitle };
+    case "pendingApproval":
+      return { title: "Approval needed", body: threadTitle };
+    default:
+      return null;
+  }
+}
+
+export function dispatchAttentionStatusNotification(
+  threadId: string,
+  hookStatus: ClaudeHookStatus,
+  threadTitle: string,
+  isCurrentThread: boolean,
+  onNavigate?: () => void,
+): void {
+  if ((isCurrentThread && isWindowFocused()) || !canNotify()) return;
+  const notification = buildHookAttentionNotification(hookStatus, threadTitle);
+  if (!notification) return;
+  fireNotification(
+    notification.title,
+    notification.body,
+    `attention:${threadId}:${hookStatus}`,
+    onNavigate,
+  );
+}
+
 // ── Dock badge (macOS) ────────────────────────────────────────────────
 
 const BADGE_HOOK_STATUSES: ReadonlySet<ClaudeHookStatus> = new Set([

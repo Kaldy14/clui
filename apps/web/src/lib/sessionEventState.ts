@@ -54,7 +54,7 @@ export interface SessionEventState {
   /** Exposed for testing */
   _turnInProgress: Map<string, boolean>;
   /** Exposed for testing */
-  _pendingApprovalAt: Map<string, number>;
+  _blockingStatusAt: Map<string, number>;
   /** Exposed for testing — true once a real hook (PostToolUse/PermissionRequest) confirms the turn. */
   _turnConfirmed: Map<string, boolean>;
 }
@@ -72,8 +72,8 @@ export const COMPLETED_GRACE_MS = 8_000;
 export const STARTUP_GRACE_MS = 8_000;
 export const WORKING_IDLE_TIMEOUT_MS = 90_000;
 export const IDLE_TIMER_RESET_THROTTLE_MS = 2_000;
-/** After pendingApproval is set, output arriving after this delay transitions to "working". */
-export const PENDING_APPROVAL_OUTPUT_DELAY_MS = 1_000;
+/** Reject stale "working" events that race with a newly observed blocking status. */
+export const BLOCKING_STATUS_STALE_WORKING_WINDOW_MS = 1_000;
 /**
  * Short stale window after Stop: concurrent curl from the same tool can't
  * arrive later than this.  PostToolUse / output arriving *after* this window
@@ -98,9 +98,9 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   // The output→"working" recovery heuristic is ONLY allowed when this is true,
   // preventing false "Working" badges from startup output or keystroke echo.
   const turnInProgress = new Map<string, boolean>();
-  // Records when "pendingApproval" was set, so handleOutput can transition
-  // to "working" when output arrives after a short delay (user approved).
-  const pendingApprovalAt = new Map<string, number>();
+  // Records when a blocking status was set so an out-of-order "working" event
+  // from the previous tool cannot immediately erase it.
+  const blockingStatusAt = new Map<string, number>();
   // True once a real hook (PostToolUse → "working", PermissionRequest →
   // "pendingApproval"/"needsInput") fires — confirms the agent loop started.
   // handleTurnStart alone does NOT confirm, since the user can press Esc
@@ -149,7 +149,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
             // doesn't immediately re-set the "Working" badge.
             turnInProgress.delete(rawThreadId);
             completedAt.set(rawThreadId, now());
-            pendingApprovalAt.delete(rawThreadId);
+            blockingStatusAt.delete(rawThreadId);
             turnConfirmed.delete(rawThreadId);
             workingStartedAt.delete(rawThreadId);
           }
@@ -176,7 +176,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     if (hookStatus === "completed") {
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);
-      pendingApprovalAt.delete(rawThreadId);
+      blockingStatusAt.delete(rawThreadId);
       turnConfirmed.delete(rawThreadId);
       workingStartedAt.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
@@ -203,8 +203,8 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
         !options?.acceptStaleWorking &&
         (currentHookStatus === "pendingApproval" || currentHookStatus === "needsInput")
       ) {
-        const actionTs = pendingApprovalAt.get(rawThreadId);
-        if (actionTs != null && now() - actionTs < PENDING_APPROVAL_OUTPUT_DELAY_MS) {
+        const actionTs = blockingStatusAt.get(rawThreadId);
+        if (actionTs != null && now() - actionTs < BLOCKING_STATUS_STALE_WORKING_WINDOW_MS) {
           return { applied: false };
         }
       }
@@ -218,7 +218,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       const isPostCompletionRecovery = doneTs != null;
       completedAt.delete(rawThreadId);
       terminalStartedAt.delete(rawThreadId);
-      pendingApprovalAt.delete(rawThreadId);
+      blockingStatusAt.delete(rawThreadId);
       turnInProgress.set(rawThreadId, true);
       if (!workingStartedAt.has(rawThreadId)) {
         workingStartedAt.set(rawThreadId, now());
@@ -246,12 +246,12 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     turnConfirmed.set(rawThreadId, true);
     clearWorkingIdleTimer(rawThreadId);
     if (hookStatus === "pendingApproval" || hookStatus === "needsInput") {
-      pendingApprovalAt.set(rawThreadId, now());
+      blockingStatusAt.set(rawThreadId, now());
       if (!workingStartedAt.has(rawThreadId)) {
         workingStartedAt.set(rawThreadId, now());
       }
     } else {
-      pendingApprovalAt.delete(rawThreadId);
+      blockingStatusAt.delete(rawThreadId);
       workingStartedAt.delete(rawThreadId);
     }
     deps.setHookStatus(rawThreadId, hookStatus);
@@ -262,7 +262,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleTurnStart(rawThreadId: string): void {
     completedAt.delete(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
-    pendingApprovalAt.delete(rawThreadId);
+    blockingStatusAt.delete(rawThreadId);
     turnInProgress.set(rawThreadId, true);
     turnConfirmed.delete(rawThreadId);
     workingStartedAt.set(rawThreadId, now());
@@ -318,7 +318,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       if (INTERRUPT_RE.test(data) || INTERRUPT_RE.test(bridge)) {
         completedAt.set(rawThreadId, now());
         turnInProgress.delete(rawThreadId);
-        pendingApprovalAt.delete(rawThreadId);
+        blockingStatusAt.delete(rawThreadId);
         turnConfirmed.delete(rawThreadId);
         workingStartedAt.delete(rawThreadId);
         prevOutputTail.delete(rawThreadId);
@@ -353,7 +353,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleDormant(rawThreadId: string, reason: "hibernated" | "exited"): void {
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
-    pendingApprovalAt.delete(rawThreadId);
+    blockingStatusAt.delete(rawThreadId);
     turnConfirmed.delete(rawThreadId);
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
@@ -365,7 +365,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleInterrupted(rawThreadId: string): void {
     completedAt.set(rawThreadId, now());
     turnInProgress.delete(rawThreadId);
-    pendingApprovalAt.delete(rawThreadId);
+    blockingStatusAt.delete(rawThreadId);
     turnConfirmed.delete(rawThreadId);
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
@@ -380,7 +380,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function clearThread(rawThreadId: string): void {
     completedAt.delete(rawThreadId);
     turnInProgress.delete(rawThreadId);
-    pendingApprovalAt.delete(rawThreadId);
+    blockingStatusAt.delete(rawThreadId);
     turnConfirmed.delete(rawThreadId);
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
@@ -391,7 +391,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function clearAll(): void {
     completedAt.clear();
     turnInProgress.clear();
-    pendingApprovalAt.clear();
+    blockingStatusAt.clear();
     turnConfirmed.clear();
     prevOutputTail.clear();
     for (const timer of workingIdleTimers.values()) clearTimeout(timer);
@@ -417,7 +417,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     _workingIdleLastReset: workingIdleLastReset,
     _workingStartedAt: workingStartedAt,
     _turnInProgress: turnInProgress,
-    _pendingApprovalAt: pendingApprovalAt,
+    _blockingStatusAt: blockingStatusAt,
     _turnConfirmed: turnConfirmed,
   };
 }

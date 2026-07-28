@@ -100,4 +100,15 @@ describe("threadStatusPill", () => {
 
     expect(pill).toMatchObject({ label: "Thinking", pulse: true });
   });
+
+  it("presents user input as a distinct yellow semantic tone", () => {
+    const pill = threadStatusPill(makeThread({ hookStatus: "needsInput" }), false, false);
+
+    expect(pill).toMatchObject({
+      label: "Needs Input",
+      colorClass: expect.stringContaining("text-yellow"),
+      dotClass: expect.stringContaining("bg-yellow"),
+      tone: "input",
+    });
+  });
 });

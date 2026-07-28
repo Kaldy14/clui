@@ -28,6 +28,7 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import {
   dispatchActivityNotification,
+  dispatchAttentionStatusNotification,
   dispatchHookNotification,
   dispatchSessionSetNotification,
   dispatchTurnCompletedNotification,
@@ -580,11 +581,28 @@ function EventRouter() {
           return;
         }
 
+        const previousHookStatus =
+          useStore.getState().threads.find((thread) => thread.id === event.threadId)?.hookStatus ??
+          null;
         const result = sessionState.handleHookStatus(event.threadId, event.hookStatus, {
           acceptStaleWorking: event.hookStatus === "working",
         });
         if (result.applied) {
           updateDockBadge(useStore.getState().threads);
+        }
+
+        if (result.applied && result.hookStatus !== previousHookStatus) {
+          const currentThreadId = getCurrentThreadId();
+          const thread = useStore.getState().threads.find((item) => item.id === event.threadId);
+          dispatchAttentionStatusNotification(
+            event.threadId,
+            result.hookStatus,
+            thread?.title ?? "Thread",
+            event.threadId === currentThreadId,
+            () => {
+              void navigate({ to: "/$threadId", params: { threadId: event.threadId } });
+            },
+          );
         }
 
         if (result.applied && result.hookStatus === "completed") {

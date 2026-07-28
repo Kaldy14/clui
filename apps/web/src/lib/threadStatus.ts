@@ -11,11 +11,14 @@ import {
   hasUnseenCompletion as hasUnseenThreadCompletion,
 } from "./threadUnread";
 
+export type ThreadStatusTone = "working" | "input" | "approval" | "error" | "completed" | "plan";
+
 export interface ThreadStatusPill {
   label: string;
   colorClass: string;
   dotClass: string;
   pulse: boolean;
+  tone: ThreadStatusTone;
 }
 
 export interface TerminalStatusIndicator {
@@ -69,6 +72,7 @@ export function threadStatusPill(
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
+      tone: "working",
     };
   }
 
@@ -88,26 +92,16 @@ export function threadStatusPill(
   // real-time source — stale unresolved activities must not re-trigger badges.
   if (thread.terminalStatus !== "active") {
     if (hasPendingApprovals) {
-      return {
-        label: "Pending Approval",
-        colorClass: "text-amber-600 dark:text-amber-300/90",
-        dotClass: "bg-amber-500 dark:bg-amber-300/90",
-        pulse: false,
-      };
+      return hookStatusPill("pendingApproval");
     }
 
     if (hasPendingUserInput) {
-      return {
-        label: "Needs Input",
-        colorClass: "text-amber-600 dark:text-amber-300/90",
-        dotClass: "bg-amber-500 dark:bg-amber-300/90",
-        pulse: false,
-      };
+      return hookStatusPill("needsInput");
     }
   }
 
   if (thread.session?.status === "running" && !suppressReadCompletedHookStatus) {
-    return workingPill(thread.activityStatus);
+    return workingStatusPill(thread.activityStatus);
   }
 
   if (hasUnseenCompletion(thread)) {
@@ -116,6 +110,7 @@ export function threadStatusPill(
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
       pulse: false,
+      tone: "completed",
     };
   }
 
@@ -144,28 +139,30 @@ export function claudeTerminalStatusPill(
   return null;
 }
 
-function workingPill(activityStatus?: AgentActivityStatus | null): ThreadStatusPill {
+export function workingStatusPill(activityStatus?: AgentActivityStatus | null): ThreadStatusPill {
   return {
     label: activityStatus ? AGENT_ACTIVITY_LABELS[activityStatus] : "Working",
     colorClass: "text-sky-600 dark:text-sky-300/80",
     dotClass: "bg-sky-500 dark:bg-sky-300/80",
     pulse: true,
+    tone: "working",
   };
 }
 
-function hookStatusPill(
+export function hookStatusPill(
   hookStatus: ClaudeHookStatus,
   activityStatus?: AgentActivityStatus | null,
 ): ThreadStatusPill {
   switch (hookStatus) {
     case "working":
-      return workingPill(activityStatus);
+      return workingStatusPill(activityStatus);
     case "needsInput":
       return {
         label: "Needs Input",
-        colorClass: "text-amber-600 dark:text-amber-300/90",
-        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        colorClass: "text-yellow-600 dark:text-yellow-300",
+        dotClass: "bg-yellow-500 dark:bg-yellow-300",
         pulse: false,
+        tone: "input",
       };
     case "pendingApproval":
       return {
@@ -173,6 +170,7 @@ function hookStatusPill(
         colorClass: "text-amber-600 dark:text-amber-300/90",
         dotClass: "bg-amber-500 dark:bg-amber-300/90",
         pulse: false,
+        tone: "approval",
       };
     case "error":
       return {
@@ -180,6 +178,7 @@ function hookStatusPill(
         colorClass: "text-red-600 dark:text-red-400/90",
         dotClass: "bg-red-500 dark:bg-red-400/90",
         pulse: false,
+        tone: "error",
       };
     case "completed":
       return {
@@ -187,6 +186,7 @@ function hookStatusPill(
         colorClass: "text-emerald-600 dark:text-emerald-300/90",
         dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
         pulse: false,
+        tone: "completed",
       };
   }
 }

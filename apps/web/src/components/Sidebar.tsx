@@ -144,6 +144,7 @@ import {
   getActiveHarnessSessionStats,
   hasUnseenCompletion,
   resolveSidebarV2Status,
+  resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   shouldClearThreadSelectionOnMouseDown,
@@ -2672,44 +2673,20 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     const shouldRecede =
       (status === "ready" || isInFlight) && !isUnread && !isWoke && !isActive && !isSelected;
     const topStatus =
-      status === "working"
+      resolveSidebarV2TopStatus(status) ??
+      (isWoke
         ? {
-            label: "Working",
-            icon: "working" as const,
-            className:
-              "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
+            label: "Woke",
+            icon: "woke" as const,
+            className: "text-amber-700 dark:text-amber-300",
           }
-        : status === "approval"
+        : isUnread
           ? {
-              label: "Approval",
-              icon: null,
-              className: "text-amber-700 dark:text-amber-300",
+              label: "Done",
+              icon: "done" as const,
+              className: "text-emerald-700 dark:text-emerald-300",
             }
-          : status === "input"
-            ? {
-                label: "Input",
-                icon: null,
-                className: "text-indigo-600 dark:text-indigo-300",
-              }
-            : status === "failed"
-              ? {
-                  label: "Failed",
-                  icon: null,
-                  className: "text-red-700 dark:text-red-300",
-                }
-              : isWoke
-                ? {
-                    label: "Woke",
-                    icon: "woke" as const,
-                    className: "text-amber-700 dark:text-amber-300",
-                  }
-                : isUnread
-                  ? {
-                      label: "Done",
-                      icon: "done" as const,
-                      className: "text-emerald-700 dark:text-emerald-300",
-                    }
-                  : null;
+          : null);
     const pr = prByThreadId.get(thread.id) ?? null;
     const prStatus = prStatusIndicator(pr);
     const canSettle = canSettleThread(thread, blockers, { now: lifecycleNow });

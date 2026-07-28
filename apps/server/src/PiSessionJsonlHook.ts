@@ -18,6 +18,7 @@ import {
 import path from "node:path";
 
 import type { ClaudeHookStatus, PiSessionEvent } from "@clui/contracts";
+import { isUserInputToolName } from "@clui/shared/userInputTools";
 
 export interface PiJsonlHookLogger {
   warn(message: string, context?: Record<string, unknown>): void;
@@ -29,34 +30,13 @@ export interface PiSessionJsonlHookWatcherOptions {
   readonly emitHookStatus: (event: PiSessionEvent) => void;
 }
 
-const USER_INPUT_TOOL_NAMES = new Set([
-  "ask",
-  "askfollowupquestion",
-  "askquestion",
-  "askuser",
-  "askuserquestion",
-  "planreview",
-  "question",
-  "questionnaire",
-]);
-
-function normalizeToolName(toolName: unknown): string {
-  return String(toolName ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function isUserInputTool(toolName: unknown): boolean {
-  return USER_INPUT_TOOL_NAMES.has(normalizeToolName(toolName));
-}
-
 function assistantMessageCallsUserInputTool(message: Record<string, unknown>): boolean {
   const content = message.content;
   if (!Array.isArray(content)) return false;
   return content.some((part) => {
     if (!part || typeof part !== "object") return false;
     const record = part as Record<string, unknown>;
-    return record.type === "toolCall" && isUserInputTool(record.name);
+    return record.type === "toolCall" && isUserInputToolName(record.name);
   });
 }
 

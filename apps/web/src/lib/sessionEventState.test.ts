@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DormantReason } from "../types";
 import {
   COMPLETED_GRACE_MS,
-  PENDING_APPROVAL_OUTPUT_DELAY_MS,
+  BLOCKING_STATUS_STALE_WORKING_WINDOW_MS,
   POST_COMPLETION_STALE_MS,
   STARTUP_GRACE_MS,
   WORKING_IDLE_TIMEOUT_MS,
@@ -547,13 +547,13 @@ describe("createSessionEventState", () => {
       expect(state._turnInProgress.size).toBe(0);
     });
 
-    it("clears pendingApprovalAt on clearAll", () => {
+    it("clears blockingStatusAt on clearAll", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       state.handleHookStatus("t1", "pendingApproval");
-      expect(state._pendingApprovalAt.size).toBe(1);
+      expect(state._blockingStatusAt.size).toBe(1);
 
       state.clearAll();
-      expect(state._pendingApprovalAt.size).toBe(0);
+      expect(state._blockingStatusAt.size).toBe(0);
     });
 
     it("blocks output recovery on resumed thread startup output", () => {
@@ -662,7 +662,7 @@ describe("createSessionEventState", () => {
       vi.mocked(ctx.deps.setHookStatus).mockClear();
 
       // Past the protection window — legitimate PostToolUse after user approved
-      vi.advanceTimersByTime(PENDING_APPROVAL_OUTPUT_DELAY_MS + 1);
+      vi.advanceTimersByTime(BLOCKING_STATUS_STALE_WORKING_WINDOW_MS + 1);
       const result = state.handleHookStatus("t1", "working");
 
       expect(result).toEqual({ applied: true, hookStatus: "working" });
@@ -682,7 +682,7 @@ describe("createSessionEventState", () => {
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
 
       // Output after delay — should still NOT transition (PTY redraws are not approval)
-      vi.advanceTimersByTime(PENDING_APPROVAL_OUTPUT_DELAY_MS + 1);
+      vi.advanceTimersByTime(BLOCKING_STATUS_STALE_WORKING_WINDOW_MS + 1);
       state.handleOutput("t1", "cursor redraw output");
       expect(ctx.deps.setHookStatus).not.toHaveBeenCalledWith("t1", "working");
 

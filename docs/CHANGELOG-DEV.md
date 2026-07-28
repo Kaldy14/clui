@@ -4,6 +4,51 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-28 — Make Pi attention states durable and consistent
+
+**Problem:** Pi questions could briefly show `Needs Input` before reverting to `Working`; HTML-mode
+dialogs did not expose an attention state at all; stale spinner text could revive a completed turn;
+and background Pi questions only updated the dock badge without an OS notification. Status labels,
+colors, and tool-name classification also differed between UI and runtime paths.
+
+**Root cause:** Terminal-text inference was allowed to overwrite authoritative Pi lifecycle events,
+the RPC dialog path only stored the pending request, and each consumer independently defined its
+status presentation and user-input tool aliases. Pi hook events had no transition-based attention
+notification path.
+
+**Fix:** Restrict Pi's output heuristic to sessions without an authoritative hook status and clear
+its detection tail on authoritative events. RPC dialogs now enter `needsInput`, resist intervening
+message updates, and return to `working` after the matching response. Added transition-deduplicated
+background notifications for Pi input and approval states. Centralized semantic status labels,
+tones, and user-input tool aliases, made `Needs Input` yellow everywhere, and renamed the stale
+working protection state to describe its actual role. Added runtime, presentation, notification,
+and shared-classifier regression coverage.
+
+**Affected files:**
+
+- `apps/server/src/PiSessionJsonlHook.ts`
+- `apps/server/src/hooks/hookReceiver.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/lib/notifications.ts`
+- `apps/web/src/lib/notifications.test.ts`
+- `apps/web/src/lib/sessionEventState.ts`
+- `apps/web/src/lib/sessionEventState.test.ts`
+- `apps/web/src/lib/threadStatus.ts`
+- `apps/web/src/lib/threadStatus.test.ts`
+- `apps/web/src/routes/__root.tsx`
+- `packages/shared/package.json`
+- `packages/shared/src/agentActivity.ts`
+- `packages/shared/src/userInputTools.ts`
+- `packages/shared/src/userInputTools.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-28 — Preserve terminal output while the app or thread is inactive
 
 **Problem:** Returning to a working terminal after switching threads or putting Clui in the

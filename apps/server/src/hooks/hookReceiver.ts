@@ -12,6 +12,7 @@ import type {
   ClaudeSessionEvent,
 } from "@clui/contracts";
 import { classifyAgentActivityFromTool } from "@clui/shared/agentActivity";
+import { isUserInputToolName } from "@clui/shared/userInputTools";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_NOTIFICATION_BODY_LENGTH = 180;
@@ -216,18 +217,6 @@ export function buildUserPromptSubmitEvents(threadId: string, rawBody = ""): Cla
   ];
 }
 
-/**
- * Tool names that represent Claude asking the user a question rather than
- * requesting permission for a side-effecting operation.
- */
-const ASK_TOOL_NAMES = new Set([
-  "askuserquestion",
-  "askfollowupquestion",
-  "askquestion",
-  "ask",
-  "askuser",
-]);
-
 function extractToolName(rawObject: Record<string, unknown>): string | null {
   return firstString(rawObject, ["tool_name", "toolName", "tool", "name"]);
 }
@@ -243,7 +232,7 @@ function isAskTool(rawBody: string): boolean {
   const toolName = extractToolName(rawObject);
   if (!toolName) return false;
 
-  return ASK_TOOL_NAMES.has(toolName.toLowerCase().replace(/[_-]/g, ""));
+  return isUserInputToolName(toolName);
 }
 
 function buildActivityStatusEvent(
