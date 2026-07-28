@@ -172,4 +172,89 @@ describe("WsTransport", () => {
 
     transport.dispose();
   });
+
+  it("queues disconnected messages without polling and coalesces resize updates", () => {
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+
+    transport.fireAndForget(
+      "terminal.resize",
+      { threadId: "thread-1", terminalId: "main", cols: 80, rows: 20 },
+      { coalesceKey: "terminal.resize:thread-1:main" },
+    );
+    transport.fireAndForget("terminal.write", {
+      threadId: "thread-1",
+      terminalId: "main",
+      data: "hello",
+    });
+    transport.fireAndForget(
+      "terminal.resize",
+      { threadId: "thread-1", terminalId: "main", cols: 120, rows: 40 },
+      { coalesceKey: "terminal.resize:thread-1:main" },
+    );
+
+    expect(socket.sent).toEqual([]);
+    expect(setIntervalSpy).not.toHaveBeenCalled();
+
+    socket.open();
+
+    expect(socket.sent).toHaveLength(2);
+    expect(JSON.parse(socket.sent[0]!) as { body: { _tag: string; data: string } }).toMatchObject({
+      body: { _tag: "terminal.write", data: "hello" },
+    });
+    expect(
+      JSON.parse(socket.sent[1]!) as { body: { _tag: string; cols: number; rows: number } },
+    ).toMatchObject({
+      body: { _tag: "terminal.resize", cols: 120, rows: 40 },
+    });
+
+    transport.dispose();
+  });
+
+  it("bounds disconnected fire-and-forget messages", () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+
+    for (let index = 0; index < 300; index += 1) {
+      transport.fireAndForget("terminal.write", {
+        threadId: "thread-1",
+        terminalId: "main",
+        data: String(index),
+      });
+    }
+
+    socket.open();
+
+    expect(socket.sent).toHaveLength(256);
+    expect(
+      JSON.parse(socket.sent[0]!) as {
+        body: { data: string };
+      },
+    ).toMatchObject({ body: { data: "44" } });
+    expect(
+      JSON.parse(socket.sent.at(-1)!) as {
+        body: { data: string };
+      },
+    ).toMatchObject({ body: { data: "299" } });
+
+    transport.dispose();
+  });
+
+  it("removes timed-out requests from the disconnected queue", async () => {
+    vi.useFakeTimers();
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+
+    const request = transport.request("projects.list", undefined, { timeoutMs: 100 });
+    const expectation = expect(request).rejects.toThrow("Request timed out: projects.list");
+    await vi.advanceTimersByTimeAsync(100);
+    await expectation;
+
+    socket.open();
+    expect(socket.sent).toEqual([]);
+
+    transport.dispose();
+    vi.useRealTimers();
+  });
 });

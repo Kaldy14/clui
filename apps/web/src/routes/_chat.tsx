@@ -4,7 +4,6 @@ import MemoryPressureBanner from "../components/MemoryPressureBanner";
 import { useQuery } from "@tanstack/react-query";
 import { type ResolvedKeybindingsConfig, ThreadId } from "@clui/contracts";
 
-import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 import { useStore } from "../store";
@@ -290,15 +289,13 @@ function ChatRouteLayout() {
       >
         <ThreadSidebar onSearchClick={handleSearchClick} />
       </Sidebar>
-      <DiffWorkerPoolProvider>
-        <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
-          <MemoryPressureBanner />
-          <div className="flex min-h-0 min-w-0 flex-1">
-            <Outlet />
-          </div>
-          <ProjectTerminalDrawers />
+      <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
+        <MemoryPressureBanner />
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <Outlet />
         </div>
-      </DiffWorkerPoolProvider>
+        <ProjectTerminalDrawers />
+      </div>
       <Suspense fallback={null}>
         <ThreadSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
       </Suspense>

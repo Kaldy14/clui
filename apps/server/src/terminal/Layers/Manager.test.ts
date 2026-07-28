@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { DEFAULT_TERMINAL_ID, type TerminalEvent, type TerminalOpenInput } from "@clui/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PtySpawnError,
@@ -168,6 +168,7 @@ describe("TerminalManager", () => {
     options: {
       shellResolver?: () => string;
       subprocessChecker?: (terminalPid: number) => Promise<boolean>;
+      subprocessSnapshotter?: (terminalPids: ReadonlyArray<number>) => Promise<ReadonlySet<number>>;
       subprocessPollIntervalMs?: number;
       processKillGraceMs?: number;
       maxRetainedInactiveSessions?: number;
@@ -183,6 +184,9 @@ describe("TerminalManager", () => {
       historyLineLimit,
       shellResolver: options.shellResolver ?? (() => "/bin/bash"),
       ...(options.subprocessChecker ? { subprocessChecker: options.subprocessChecker } : {}),
+      ...(options.subprocessSnapshotter
+        ? { subprocessSnapshotter: options.subprocessSnapshotter }
+        : {}),
       ...(options.subprocessPollIntervalMs
         ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
         : {}),
@@ -231,6 +235,7 @@ describe("TerminalManager", () => {
     if (!process) return;
 
     await manager.write({ threadId: "thread-1", data: "ls\n" });
+    await manager.resize({ threadId: "thread-1", cols: 120, rows: 30 });
     await manager.resize({ threadId: "thread-1", cols: 120, rows: 30 });
 
     expect(process.writes).toEqual(["ls\n"]);
@@ -432,6 +437,43 @@ describe("TerminalManager", () => {
       () =>
         events.some((event) => event.type === "activity" && event.hasRunningSubprocess === false),
       1_200,
+    );
+
+    manager.dispose();
+  });
+
+  it("checks subprocess activity with one shared process snapshot", async () => {
+    const subprocessSnapshotter = vi.fn(
+      async (terminalPids: ReadonlyArray<number>): Promise<ReadonlySet<number>> =>
+        new Set(terminalPids.slice(0, 1)),
+    );
+    const { manager, ptyAdapter } = makeManager(5, {
+      subprocessSnapshotter,
+      subprocessPollIntervalMs: 20,
+    });
+    const events: TerminalEvent[] = [];
+    manager.on("event", (event) => {
+      events.push(event);
+    });
+
+    await manager.open(openInput({ terminalId: "default" }));
+    await manager.open(openInput({ terminalId: "sidecar" }));
+    const expectedPids = ptyAdapter.processes.map((process) => process.pid);
+
+    await waitFor(() =>
+      subprocessSnapshotter.mock.calls.some(
+        ([terminalPids]) =>
+          terminalPids.length === expectedPids.length &&
+          terminalPids.every((pid, index) => pid === expectedPids[index]),
+      ),
+    );
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.type === "activity" &&
+          event.terminalId === "default" &&
+          event.hasRunningSubprocess === true,
+      ),
     );
 
     manager.dispose();

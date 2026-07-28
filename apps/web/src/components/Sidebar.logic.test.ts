@@ -11,13 +11,57 @@ import {
   createThreadAndNavigate,
   formatWorkingDurationLabel,
   getActiveHarnessSessionStats,
+  getSidebarLifecycleRefreshDelay,
+  getWorkingDurationRefreshDelay,
   hasUnseenCompletion,
   resolveSidebarV2Status,
   resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  partitionSidebarLifecycleThreads,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
+import type { Thread } from "../types";
+
+function makeThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: ThreadId.makeUnsafe("thread-1"),
+    projectId: ProjectId.makeUnsafe("project-1"),
+    title: "Thread",
+    model: "gpt-5-codex",
+    harness: "pi",
+    claudeCodeBackend: "anthropic",
+    piRenderMode: "terminal",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    proposedPlans: [],
+    error: null,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    lastInteractedAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    turnDiffSummaries: [],
+    activities: [],
+    terminalStatus: "dormant",
+    dormantReason: null,
+    claudeSessionId: null,
+    piSessionFile: null,
+    scrollbackSnapshot: null,
+    titleSource: "auto",
+    bookmarked: false,
+    hookStatus: null,
+    ...overrides,
+  };
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -362,6 +406,60 @@ describe("formatWorkingDurationLabel", () => {
   it("clamps negative and non-finite durations", () => {
     expect(formatWorkingDurationLabel(-5_000)).toBe("0s");
     expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
+  });
+});
+
+describe("sidebar refresh cadence", () => {
+  it("ticks working durations by second initially and by minute afterward", () => {
+    expect(getWorkingDurationRefreshDelay(42_250)).toBe(775);
+    expect(getWorkingDurationRefreshDelay(65_250)).toBe(54_775);
+  });
+
+  it("uses minute boundaries unless a snoozed thread wakes sooner", () => {
+    const now = Date.parse("2026-03-09T10:00:00.500Z");
+    expect(getSidebarLifecycleRefreshDelay([], now)).toBe(59_525);
+    expect(
+      getSidebarLifecycleRefreshDelay(["2026-03-09T10:00:06.000Z", null, "invalid"], now),
+    ).toBe(5_525);
+  });
+});
+
+describe("partitionSidebarLifecycleThreads", () => {
+  it("partitions non-archived lifecycle rows and preserves archived rows on demand", () => {
+    const active = makeThread({
+      id: ThreadId.makeUnsafe("active"),
+      bookmarked: true,
+    });
+    const snoozed = makeThread({
+      id: ThreadId.makeUnsafe("snoozed"),
+      snoozedAt: "2026-03-09T09:00:00.000Z",
+      snoozedUntil: "2026-03-09T12:00:00.000Z",
+    });
+    const settled = makeThread({
+      id: ThreadId.makeUnsafe("settled"),
+      settledOverride: "settled",
+      settledAt: "2026-03-09T09:30:00.000Z",
+    });
+    const archived = makeThread({
+      id: ThreadId.makeUnsafe("archived"),
+      archivedAt: "2026-03-09T09:45:00.000Z",
+    });
+
+    const partitions = partitionSidebarLifecycleThreads({
+      threads: [archived, settled, snoozed, active],
+      projectScopeId: null,
+      showArchivedThreads: true,
+      now: "2026-03-09T10:00:00.000Z",
+      autoSettleAfterDays: null,
+      pendingApprovalByThreadId: new Map(),
+      pendingUserInputByThreadId: new Map(),
+      changeRequestStateByThreadId: new Map(),
+    });
+
+    expect(partitions.active.map((thread) => thread.id)).toEqual([active.id]);
+    expect(partitions.snoozed.map((thread) => thread.id)).toEqual([snoozed.id]);
+    expect(partitions.settled.map((thread) => thread.id)).toEqual([settled.id]);
+    expect(partitions.archived.map((thread) => thread.id)).toEqual([archived.id]);
   });
 });
 

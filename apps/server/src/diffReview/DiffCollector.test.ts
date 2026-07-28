@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildDiffReviewPromptContext,
   collectBranchDiff,
+  collectLocalDiff,
   rankDiffReviewFiles,
 } from "./DiffCollector.ts";
 
@@ -142,6 +143,16 @@ describe("DiffCollector", () => {
     expect(result.diffPatch).toContain("staged content");
     expect(result.diffPatch).toContain("unstaged content");
     expect(result.diffPatch).toContain("untracked content");
+  });
+
+  it("collects an untracked file named dash without waiting for stdin", async () => {
+    const repo = await makeRepo();
+    await writeFile(path.join(repo, "-"), "dash file\n");
+
+    const result = await Effect.runPromise(collectLocalDiff(repo));
+
+    expect(result.patch).toContain("diff --git a/./- b/./-");
+    expect(result.patch).toContain("+dash file");
   });
 
   it("summarizes low-signal files when prompt context cannot include every chunk", () => {

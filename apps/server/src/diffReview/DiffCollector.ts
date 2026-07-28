@@ -1,9 +1,8 @@
-import { execFile } from "node:child_process";
-
 import { parsePatchFiles } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { Effect } from "effect";
 
+import { normalizeGitPathArgument, runGitProcess } from "../gitProcess.ts";
 import { DiffReviewError } from "./Services/DiffReview.ts";
 
 const DEFAULT_BRANCH_NAMES = new Set(["main", "master"]);
@@ -76,29 +75,16 @@ function normalizeGitCommandError(error: unknown): string {
   return String(error);
 }
 
-function execGit(cwd: string, args: ReadonlyArray<string>): Promise<GitExecResult> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "git",
-      [...args],
-      { cwd, encoding: "utf8", maxBuffer: 30 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        const code = error && typeof error.code === "number" ? error.code : 0;
-        if (error && code === 0) {
-          reject(error);
-          return;
-        }
-        resolve({ stdout, stderr, code });
-      },
-    );
-  });
-}
-
 export const nodeGitCommandRunner: GitCommandRunner = {
   runGitStdout: (operation, cwd, args, options = {}) =>
     Effect.tryPromise({
-      try: async () => {
-        const result = await execGit(cwd, args);
+      try: async (signal) => {
+        const result = await runGitProcess({
+          cwd,
+          args,
+          maxBufferBytes: 30 * 1024 * 1024,
+          signal,
+        });
         if (result.code !== 0 && options.allowNonZero !== true) {
           const detail = result.stderr.trim() || `git exited with code ${result.code}`;
           throw new Error(detail);
@@ -549,7 +535,16 @@ function untrackedFilesToPatch(
         runner.runGitStdout(
           "DiffCollector.untrackedPatch",
           cwd,
-          ["diff", "--no-index", "--patch", "--minimal", "--no-color", "--", "/dev/null", filePath],
+          [
+            "diff",
+            "--no-index",
+            "--patch",
+            "--minimal",
+            "--no-color",
+            "--",
+            "/dev/null",
+            normalizeGitPathArgument(filePath),
+          ],
           { allowNonZero: true },
         ),
       { concurrency: 4 },

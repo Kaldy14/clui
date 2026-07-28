@@ -7,15 +7,15 @@ import {
 } from "@clui/contracts";
 import { Effect, Layer, Schema } from "effect";
 
+import { normalizeGitPathArgument, runGitProcess } from "../../gitProcess.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
-import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "../Utils.ts";
-import { CheckpointStore } from "../Services/CheckpointStore.ts";
-import { execFile } from "node:child_process";
 import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
 } from "../Services/CheckpointDiffQuery.ts";
+import { CheckpointStore } from "../Services/CheckpointStore.ts";
+import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "../Utils.ts";
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 const WORKING_TREE_DIFF_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
@@ -23,20 +23,17 @@ const GET_WORKING_TREE_DIFF_OPERATION = "CheckpointDiffQuery.getWorkingTreeDiff"
 
 function runGitForWorkingTreeDiff(cwd: string, args: readonly string[]) {
   return Effect.tryPromise({
-    try: () =>
-      new Promise<string>((resolve, reject) => {
-        execFile(
-          "git",
-          [...args],
-          { cwd, maxBuffer: WORKING_TREE_DIFF_MAX_BUFFER_BYTES },
-          (error, stdout) => {
-            if (error && !stdout) {
-              reject(error);
-            } else {
-              resolve(stdout);
-            }
-          },
-        );
+    try: (signal) =>
+      runGitProcess({
+        cwd,
+        args,
+        maxBufferBytes: WORKING_TREE_DIFF_MAX_BUFFER_BYTES,
+        signal,
+      }).then((result) => {
+        if (result.code !== 0 && result.stdout.length === 0) {
+          throw new Error(result.stderr || `git exited with code ${result.code}`);
+        }
+        return result.stdout;
       }),
     catch: (error) =>
       new CheckpointInvariantError({
@@ -65,7 +62,7 @@ const makeUntrackedFileDiff = (cwd: string, filePath: string) =>
     "--no-color",
     "--",
     "/dev/null",
-    filePath,
+    normalizeGitPathArgument(filePath),
   ]);
 
 const make = Effect.gen(function* () {

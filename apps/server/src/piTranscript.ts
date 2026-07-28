@@ -1,9 +1,17 @@
+import { open, type FileHandle } from "node:fs/promises";
+
 import type { PiTranscriptItem, PiTranscriptPart } from "@clui/contracts";
+
+const PI_TRANSCRIPT_USAGE_TAIL_BYTES = 256 * 1024;
 
 export interface PiTranscriptReadResult {
   readonly items: PiTranscriptItem[];
   readonly offset: number;
   readonly reset: boolean;
+}
+
+export interface PiTranscriptFileReadResult extends PiTranscriptReadResult {
+  readonly usageTail: Buffer;
 }
 
 function isoTimestampFromValue(value: unknown): string | null {
@@ -208,16 +216,13 @@ function parseEntryLine(line: string, id: string): PiTranscriptItem | null {
   return null;
 }
 
-export function parsePiTranscriptBuffer(
+function parsePiTranscriptChunk(
   buffer: Buffer,
-  sinceOffset?: number,
+  baseOffset: number,
+  totalOffset: number,
+  reset: boolean,
 ): PiTranscriptReadResult {
-  const totalOffset = buffer.length;
-  const startOffset =
-    sinceOffset != null && sinceOffset >= 0 && sinceOffset <= totalOffset ? sinceOffset : 0;
-  const reset = sinceOffset != null && startOffset !== sinceOffset;
-  const slice = buffer.subarray(startOffset);
-  const text = slice.toString("utf8");
+  const text = buffer.toString("utf8");
   const lines = text.split(/\n/u);
   const items: PiTranscriptItem[] = [];
   let relativeOffset = 0;
@@ -229,11 +234,80 @@ export function parsePiTranscriptBuffer(
     }
     const lineWithoutCr = line.endsWith("\r") ? line.slice(0, -1) : line;
     const lineByteLength = Buffer.byteLength(line, "utf8") + 1;
-    const id = String(startOffset + relativeOffset);
+    const id = String(baseOffset + relativeOffset);
     const item = parseEntryLine(lineWithoutCr, id);
     if (item) items.push(item);
     relativeOffset += lineByteLength;
   }
 
   return { items, offset: totalOffset, reset };
+}
+
+export function parsePiTranscriptBuffer(
+  buffer: Buffer,
+  sinceOffset?: number,
+): PiTranscriptReadResult {
+  const totalOffset = buffer.length;
+  const startOffset =
+    sinceOffset != null && sinceOffset >= 0 && sinceOffset <= totalOffset ? sinceOffset : 0;
+  const reset = sinceOffset != null && startOffset !== sinceOffset;
+  return parsePiTranscriptChunk(buffer.subarray(startOffset), startOffset, totalOffset, reset);
+}
+
+export async function readPiTranscriptFile(
+  filePath: string,
+  sinceOffset?: number,
+): Promise<PiTranscriptFileReadResult> {
+  let file: FileHandle;
+  try {
+    file = await open(filePath, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        items: [],
+        offset: 0,
+        reset: sinceOffset != null && sinceOffset !== 0,
+        usageTail: Buffer.alloc(0),
+      };
+    }
+    throw error;
+  }
+
+  try {
+    const { size } = await file.stat();
+    const hasValidOffset = sinceOffset != null && sinceOffset >= 0 && sinceOffset <= size;
+    const transcriptStart = hasValidOffset ? sinceOffset : 0;
+    const usageStart = Math.max(0, size - PI_TRANSCRIPT_USAGE_TAIL_BYTES);
+    const readStart = Math.min(transcriptStart, usageStart);
+    const buffer = Buffer.allocUnsafe(size - readStart);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const result = await file.read(
+        buffer,
+        bytesRead,
+        buffer.length - bytesRead,
+        readStart + bytesRead,
+      );
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    const readBuffer = buffer.subarray(0, bytesRead);
+    const totalOffset = readStart + bytesRead;
+    const boundedTranscriptStart = Math.min(transcriptStart, totalOffset);
+    const transcriptBuffer = readBuffer.subarray(boundedTranscriptStart - readStart);
+    const usageTailStart = Math.min(Math.max(usageStart, readStart), totalOffset);
+    const usageTail = readBuffer.subarray(usageTailStart - readStart);
+
+    return {
+      ...parsePiTranscriptChunk(
+        transcriptBuffer,
+        boundedTranscriptStart,
+        totalOffset,
+        sinceOffset != null && !hasValidOffset,
+      ),
+      usageTail,
+    };
+  } finally {
+    await file.close();
+  }
 }

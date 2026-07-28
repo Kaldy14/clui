@@ -7,7 +7,6 @@
  * @module Server
  */
 import http from "node:http";
-import { readFile } from "node:fs/promises";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -101,7 +100,7 @@ import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThr
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { MacosSleepPreventer } from "./macosSleepPreventer";
 import { AUTO_ARCHIVE_SWEEP_INTERVAL_MS, findAutoArchivableThreads } from "./autoArchiveThreads";
-import { parsePiTranscriptBuffer } from "./piTranscript";
+import { readPiTranscriptFile } from "./piTranscript";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -126,6 +125,8 @@ export interface ServerShape {
  * Server - Service tag for HTTP/WebSocket lifecycle management.
  */
 export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
+
+const MAX_WEBSOCKET_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 const isServerNotRunningError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;
@@ -429,6 +430,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   >();
   const logger = createLogger("ws");
 
+  const sendToClient = (client: WebSocket, message: string): boolean => {
+    if (client.readyState !== client.OPEN) return false;
+    if (client.bufferedAmount > MAX_WEBSOCKET_BUFFERED_BYTES) {
+      logger.warn("disconnecting slow websocket client", {
+        bufferedBytes: client.bufferedAmount,
+        maxBufferedBytes: MAX_WEBSOCKET_BUFFERED_BYTES,
+      });
+      client.close(1013, "Client is not consuming messages fast enough");
+      return false;
+    }
+    client.send(message);
+    return true;
+  };
+
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
     logger.event("outgoing push", {
@@ -496,8 +511,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     const message = yield* encodePush(push);
     let recipients = 0;
     for (const client of yield* Ref.get(clients)) {
-      if (client.readyState === client.OPEN && (shouldSend?.(client) ?? true)) {
-        client.send(message);
+      if ((shouldSend?.(client) ?? true) && sendToClient(client, message)) {
         recipients += 1;
       }
     }
@@ -802,9 +816,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               res.end("Missing session ID in hook payload");
               return;
             }
-            await Effect.runPromise(
-              claudeSessionManager.recordCodexSessionId(threadId, sessionId),
-            );
+            await Effect.runPromise(claudeSessionManager.recordCodexSessionId(threadId, sessionId));
           } else if (hookPath === "/hooks/user-prompt-submit") {
             events = buildUserPromptSubmitEvents(threadId, body);
 
@@ -1226,24 +1238,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         };
       }
 
-      const buffer = yield* Effect.tryPromise({
-        try: async () => {
-          try {
-            return await readFile(sessionFile);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-              return Buffer.alloc(0);
-            }
-            throw error;
-          }
-        },
+      const result = yield* Effect.tryPromise({
+        try: () => readPiTranscriptFile(sessionFile, sinceOffset),
         catch: (cause) =>
           new RouteRequestError({
             message: cause instanceof Error ? cause.message : "Failed to read pi transcript.",
           }),
       });
-      const result = parsePiTranscriptBuffer(buffer, sinceOffset);
-      const latestCacheHitRate = latestCacheHitRateFromPiTranscriptBuffer(buffer);
+      const latestCacheHitRate = latestCacheHitRateFromPiTranscriptBuffer(result.usageTail);
       const usageStats = activeUsageStats
         ? {
             ...activeUsageStats,
@@ -2151,7 +2153,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         id: "unknown",
         error: { message: "Invalid request format: Failed to read message" },
       });
-      ws.send(errorResponse);
+      sendToClient(ws, errorResponse);
       return;
     }
 
@@ -2161,7 +2163,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         id: "unknown",
         error: { message: `Invalid request format: ${messageFromCause(request.cause)}` },
       });
-      ws.send(errorResponse);
+      sendToClient(ws, errorResponse);
       return;
     }
 
@@ -2183,7 +2185,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         id: request.value.id,
         error: { message: messageFromCause(result.cause) },
       });
-      ws.send(errorResponse);
+      sendToClient(ws, errorResponse);
       return;
     }
 
@@ -2192,7 +2194,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       result: result.value,
     });
 
-    ws.send(response);
+    sendToClient(ws, response);
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
@@ -2237,7 +2239,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       },
     };
     logOutgoingPush(welcome, 1);
-    ws.send(JSON.stringify(welcome));
+    sendToClient(ws, JSON.stringify(welcome));
 
     ws.on("message", (raw) => {
       void runPromise(

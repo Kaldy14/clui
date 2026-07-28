@@ -141,8 +141,11 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 import { getTopThreadForProject, orderThreadsForProject } from "../lib/threadOrdering";
 import {
   formatWorkingDurationLabel,
+  getSidebarLifecycleRefreshDelay,
+  getWorkingDurationRefreshDelay,
   getActiveHarnessSessionStats,
   hasUnseenCompletion,
+  partitionSidebarLifecycleThreads,
   resolveSidebarV2Status,
   resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
@@ -155,6 +158,7 @@ import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Side
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
+const SIDEBAR_V2_ENABLED = import.meta.env.VITE_SIDEBAR_V2 !== "false";
 
 function CluiWordmark() {
   return (
@@ -337,19 +341,99 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
   );
 }
 
-// Self-ticking so only the duration span re-renders each second, matching t3code.
 function WorkingDuration({ startedAt }: { startedAt: string | null }) {
   const startedMs = startedAt === null ? Number.NaN : Date.parse(startedAt);
   const [, setTick] = useState(0);
 
   useEffect(() => {
     if (Number.isNaN(startedMs)) return;
-    const intervalId = window.setInterval(() => setTick((tick) => tick + 1), 1_000);
-    return () => window.clearInterval(intervalId);
+    let timeoutId: number | null = null;
+
+    const clearScheduledTick = () => {
+      if (timeoutId === null) return;
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+    const scheduleTick = () => {
+      clearScheduledTick();
+      if (document.visibilityState === "hidden") return;
+      timeoutId = window.setTimeout(
+        () => {
+          timeoutId = null;
+          setTick((tick) => tick + 1);
+          scheduleTick();
+        },
+        getWorkingDurationRefreshDelay(Date.now() - startedMs),
+      );
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        clearScheduledTick();
+        return;
+      }
+      setTick((tick) => tick + 1);
+      scheduleTick();
+    };
+
+    scheduleTick();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      clearScheduledTick();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [startedMs]);
 
   if (Number.isNaN(startedMs)) return null;
   return <span className="tabular-nums">{formatWorkingDurationLabel(Date.now() - startedMs)}</span>;
+}
+
+function useSidebarLifecycleNow(threads: ReadonlyArray<Thread>): string {
+  const snoozeDeadlineSignature = useMemo(
+    () => threads.map((thread) => thread.snoozedUntil ?? "").join("\n"),
+    [threads],
+  );
+  const [now, setNow] = useState(() => new Date().toISOString());
+
+  useEffect(() => {
+    let timeoutId: number | null = null;
+    const snoozeDeadlines = snoozeDeadlineSignature.split("\n");
+
+    const clearScheduledRefresh = () => {
+      if (timeoutId === null) return;
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+    const scheduleRefresh = () => {
+      clearScheduledRefresh();
+      if (document.visibilityState === "hidden") return;
+      const currentTime = Date.now();
+      timeoutId = window.setTimeout(
+        () => {
+          timeoutId = null;
+          setNow(new Date().toISOString());
+          scheduleRefresh();
+        },
+        getSidebarLifecycleRefreshDelay(snoozeDeadlines, currentTime),
+      );
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        clearScheduledRefresh();
+        return;
+      }
+      setNow(new Date().toISOString());
+      scheduleRefresh();
+    };
+
+    scheduleRefresh();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      clearScheduledRefresh();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [snoozeDeadlineSignature]);
+
+  return now;
 }
 
 const PROJECT_SORTABLE_ID_PREFIX = "project:";
@@ -963,7 +1047,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
   const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
   const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
   const [settledVisibleCount, setSettledVisibleCount] = useState(10);
-  const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
+  const lifecycleNow = useSidebarLifecycleNow(threads);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const startRenameThread = useCallback((thread: Thread) => {
@@ -1005,10 +1089,6 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     return map;
   }, [threads]);
   useEffect(() => {
-    const timer = window.setInterval(() => setLifecycleNow(new Date().toISOString()), 1_000);
-    return () => window.clearInterval(timer);
-  }, []);
-  useEffect(() => {
     if (projectScopeId !== null && !projects.some((project) => project.id === projectScopeId)) {
       setProjectScopeId(null);
     }
@@ -1046,14 +1126,125 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     },
     [projectCwdById, storeSetTerminalOpen],
   );
-  const threadGitTargets = useMemo(
+  const potentialThreadGitTargets = useMemo(
     () =>
-      threads.map((thread) => ({
-        threadId: thread.id,
-        branch: thread.branch,
-        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
-      })),
-    [projectCwdById, threads],
+      threads
+        .filter(
+          (thread) =>
+            thread.archivedAt === null &&
+            (!SIDEBAR_V2_ENABLED ||
+              projectScopeId === null ||
+              thread.projectId === projectScopeId ||
+              thread.id === routeThreadId),
+        )
+        .map((thread) => ({
+          threadId: thread.id,
+          branch: thread.branch,
+          cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
+        })),
+    [projectCwdById, projectScopeId, routeThreadId, threads],
+  );
+  const cachedPrSignature = potentialThreadGitTargets
+    .map((target) => {
+      const status = target.cwd
+        ? queryClient.getQueryData<GitStatusResult>(gitStatusQueryOptions(target.cwd).queryKey)
+        : undefined;
+      return `${target.threadId}\0${status?.branch ?? ""}\0${JSON.stringify(status?.pr ?? null)}`;
+    })
+    .join("\u0001");
+  const cachedPrByThreadId = useMemo(() => {
+    // React Query owns the mutable cache; this signature is its memoization version.
+    void cachedPrSignature;
+    const map = new Map<ThreadId, ThreadPr>();
+    for (const target of potentialThreadGitTargets) {
+      const status = target.cwd
+        ? queryClient.getQueryData<GitStatusResult>(gitStatusQueryOptions(target.cwd).queryKey)
+        : undefined;
+      const branchMatches =
+        target.branch !== null && status?.branch !== null && status?.branch === target.branch;
+      map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
+    }
+    return map;
+  }, [cachedPrSignature, potentialThreadGitTargets, queryClient]);
+  const cachedChangeRequestStateByThreadId = useMemo(
+    () =>
+      new Map(
+        [...cachedPrByThreadId].map(([threadId, pr]) => [threadId, pr?.state ?? null] as const),
+      ),
+    [cachedPrByThreadId],
+  );
+  const preliminaryLifecyclePartitions = useMemo(
+    () =>
+      partitionSidebarLifecycleThreads({
+        threads,
+        projectScopeId,
+        showArchivedThreads,
+        now: lifecycleNow,
+        autoSettleAfterDays: appSettings.sidebarAutoSettleAfterDays,
+        pendingApprovalByThreadId,
+        pendingUserInputByThreadId,
+        changeRequestStateByThreadId: cachedChangeRequestStateByThreadId,
+      }),
+    [
+      appSettings.sidebarAutoSettleAfterDays,
+      cachedChangeRequestStateByThreadId,
+      lifecycleNow,
+      pendingApprovalByThreadId,
+      pendingUserInputByThreadId,
+      projectScopeId,
+      showArchivedThreads,
+      threads,
+    ],
+  );
+  const relevantGitThreadIds = useMemo(() => {
+    const relevant = new Set<ThreadId>();
+    if (SIDEBAR_V2_ENABLED) {
+      for (const thread of preliminaryLifecyclePartitions.active) {
+        relevant.add(thread.id);
+      }
+      if (snoozedShelfExpanded) {
+        for (const thread of preliminaryLifecyclePartitions.snoozed) {
+          relevant.add(thread.id);
+        }
+      }
+      if (settledShelfExpanded) {
+        for (const thread of preliminaryLifecyclePartitions.settled.slice(0, settledVisibleCount)) {
+          relevant.add(thread.id);
+        }
+      }
+    } else {
+      for (const project of projects) {
+        if (!project.expanded) continue;
+        const projectThreads = orderThreadsForProject(
+          threads.filter((thread) => thread.archivedAt === null && thread.projectId === project.id),
+          threadOrderByProject[project.id],
+        );
+        const visibleThreads = expandedThreadListsByProject.has(project.id)
+          ? projectThreads
+          : projectThreads.slice(0, THREAD_PREVIEW_LIMIT);
+        for (const thread of visibleThreads) {
+          relevant.add(thread.id);
+        }
+      }
+    }
+    if (routeThreadId !== null) {
+      relevant.add(routeThreadId);
+    }
+    return relevant;
+  }, [
+    expandedThreadListsByProject,
+    preliminaryLifecyclePartitions,
+    projects,
+    routeThreadId,
+    settledShelfExpanded,
+    settledVisibleCount,
+    snoozedShelfExpanded,
+    threadOrderByProject,
+    threads,
+  ]);
+  const threadGitTargets = useMemo(
+    () => potentialThreadGitTargets.filter((target) => relevantGitThreadIds.has(target.threadId)),
+    [potentialThreadGitTargets, relevantGitThreadIds],
   );
   const threadGitStatusCwds = useMemo(
     () => [
@@ -1084,86 +1275,48 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
       }
     }
 
-    const map = new Map<ThreadId, ThreadPr>();
+    const map = new Map(cachedPrByThreadId);
     for (const target of threadGitTargets) {
       const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+      if (!status) continue;
       const branchMatches =
         target.branch !== null && status?.branch !== null && status?.branch === target.branch;
       map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
     }
     return map;
-  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  }, [cachedPrByThreadId, threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.id, project] as const)),
     [projects],
   );
-  const lifecyclePartitions = useMemo(() => {
-    const active: Thread[] = [];
-    const snoozed: Thread[] = [];
-    const settled: Thread[] = [];
-    const archived: Thread[] = [];
-
-    for (const thread of threads) {
-      if (projectScopeId !== null && thread.projectId !== projectScopeId) continue;
-      if (thread.archivedAt !== null) {
-        if (showArchivedThreads) archived.push(thread);
-        continue;
-      }
-      const blockers = {
-        hasPendingApprovals: pendingApprovalByThreadId.get(thread.id) === true,
-        hasPendingUserInput: pendingUserInputByThreadId.get(thread.id) === true,
-      };
-      if (effectiveSnoozed(thread, blockers, { now: lifecycleNow })) {
-        snoozed.push(thread);
-        continue;
-      }
-      const pr = prByThreadId.get(thread.id) ?? null;
-      if (
-        effectiveSettled(thread, blockers, {
-          now: lifecycleNow,
-          autoSettleAfterDays: appSettings.sidebarAutoSettleAfterDays,
-          changeRequestState: pr?.state ?? null,
-        })
-      ) {
-        settled.push(thread);
-        continue;
-      }
-      active.push(thread);
-    }
-
-    active.sort(
-      (left, right) =>
-        Number(right.bookmarked) - Number(left.bookmarked) ||
-        right.createdAt.localeCompare(left.createdAt) ||
-        right.id.localeCompare(left.id),
-    );
-    snoozed.sort(
-      (left, right) =>
-        (left.snoozedUntil ?? "").localeCompare(right.snoozedUntil ?? "") ||
-        right.createdAt.localeCompare(left.createdAt),
-    );
-    settled.sort(
-      (left, right) =>
-        (right.settledAt ?? right.lastInteractedAt).localeCompare(
-          left.settledAt ?? left.lastInteractedAt,
-        ) || right.createdAt.localeCompare(left.createdAt),
-    );
-    archived.sort(
-      (left, right) =>
-        (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") ||
-        right.createdAt.localeCompare(left.createdAt),
-    );
-    return { active, snoozed, settled, archived };
-  }, [
-    lifecycleNow,
-    pendingApprovalByThreadId,
-    pendingUserInputByThreadId,
-    appSettings.sidebarAutoSettleAfterDays,
-    prByThreadId,
-    projectScopeId,
-    showArchivedThreads,
-    threads,
-  ]);
+  const changeRequestStateByThreadId = useMemo(
+    () =>
+      new Map([...prByThreadId].map(([threadId, pr]) => [threadId, pr?.state ?? null] as const)),
+    [prByThreadId],
+  );
+  const lifecyclePartitions = useMemo(
+    () =>
+      partitionSidebarLifecycleThreads({
+        threads,
+        projectScopeId,
+        showArchivedThreads,
+        now: lifecycleNow,
+        autoSettleAfterDays: appSettings.sidebarAutoSettleAfterDays,
+        pendingApprovalByThreadId,
+        pendingUserInputByThreadId,
+        changeRequestStateByThreadId,
+      }),
+    [
+      appSettings.sidebarAutoSettleAfterDays,
+      changeRequestStateByThreadId,
+      lifecycleNow,
+      pendingApprovalByThreadId,
+      pendingUserInputByThreadId,
+      projectScopeId,
+      showArchivedThreads,
+      threads,
+    ],
+  );
   const orderedLifecycleThreadIds = useMemo(
     () =>
       [
@@ -2633,7 +2786,6 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     </div>
   );
 
-  const sidebarV2Enabled = import.meta.env.VITE_SIDEBAR_V2 !== "false";
   const defaultNewThreadProjectId =
     projectScopeId ??
     (routeThreadId
@@ -3006,7 +3158,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
     );
   };
 
-  if (sidebarV2Enabled) {
+  if (SIDEBAR_V2_ENABLED) {
     const visibleSettledThreads = lifecyclePartitions.settled.slice(0, settledVisibleCount);
     const selectedProject = projectScopeId ? projectById.get(projectScopeId) : null;
     return (

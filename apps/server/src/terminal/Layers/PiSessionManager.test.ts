@@ -12,7 +12,7 @@ import {
   type PtyProcess,
   type PtySpawnInput,
 } from "../Services/PTY";
-import { PiSessionManagerRuntime } from "./PiSessionManager";
+import { normalizeRpcProcessExit, PiSessionManagerRuntime } from "./PiSessionManager";
 import {
   CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV,
   CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV,
@@ -156,6 +156,33 @@ function collectEvents(runtime: PiSessionManagerRuntime): PiSessionEvent[] {
   return events;
 }
 
+interface FakeRpcProcess {
+  readonly pid: number;
+  readonly stdin: {
+    writable: boolean;
+    write: (data: string, callback?: (error?: Error | null) => void) => boolean;
+  };
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  readonly kill: ReturnType<typeof vi.fn<(signal?: NodeJS.Signals) => boolean>>;
+}
+
+function makeFakeRpcProcess(): FakeRpcProcess {
+  return {
+    pid: 9200,
+    stdin: {
+      writable: true,
+      write: (_data, callback) => {
+        callback?.(null);
+        return true;
+      },
+    },
+    exitCode: null,
+    signalCode: null,
+    kill: vi.fn(() => true),
+  };
+}
+
 describe("PiSessionManagerRuntime", () => {
   let runtime: PiSessionManagerRuntime | null = null;
   let stateDir: string | null = null;
@@ -283,6 +310,64 @@ describe("PiSessionManagerRuntime", () => {
 
     expect(fakeRpcProcess.kill).toHaveBeenCalledWith("SIGTERM");
     expect(runtime.getSessionStatus("thread-rpc-failure")).toBe("new");
+  });
+
+  it("preserves signal details when an RPC child exits from a signal", () => {
+    expect(normalizeRpcProcessExit(null, "SIGTERM")).toEqual({
+      exitCode: 143,
+      signal: 15,
+    });
+    expect(normalizeRpcProcessExit(7, null)).toEqual({
+      exitCode: 7,
+      signal: null,
+    });
+  });
+
+  it("bounds the lifetime of pending RPC requests", async () => {
+    stateDir = await makeTempDir();
+    runtime = new PiSessionManagerRuntime({
+      ptyAdapter: new FakePtyAdapter(),
+      stateDir,
+      rpcRequestTimeoutMs: 10,
+    });
+    const rpcProcess = makeFakeRpcProcess();
+    const pendingRequests = new Map<string, unknown>();
+    const entry = {
+      threadId: "thread-rpc-timeout",
+      rpcProcess,
+      rpcRequestSeq: 0,
+      rpcPendingRequests: pendingRequests,
+    };
+    const internals = runtime as unknown as {
+      sendRpcCommand: (
+        rpcEntry: typeof entry,
+        command: Record<string, unknown>,
+      ) => Promise<unknown>;
+    };
+
+    await expect(internals.sendRpcCommand(entry, { type: "get_state" })).rejects.toThrow(
+      "Pi RPC command timed out after 10ms: get_state",
+    );
+    expect(pendingRequests.size).toBe(0);
+  });
+
+  it("force-kills an RPC child that has not exited after SIGTERM", async () => {
+    stateDir = await makeTempDir();
+    runtime = new PiSessionManagerRuntime({
+      ptyAdapter: new FakePtyAdapter(),
+      stateDir,
+      processKillGraceMs: 10,
+    });
+    const rpcProcess = makeFakeRpcProcess();
+    const internals = runtime as unknown as {
+      killRpcProcess: (process: FakeRpcProcess, threadId: string) => void;
+    };
+
+    internals.killRpcProcess(rpcProcess, "thread-rpc-kill");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(rpcProcess.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(rpcProcess.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
   });
 
   it("uses only the launch nonce as the traversal-safe session sync basename", async () => {
@@ -831,6 +916,8 @@ describe("PiSessionManagerRuntime", () => {
 
     now.mockReturnValue(4_000);
     runtime.resizeSession("thread-1", 120, 40);
+    runtime.resizeSession("thread-1", 120, 40);
+    expect(ptyAdapter.processes[0]!.resizeCalls).toEqual([{ cols: 120, rows: 40 }]);
     await runtime.reconcileActiveSessions(1);
 
     expect(runtime.getSessionStatus("thread-1")).toBe("active");

@@ -7,7 +7,8 @@ import { ServerConfig } from "./config";
 import { loadServerSettings } from "./serverSettings";
 
 const logger = createLogger("macos-sleep-preventer");
-const CAFFEINATE_ARGS = ["-dims"] as const;
+// Keep active agent work alive without forcing the display or disk to stay awake.
+const CAFFEINATE_ARGS = ["-i"] as const;
 
 export interface MacosSleepPreventerShape {
   readonly setEnabled: (enabled: boolean) => Effect.Effect<void>;

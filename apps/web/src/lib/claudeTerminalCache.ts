@@ -6,8 +6,8 @@
  * scrollback that was written while the terminal was live.
  *
  * LRU eviction disposes the oldest detached terminals when the cache exceeds
- * MAX_CACHED_TERMINALS. WebGL addons are disposed on detach and re-created on
- * attach to reclaim GPU contexts (browsers cap at ~16 active contexts).
+ * its instance or memory budget. WebGL addons are disposed on detach and
+ * re-created on attach to reclaim GPU contexts (browsers cap at ~16 active contexts).
  */
 
 import { Terminal } from "@xterm/xterm";
@@ -41,7 +41,9 @@ export interface CachedTerminal {
  * Max number of xterm.js instances kept in the cache. Beyond this limit,
  * the oldest *detached* terminals are disposed to free memory and GPU contexts.
  */
-const MAX_CACHED_TERMINALS = 30;
+const MAX_CACHED_TERMINALS = 20;
+const MAX_ESTIMATED_CACHE_BYTES = 512 * 1024 * 1024;
+const HARD_ESTIMATED_CACHE_BYTES = 768 * 1024 * 1024;
 
 const cache = new Map<string, CachedTerminal>();
 
@@ -88,7 +90,7 @@ export function createTerminal(): CachedTerminal {
     cursorInactiveStyle: "none",
     lineHeight: 1.2,
     fontSize,
-    scrollback: 150_000,
+    scrollback: 75_000,
     fontFamily,
     theme: terminalThemeFromApp(),
     macOptionIsMeta: true,
@@ -189,27 +191,63 @@ function disposeWebgl(terminal: Terminal): void {
 }
 
 /**
- * Evict the oldest detached terminals when the cache exceeds MAX_CACHED_TERMINALS.
+ * Evict the oldest detached terminals when the cache exceeds its count or byte budget.
  *
  * Eligible for eviction: detached (not attached to DOM) AND not busy (not
  * working, pending approval, needs input, etc.). Busy threads keep their
  * cached scrollback so the user sees output immediately when switching back.
  */
-function evictDetachedIfOverCap(): void {
-  if (cache.size <= MAX_CACHED_TERMINALS) return;
+function estimateTerminalBytes(terminal: Terminal): number {
+  const lines = terminal.buffer.active.length;
+  const cols = terminal.cols || 120;
+  // xterm stores three Uint32 values per cell before string/object overhead.
+  return lines * cols * 12;
+}
 
-  const evictable: string[] = [];
+function totalEstimatedCacheBytes(): number {
+  let total = 0;
+  for (const entry of cache.values()) {
+    total += estimateTerminalBytes(entry.terminal);
+  }
+  return total;
+}
+
+function evictDetachedIfOverCap(): void {
+  let estimatedBytes = totalEstimatedCacheBytes();
+  if (cache.size <= MAX_CACHED_TERMINALS && estimatedBytes <= MAX_ESTIMATED_CACHE_BYTES) {
+    return;
+  }
+
+  const idleEvictable: string[] = [];
   for (const [threadId, entry] of cache) {
     if (!entry.container && !isThreadBusy?.(threadId)) {
-      evictable.push(threadId);
+      idleEvictable.push(threadId);
     }
   }
 
-  // Evict oldest entries first (Map iteration order is insertion order).
-  // We re-insert on attach, so insertion order approximates LRU.
-  const toEvict = cache.size - MAX_CACHED_TERMINALS;
-  for (let i = 0; i < Math.min(toEvict, evictable.length); i++) {
-    dispose(evictable[i]!);
+  const evict = (threadId: string) => {
+    const entry = cache.get(threadId);
+    if (!entry) return;
+    estimatedBytes -= estimateTerminalBytes(entry.terminal);
+    dispose(threadId);
+  };
+
+  // Map insertion order approximates LRU because entries are reinserted on attach.
+  for (const threadId of idleEvictable) {
+    if (cache.size <= MAX_CACHED_TERMINALS && estimatedBytes <= MAX_ESTIMATED_CACHE_BYTES) {
+      break;
+    }
+    evict(threadId);
+  }
+
+  if (estimatedBytes <= HARD_ESTIMATED_CACHE_BYTES) return;
+
+  // Busy detached sessions normally stay cached, but the server owns durable
+  // scrollback and can reconstruct them. Respect a hard renderer memory ceiling.
+  for (const [threadId, entry] of cache) {
+    if (entry.container) continue;
+    evict(threadId);
+    if (estimatedBytes <= MAX_ESTIMATED_CACHE_BYTES) break;
   }
 }
 
@@ -290,6 +328,7 @@ export function detach(threadId: string): void {
   const entry = cache.get(threadId);
   if (!entry || !entry.container) return;
   detachEntry(threadId, entry);
+  evictDetachedIfOverCap();
 }
 
 function detachEntry(_threadId: string, entry: CachedTerminal): void {
@@ -335,13 +374,6 @@ export interface CacheStats {
   totalEstimatedBytes: number;
   clearableCount: number;
   clearableEstimatedBytes: number;
-}
-
-function estimateTerminalBytes(terminal: Terminal): number {
-  const lines = terminal.buffer.active.length;
-  const cols = terminal.cols || 120;
-  // Each cell stores ~8 bytes (Uint32 code + attribute data) in xterm.js internal buffer
-  return lines * cols * 8;
 }
 
 export function getCacheStats(): CacheStats {
@@ -396,8 +428,8 @@ export function disposeAllExcept(keepThreadIds: ReadonlySet<string>): number {
 // ── Idle sweep ─────────────────────────────────────────────────────────
 
 /** Detached terminals untouched for this long are automatically disposed. */
-const IDLE_TTL_MS = 90 * 60 * 1_000; // 1 hour 30 minutes
-const IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1_000; // check every 5 minutes
+const IDLE_TTL_MS = 30 * 60 * 1_000;
+const IDLE_SWEEP_INTERVAL_MS = 60 * 1_000;
 
 function sweepIdleTerminals(): void {
   const cutoff = Date.now() - IDLE_TTL_MS;
@@ -407,6 +439,7 @@ function sweepIdleTerminals(): void {
     if (isThreadBusy?.(threadId)) continue; // busy — skip
     dispose(threadId);
   }
+  evictDetachedIfOverCap();
 }
 
 // Start the sweep timer. Runs in the background as long as the app is open.

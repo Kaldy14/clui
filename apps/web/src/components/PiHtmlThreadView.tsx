@@ -39,6 +39,8 @@ import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 
 const TRANSCRIPT_REFRESH_DELAY_MS = 120;
+const PI_SESSION_STATE_REFRESH_INTERVAL_MS = 30_000;
+const PI_HTML_BUSY_FRAME_INTERVAL_MS = 240;
 const MAX_SUGGESTIONS = 9;
 const PI_HTML_COMPOSER_MAX_ROWS = 6;
 const PI_HTML_BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
@@ -3568,18 +3570,29 @@ function isInsideKeyboardOwner(element: HTMLElement | null): boolean {
   );
 }
 
+function useDocumentVisible(): boolean {
+  const [visible, setVisible] = useState(() => !document.hidden);
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  return visible;
+}
+
 function usePiBusyFrame(active: boolean): string {
   const [frameIndex, setFrameIndex] = useState(0);
+  const documentVisible = useDocumentVisible();
   useEffect(() => {
-    if (!active) {
+    if (!active || !documentVisible) {
       setFrameIndex(0);
       return undefined;
     }
     const intervalId = window.setInterval(() => {
       setFrameIndex((index) => (index + 1) % PI_HTML_BUSY_FRAMES.length);
-    }, 120);
+    }, PI_HTML_BUSY_FRAME_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
-  }, [active]);
+  }, [active, documentVisible]);
   return PI_HTML_BUSY_FRAMES[frameIndex] ?? PI_HTML_BUSY_FRAMES[0];
 }
 
@@ -4554,14 +4567,22 @@ function PiHtmlComposer(props: {
   useEffect(() => {
     let disposed = false;
     const refresh = async () => {
-      if (disposed) return;
+      if (disposed || document.hidden) return;
       await refreshPiSessionState();
     };
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void refresh();
+    };
     void refresh();
-    const intervalId = window.setInterval(() => void refresh(), 5_000);
+    const intervalId = window.setInterval(
+      () => void refresh(),
+      PI_SESSION_STATE_REFRESH_INTERVAL_MS,
+    );
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       disposed = true;
       window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [refreshPiSessionState]);
 

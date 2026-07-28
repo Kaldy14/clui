@@ -70,6 +70,7 @@ const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const BACKEND_STABLE_UPTIME_MS = 30_000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 
@@ -82,6 +83,7 @@ let backendAuthToken = "";
 let backendWsUrl = "";
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let backendStableTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
@@ -150,6 +152,11 @@ function writeBackendSessionBoundary(phase: "START" | "END", details: string): v
   backendLogSink.write(
     `[${logTimestamp()}] ---- APP SESSION ${phase} run=${APP_RUN_ID} ${normalizedDetails} ----\n`,
   );
+}
+
+function flushLogSinks(): void {
+  desktopLogSink?.flush();
+  backendLogSink?.flush();
 }
 
 function formatErrorMessage(error: unknown): string {
@@ -310,6 +317,7 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       corsEnabled: true,
+      codeCache: true,
     },
   },
 ]);
@@ -462,6 +470,7 @@ function handleFatalStartupError(stage: string, error: unknown): void {
   }
   stopBackend();
   restoreStdIoCapture?.();
+  flushLogSinks();
   app.quit();
 }
 
@@ -931,6 +940,12 @@ function scheduleBackendRestart(reason: string): void {
   }, delayMs);
 }
 
+function clearBackendStableTimer(): void {
+  if (backendStableTimer === null) return;
+  clearTimeout(backendStableTimer);
+  backendStableTimer = null;
+}
+
 function startBackend(): void {
   if (isQuitting || backendProcess) return;
 
@@ -965,10 +980,18 @@ function startBackend(): void {
   captureBackendOutput(child);
 
   child.once("spawn", () => {
-    restartAttempt = 0;
+    clearBackendStableTimer();
+    backendStableTimer = setTimeout(() => {
+      backendStableTimer = null;
+      if (backendProcess === child) {
+        restartAttempt = 0;
+      }
+    }, BACKEND_STABLE_UPTIME_MS);
+    backendStableTimer.unref();
   });
 
   child.on("error", (error) => {
+    clearBackendStableTimer();
     if (backendProcess === child) {
       backendProcess = null;
     }
@@ -977,6 +1000,7 @@ function startBackend(): void {
   });
 
   child.on("exit", (code, signal) => {
+    clearBackendStableTimer();
     if (backendProcess === child) {
       backendProcess = null;
     }
@@ -990,6 +1014,7 @@ function startBackend(): void {
 }
 
 function stopBackend(): void {
+  clearBackendStableTimer();
   if (restartTimer) {
     clearTimeout(restartTimer);
     restartTimer = null;
@@ -1383,6 +1408,7 @@ app.on("before-quit", () => {
   clearUpdatePollTimer();
   stopBackend();
   restoreStdIoCapture?.();
+  flushLogSinks();
 });
 
 app
@@ -1421,6 +1447,7 @@ if (process.platform !== "win32") {
     clearUpdatePollTimer();
     stopBackend();
     restoreStdIoCapture?.();
+    flushLogSinks();
     app.quit();
   });
 
@@ -1431,6 +1458,7 @@ if (process.platform !== "win32") {
     clearUpdatePollTimer();
     stopBackend();
     restoreStdIoCapture?.();
+    flushLogSinks();
     app.quit();
   });
 }

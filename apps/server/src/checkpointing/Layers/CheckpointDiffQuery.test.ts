@@ -227,6 +227,7 @@ describe("CheckpointDiffQueryLive", () => {
       await writeFile(join(cwd, "tracked.txt"), "after\n");
       await mkdir(join(cwd, "new-dir"));
       await writeFile(join(cwd, "new-dir", "created.txt"), "created\n");
+      await writeFile(join(cwd, "-"), "dash file\n");
 
       const snapshot = makeSnapshot({
         projectId,
@@ -252,6 +253,8 @@ describe("CheckpointDiffQueryLive", () => {
       expect(result.diff).toContain("diff --git a/new-dir/created.txt b/new-dir/created.txt");
       expect(result.diff).toContain("new file mode");
       expect(result.diff).toContain("+created");
+      expect(result.diff).toContain("diff --git a/./- b/./-");
+      expect(result.diff).toContain("+dash file");
     } finally {
       await rm(cwd, { force: true, recursive: true });
     }

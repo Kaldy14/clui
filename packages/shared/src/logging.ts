@@ -6,13 +6,23 @@ export interface RotatingFileSinkOptions {
   readonly maxBytes: number;
   readonly maxFiles: number;
   readonly throwOnError?: boolean;
+  readonly flushIntervalMs?: number;
+  readonly maxBufferedBytes?: number;
 }
 
 export class RotatingFileSink {
+  private static readonly DEFAULT_FLUSH_INTERVAL_MS = 50;
+  private static readonly DEFAULT_MAX_BUFFERED_BYTES = 64 * 1024;
+
   private readonly filePath: string;
   private readonly maxBytes: number;
   private readonly maxFiles: number;
   private readonly throwOnError: boolean;
+  private readonly flushIntervalMs: number;
+  private readonly maxBufferedBytes: number;
+  private pendingChunks: Buffer[] = [];
+  private pendingBytes = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private currentSize = 0;
 
   constructor(options: RotatingFileSinkOptions) {
@@ -22,11 +32,22 @@ export class RotatingFileSink {
     if (options.maxFiles < 1) {
       throw new Error(`maxFiles must be >= 1 (received ${options.maxFiles})`);
     }
+    const flushIntervalMs = options.flushIntervalMs ?? RotatingFileSink.DEFAULT_FLUSH_INTERVAL_MS;
+    if (!Number.isFinite(flushIntervalMs) || flushIntervalMs < 0) {
+      throw new Error(`flushIntervalMs must be >= 0 (received ${flushIntervalMs})`);
+    }
+    const maxBufferedBytes =
+      options.maxBufferedBytes ?? RotatingFileSink.DEFAULT_MAX_BUFFERED_BYTES;
+    if (!Number.isFinite(maxBufferedBytes) || maxBufferedBytes < 1) {
+      throw new Error(`maxBufferedBytes must be >= 1 (received ${maxBufferedBytes})`);
+    }
 
     this.filePath = options.filePath;
     this.maxBytes = options.maxBytes;
     this.maxFiles = options.maxFiles;
     this.throwOnError = options.throwOnError ?? false;
+    this.flushIntervalMs = flushIntervalMs;
+    this.maxBufferedBytes = maxBufferedBytes;
 
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     this.pruneOverflowBackups();
@@ -37,22 +58,63 @@ export class RotatingFileSink {
     const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     if (buffer.length === 0) return;
 
+    this.pendingChunks.push(Buffer.from(buffer));
+    this.pendingBytes += buffer.length;
+
+    if (
+      this.throwOnError ||
+      this.flushIntervalMs === 0 ||
+      this.pendingBytes >= this.maxBufferedBytes
+    ) {
+      this.flush();
+      return;
+    }
+
+    if (this.flushTimer === null) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        this.flush();
+      }, this.flushIntervalMs);
+      this.flushTimer.unref?.();
+    }
+  }
+
+  flush(): void {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.pendingBytes === 0) return;
+
+    const buffer =
+      this.pendingChunks.length === 1
+        ? this.pendingChunks[0]!
+        : Buffer.concat(this.pendingChunks, this.pendingBytes);
+    this.pendingChunks = [];
+    this.pendingBytes = 0;
+
     try {
-      if (this.currentSize > 0 && this.currentSize + buffer.length > this.maxBytes) {
-        this.rotate();
-      }
-
-      fs.appendFileSync(this.filePath, buffer);
-      this.currentSize += buffer.length;
-
-      if (this.currentSize > this.maxBytes) {
-        this.rotate();
-      }
+      this.appendBuffer(buffer);
     } catch {
       this.currentSize = this.readCurrentSize();
       if (this.throwOnError) {
         throw new Error(`Failed to write log chunk to ${this.filePath}`);
       }
+    }
+  }
+
+  private appendBuffer(buffer: Buffer): void {
+    let offset = 0;
+    while (offset < buffer.length) {
+      if (this.currentSize >= this.maxBytes) {
+        this.rotate();
+      }
+
+      const remainingFileBytes = this.maxBytes - this.currentSize;
+      const bytesToWrite = Math.min(remainingFileBytes, buffer.length - offset);
+      fs.appendFileSync(this.filePath, buffer.subarray(offset, offset + bytesToWrite));
+      this.currentSize += bytesToWrite;
+      offset += bytesToWrite;
     }
   }
 

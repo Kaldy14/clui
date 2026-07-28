@@ -228,18 +228,12 @@ describe("ClaudeSessionManagerRuntime", () => {
       runtime = result.runtime;
       const events = collectEvents(runtime);
 
-      await runtime.startSession(
-        defaultInput({ harness: "codexCli", model: "gpt-5.6-sol" }),
-      );
+      await runtime.startSession(defaultInput({ harness: "codexCli", model: "gpt-5.6-sol" }));
 
       const spawnInput = result.ptyAdapter.spawnInputs[0]!;
       expect(spawnInput.shell).toBe("codex");
       expect(spawnInput.args).toEqual(
-        expect.arrayContaining([
-          "--model",
-          "gpt-5.6-sol",
-          "--dangerously-bypass-hook-trust",
-        ]),
+        expect.arrayContaining(["--model", "gpt-5.6-sol", "--dangerously-bypass-hook-trust"]),
       );
       expect(spawnInput.args?.some((arg) => arg.includes("hooks.SessionStart"))).toBe(true);
       expect(events.filter((event) => event.type === "sessionId")).toHaveLength(0);
@@ -444,6 +438,7 @@ describe("ClaudeSessionManagerRuntime", () => {
 
       await runtime.startSession(defaultInput());
       runtime.resizeSession("thread-1", 200, 50);
+      runtime.resizeSession("thread-1", 200, 50);
 
       const ptyProcess = result.ptyAdapter.processes[0]!;
       expect(ptyProcess.resizeCalls).toEqual([{ cols: 200, rows: 50 }]);
@@ -520,18 +515,14 @@ describe("ClaudeSessionManagerRuntime", () => {
       runtime = result.runtime;
 
       await runtime.startSession(defaultInput({ threadId: "claude-1" }));
-      await runtime.startSession(
-        defaultInput({ threadId: "codex-1", harness: "codexCli" }),
-      );
+      await runtime.startSession(defaultInput({ threadId: "codex-1", harness: "codexCli" }));
       await runtime.reconcileActiveSessions(1);
 
       expect(runtime.getSessionStatus("claude-1")).toBe("active");
       expect(runtime.getSessionStatus("codex-1")).toBe("active");
 
       await runtime.startSession(defaultInput({ threadId: "claude-2" }));
-      await runtime.startSession(
-        defaultInput({ threadId: "codex-2", harness: "codexCli" }),
-      );
+      await runtime.startSession(defaultInput({ threadId: "codex-2", harness: "codexCli" }));
       await runtime.reconcileActiveSessions(1);
 
       expect(runtime.getSessionStatus("claude-1")).toBe("dormant");

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   assertValidCwd,
+  BoundedLineBuffer,
   capHistory,
   createSpawnEnv,
   runWithThreadLock,
@@ -47,6 +48,56 @@ describe("capHistory", () => {
     const result = capHistory(history, 2);
     expect(result.endsWith("\n")).toBe(false);
     expect(result).toBe("c\nd");
+  });
+});
+
+describe("BoundedLineBuffer", () => {
+  it("caps complete lines while retaining the current partial line", () => {
+    const buffer = new BoundedLineBuffer(2);
+
+    buffer.append("line1\nline");
+    buffer.append("2\nline3");
+
+    expect(buffer.materialize()).toBe("line1\nline2\nline3");
+    expect(buffer.offset).toBe("line1\nline2\nline3".length);
+  });
+
+  it("returns incremental data while retained and requests a reset after trimming", () => {
+    const buffer = new BoundedLineBuffer(2);
+    buffer.append("line1\nline2\n");
+    const retainedOffset = buffer.offset;
+
+    buffer.append("line3\n");
+
+    expect(buffer.materializeSince(retainedOffset)).toBe("line3\n");
+    expect(buffer.materializeSince(0)).toBeNull();
+    expect(buffer.materializeSince(buffer.offset)).toBe("");
+  });
+
+  it("keeps only the latest lines after repeated trimming", () => {
+    const buffer = new BoundedLineBuffer(3);
+    for (let index = 0; index < 2_500; index += 1) {
+      buffer.append(`line${index}\n`);
+    }
+
+    expect(buffer.materialize()).toBe("line2497\nline2498\nline2499\n");
+  });
+
+  it("retains only the current partial line when configured with zero complete lines", () => {
+    const buffer = new BoundedLineBuffer(0);
+    buffer.append("line1\npartial");
+
+    expect(buffer.materialize()).toBe("partial");
+    expect(buffer.offset).toBe("line1\npartial".length);
+  });
+
+  it("can count the partial line toward the configured limit", () => {
+    const buffer = new BoundedLineBuffer(2, {
+      partialLineCountsTowardLimit: true,
+    });
+    buffer.append("line1\nline2\nline3");
+
+    expect(buffer.materialize()).toBe("line2\nline3");
   });
 });
 

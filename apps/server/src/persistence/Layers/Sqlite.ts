@@ -4,6 +4,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
 
+const DATABASE_COMPACTION_MIN_BYTES = 256 * 1024 * 1024;
+const DATABASE_COMPACTION_MIN_FREE_RATIO = 0.75;
+
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
 };
@@ -26,12 +29,57 @@ const makeRuntimeSqliteLayer = (
     return clientModule.layer(config);
   }).pipe(Layer.unwrap);
 
+export function shouldCompactDatabase(input: {
+  readonly pageCount: number;
+  readonly freePageCount: number;
+  readonly pageSize: number;
+}): boolean {
+  if (input.pageCount <= 0 || input.freePageCount <= 0 || input.pageSize <= 0) {
+    return false;
+  }
+  const databaseBytes = input.pageCount * input.pageSize;
+  const freeRatio = input.freePageCount / input.pageCount;
+  return (
+    databaseBytes >= DATABASE_COMPACTION_MIN_BYTES &&
+    freeRatio >= DATABASE_COMPACTION_MIN_FREE_RATIO
+  );
+}
+
+const compactDatabaseIfWasteful = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`PRAGMA optimize;`;
+  const [pageCountRow] = yield* sql<{ readonly page_count: number }>`PRAGMA page_count;`;
+  const [freePageCountRow] = yield* sql<{
+    readonly freelist_count: number;
+  }>`PRAGMA freelist_count;`;
+  const [pageSizeRow] = yield* sql<{ readonly page_size: number }>`PRAGMA page_size;`;
+  const pageCount = pageCountRow?.page_count ?? 0;
+  const freePageCount = freePageCountRow?.freelist_count ?? 0;
+  const pageSize = pageSizeRow?.page_size ?? 0;
+
+  if (!shouldCompactDatabase({ pageCount, freePageCount, pageSize })) return;
+
+  yield* Effect.logInfo("compacting sparse SQLite database", {
+    pageCount,
+    freePageCount,
+    pageSize,
+  });
+  yield* sql`VACUUM;`;
+}).pipe(
+  Effect.catch((cause) =>
+    Effect.logWarning("SQLite maintenance failed; continuing without compaction", {
+      cause,
+    }),
+  ),
+);
+
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* runMigrations;
+    yield* compactDatabaseIfWasteful;
   }),
 );
 

@@ -140,7 +140,9 @@ export function createWsNativeApi(): NativeApi {
         return RESOLVED_VOID;
       },
       resize: (input) => {
-        transport.fireAndForget(WS_METHODS.terminalResize, input);
+        transport.fireAndForget(WS_METHODS.terminalResize, input, {
+          coalesceKey: `${WS_METHODS.terminalResize}:${input.threadId}:${input.terminalId}`,
+        });
         return RESOLVED_VOID;
       },
       clear: (input) => transport.request(WS_METHODS.terminalClear, input),
@@ -258,7 +260,9 @@ export function createWsNativeApi(): NativeApi {
         return RESOLVED_VOID;
       },
       resize: (input) => {
-        transport.fireAndForget(WS_METHODS.claudeResize, input);
+        transport.fireAndForget(WS_METHODS.claudeResize, input, {
+          coalesceKey: `${WS_METHODS.claudeResize}:${input.threadId}`,
+        });
         return RESOLVED_VOID;
       },
       getScrollback: (input) => transport.request(WS_METHODS.claudeGetScrollback, input),
@@ -276,7 +280,9 @@ export function createWsNativeApi(): NativeApi {
         return RESOLVED_VOID;
       },
       resize: (input) => {
-        transport.fireAndForget(WS_METHODS.piResize, input);
+        transport.fireAndForget(WS_METHODS.piResize, input, {
+          coalesceKey: `${WS_METHODS.piResize}:${input.threadId}`,
+        });
         return RESOLVED_VOID;
       },
       getScrollback: (input) => transport.request(WS_METHODS.piGetScrollback, input),

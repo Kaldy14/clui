@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { constants as osConstants } from "node:os";
 import path from "node:path";
 
 import type {
@@ -38,7 +39,12 @@ import {
   type PiSessionManagerShape,
   type PiSessionState,
 } from "../Services/PiSession";
-import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
+import {
+  assertValidCwd,
+  BoundedLineBuffer,
+  createSpawnEnv,
+  runWithThreadLock,
+} from "../terminalUtils";
 import {
   CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV,
   CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV,
@@ -51,6 +57,7 @@ const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
 const DEFAULT_INITIAL_PROMPT_READY_TIMEOUT_MS = 30_000;
+const DEFAULT_RPC_REQUEST_TIMEOUT_MS = 30_000;
 const TERMINAL_READY_POLL_MS = 50;
 const CLUI_PI_THREAD_ID_ENV = "CLUI_PI_THREAD_ID";
 const CLUI_PI_SESSION_SYNC_DIR_ENV = "CLUI_PI_SESSION_SYNC_DIR";
@@ -76,57 +83,6 @@ const PI_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(
 // Fallback only: pi's TUI rewrites its status line with carriage returns while
 // the runtime extension / JSONL watcher provide the authoritative status.
 const PI_STATUS_DETECTION_TAIL_LENGTH = 160;
-
-class ScrollbackRingBuffer {
-  private lines: string[] = [];
-  private partial = "";
-  private readonly maxLines: number;
-  private _totalBytes = 0;
-  private _droppedBytes = 0;
-
-  constructor(maxLines: number) {
-    this.maxLines = maxLines;
-  }
-
-  append(data: string): void {
-    this._totalBytes += data.length;
-    const combined = this.partial + data;
-    const parts = combined.split("\n");
-    this.partial = parts.pop()!;
-    for (const line of parts) this.lines.push(line);
-    if (this.lines.length > this.maxLines) {
-      const dropped = this.lines.slice(0, this.lines.length - this.maxLines);
-      for (const line of dropped) this._droppedBytes += line.length + 1;
-      this.lines = this.lines.slice(this.lines.length - this.maxLines);
-    }
-  }
-
-  get offset(): number {
-    return this._totalBytes;
-  }
-
-  materialize(): string {
-    if (this.lines.length === 0) return this.partial;
-    const joined = this.lines.join("\n");
-    return this.partial.length > 0 ? `${joined}\n${this.partial}` : `${joined}\n`;
-  }
-
-  materializeSince(sinceOffset: number): string | null {
-    if (sinceOffset > this._totalBytes) return null;
-    if (sinceOffset === this._totalBytes) return "";
-    const currentData = this.materialize();
-    const availableStart = this._totalBytes - currentData.length;
-    if (sinceOffset < availableStart) return null;
-    return currentData.slice(sinceOffset - availableStart);
-  }
-
-  clear(): void {
-    this.lines = [];
-    this.partial = "";
-    this._totalBytes = 0;
-    this._droppedBytes = 0;
-  }
-}
 
 interface PiSessionSyncPayload {
   readonly threadId: string;
@@ -168,6 +124,7 @@ interface SessionStartResult {
 interface RpcPendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  timeoutTimer: ReturnType<typeof setTimeout>;
 }
 
 type ExtensionWidgetPlacement = "aboveEditor" | "belowEditor";
@@ -178,7 +135,7 @@ type MutableExtensionUiState = {
 };
 
 interface PiSessionEntry extends PiSessionState {
-  scrollbackBuffer: ScrollbackRingBuffer;
+  scrollbackBuffer: BoundedLineBuffer;
   mode: "terminal" | "rpc";
   process: PtyProcess | null;
   rpcProcess: ChildProcessWithoutNullStreams | null;
@@ -216,6 +173,18 @@ interface PiSessionManagerOptions {
   historyLineLimit?: number;
   maxActiveSessions?: number;
   initialPromptReadyTimeoutMs?: number;
+  rpcRequestTimeoutMs?: number;
+}
+
+export function normalizeRpcProcessExit(
+  exitCode: number | null,
+  signal: NodeJS.Signals | null,
+): PtyExitEvent {
+  const signalNumber = signal === null ? null : (osConstants.signals[signal] ?? null);
+  return {
+    exitCode: exitCode ?? (signalNumber === null ? 1 : 128 + signalNumber),
+    signal: signalNumber,
+  };
 }
 
 function encodePiSessionDirName(cwd: string): string {
@@ -583,10 +552,15 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
   private readonly sessions = new Map<string, PiSessionEntry>();
   private readonly threadLocks = new Map<string, Promise<void>>();
   private readonly killEscalationTimers = new Map<PtyProcess, ReturnType<typeof setTimeout>>();
+  private readonly rpcKillEscalationTimers = new Map<
+    ChildProcessWithoutNullStreams,
+    ReturnType<typeof setTimeout>
+  >();
   private readonly ptyAdapter: PtyAdapterShape;
   private readonly processKillGraceMs: number;
   private readonly historyLineLimit: number;
   private readonly initialPromptReadyTimeoutMs: number;
+  private readonly rpcRequestTimeoutMs: number;
   private maxActiveSessions: number;
   private readonly agentRootDir: string;
   private readonly sessionsRootDir: string;
@@ -604,6 +578,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     this.initialPromptReadyTimeoutMs =
       options.initialPromptReadyTimeoutMs ?? DEFAULT_INITIAL_PROMPT_READY_TIMEOUT_MS;
+    this.rpcRequestTimeoutMs = options.rpcRequestTimeoutMs ?? DEFAULT_RPC_REQUEST_TIMEOUT_MS;
     this.maxActiveSessions = options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
     this.agentRootDir = path.join(options.stateDir, PI_RUNTIME_AGENT_DIR_NAME);
     this.sessionsRootDir = path.join(this.agentRootDir, "sessions");
@@ -644,7 +619,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
         const entry: PiSessionEntry = existing ?? {
           threadId: input.threadId,
           lastInteractedAt: Date.now(),
-          scrollbackBuffer: new ScrollbackRingBuffer(this.historyLineLimit),
+          scrollbackBuffer: new BoundedLineBuffer(this.historyLineLimit),
           cols: input.cols,
           rows: input.rows,
           status: "active" as TerminalStatus,
@@ -1011,10 +986,13 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     if (!entry || entry.status !== "active" || (!entry.process && !entry.rpcProcess)) {
       throw new Error(`No active session for thread: ${threadId}`);
     }
+    const sizeChanged = entry.cols !== cols || entry.rows !== rows;
     entry.cols = cols;
     entry.rows = rows;
     entry.lastInteractedAt = Date.now();
-    entry.process?.resize(cols, rows);
+    if (sizeChanged) {
+      entry.process?.resize(cols, rows);
+    }
   }
 
   getSessionStatus(threadId: string): TerminalStatus {
@@ -1161,6 +1139,8 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     this.sessions.clear();
     for (const timer of this.killEscalationTimers.values()) clearTimeout(timer);
     this.killEscalationTimers.clear();
+    for (const timer of this.rpcKillEscalationTimers.values()) clearTimeout(timer);
+    this.rpcKillEscalationTimers.clear();
     this.threadLocks.clear();
   }
 
@@ -1308,8 +1288,9 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       this.onRpcStderr(entry, chunk);
     });
     child.on("exit", (exitCode, signal) => {
+      this.clearRpcKillEscalationTimer(child);
       if (entry.rpcProcess !== child) return;
-      this.onRpcProcessExit(entry, { exitCode: exitCode ?? 0, signal: null });
+      this.onRpcProcessExit(entry, normalizeRpcProcessExit(exitCode, signal));
     });
     child.on("error", (error) => {
       if (entry.rpcProcess !== child) return;
@@ -1467,10 +1448,22 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     const id = `clui-${++entry.rpcRequestSeq}`;
     const payload = JSON.stringify({ id, ...command });
     return new Promise((resolve, reject) => {
-      entry.rpcPendingRequests.set(id, { resolve, reject });
+      const timeoutTimer = setTimeout(() => {
+        if (!entry.rpcPendingRequests.delete(id)) return;
+        reject(
+          new Error(
+            `Pi RPC command timed out after ${this.rpcRequestTimeoutMs}ms: ${String(command.type ?? "unknown")}`,
+          ),
+        );
+      }, this.rpcRequestTimeoutMs);
+      timeoutTimer.unref?.();
+      entry.rpcPendingRequests.set(id, { resolve, reject, timeoutTimer });
       child.stdin.write(`${payload}\n`, (error) => {
         if (!error) return;
+        const pending = entry.rpcPendingRequests.get(id);
+        if (!pending) return;
         entry.rpcPendingRequests.delete(id);
+        clearTimeout(pending.timeoutTimer);
         reject(error);
       });
     });
@@ -1530,6 +1523,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       const pending = entry.rpcPendingRequests.get(payload.id);
       if (pending) {
         entry.rpcPendingRequests.delete(payload.id);
+        clearTimeout(pending.timeoutTimer);
         if (payload.success === false) {
           pending.reject(
             new Error(typeof payload.error === "string" ? payload.error : "pi command failed"),
@@ -2144,12 +2138,21 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
 
   private rejectRpcPendingRequests(entry: PiSessionEntry, error: Error): void {
     for (const pending of entry.rpcPendingRequests.values()) {
+      clearTimeout(pending.timeoutTimer);
       pending.reject(error);
     }
     entry.rpcPendingRequests.clear();
   }
 
+  private clearRpcKillEscalationTimer(process: ChildProcessWithoutNullStreams): void {
+    const timer = this.rpcKillEscalationTimers.get(process);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.rpcKillEscalationTimers.delete(process);
+  }
+
   private killRpcProcess(rpcProcess: ChildProcessWithoutNullStreams, threadId: string): void {
+    this.clearRpcKillEscalationTimer(rpcProcess);
     try {
       rpcProcess.kill("SIGTERM");
     } catch (error) {
@@ -2162,7 +2165,8 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     }
 
     const timer = setTimeout(() => {
-      if (rpcProcess.killed) return;
+      this.rpcKillEscalationTimers.delete(rpcProcess);
+      if (rpcProcess.exitCode !== null || rpcProcess.signalCode !== null) return;
       try {
         rpcProcess.kill("SIGKILL");
       } catch (error) {
@@ -2174,6 +2178,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
       }
     }, this.processKillGraceMs);
     timer.unref?.();
+    this.rpcKillEscalationTimers.set(rpcProcess, timer);
   }
 
   private killProcessWithEscalation(ptyProcess: PtyProcess, threadId: string): void {

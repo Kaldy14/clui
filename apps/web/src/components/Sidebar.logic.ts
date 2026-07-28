@@ -21,6 +21,11 @@ import {
   hasUnseenCompletion as hasUnseenThreadCompletion,
 } from "../lib/threadUnread";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
+import {
+  effectiveSettled,
+  effectiveSnoozed,
+  type ChangeRequestState,
+} from "@clui/shared/threadLifecycle";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 
@@ -58,6 +63,107 @@ export interface ActiveHarnessSessionStats {
   maxActivePerHarness: number;
   busiestHarness: CodingHarness;
   busiestHarnessActive: number;
+}
+
+export interface SidebarLifecyclePartitions {
+  readonly active: Thread[];
+  readonly snoozed: Thread[];
+  readonly settled: Thread[];
+  readonly archived: Thread[];
+}
+
+export function partitionSidebarLifecycleThreads(input: {
+  readonly threads: ReadonlyArray<Thread>;
+  readonly projectScopeId: ProjectId | null;
+  readonly showArchivedThreads: boolean;
+  readonly now: string;
+  readonly autoSettleAfterDays: number | null;
+  readonly pendingApprovalByThreadId: ReadonlyMap<ThreadId, boolean>;
+  readonly pendingUserInputByThreadId: ReadonlyMap<ThreadId, boolean>;
+  readonly changeRequestStateByThreadId: ReadonlyMap<ThreadId, ChangeRequestState | null>;
+}): SidebarLifecyclePartitions {
+  const active: Thread[] = [];
+  const snoozed: Thread[] = [];
+  const settled: Thread[] = [];
+  const archived: Thread[] = [];
+
+  for (const thread of input.threads) {
+    if (input.projectScopeId !== null && thread.projectId !== input.projectScopeId) continue;
+    if (thread.archivedAt !== null) {
+      if (input.showArchivedThreads) archived.push(thread);
+      continue;
+    }
+    const blockers = {
+      hasPendingApprovals: input.pendingApprovalByThreadId.get(thread.id) === true,
+      hasPendingUserInput: input.pendingUserInputByThreadId.get(thread.id) === true,
+    };
+    if (effectiveSnoozed(thread, blockers, { now: input.now })) {
+      snoozed.push(thread);
+      continue;
+    }
+    if (
+      effectiveSettled(thread, blockers, {
+        now: input.now,
+        autoSettleAfterDays: input.autoSettleAfterDays,
+        changeRequestState: input.changeRequestStateByThreadId.get(thread.id) ?? null,
+      })
+    ) {
+      settled.push(thread);
+      continue;
+    }
+    active.push(thread);
+  }
+
+  active.sort(
+    (left, right) =>
+      Number(right.bookmarked) - Number(left.bookmarked) ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id),
+  );
+  snoozed.sort(
+    (left, right) =>
+      (left.snoozedUntil ?? "").localeCompare(right.snoozedUntil ?? "") ||
+      right.createdAt.localeCompare(left.createdAt),
+  );
+  settled.sort(
+    (left, right) =>
+      (right.settledAt ?? right.lastInteractedAt).localeCompare(
+        left.settledAt ?? left.lastInteractedAt,
+      ) || right.createdAt.localeCompare(left.createdAt),
+  );
+  archived.sort(
+    (left, right) =>
+      (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") ||
+      right.createdAt.localeCompare(left.createdAt),
+  );
+
+  return { active, snoozed, settled, archived };
+}
+
+const SECOND_MS = 1_000;
+const MINUTE_MS = 60 * SECOND_MS;
+const TIMER_EARLY_FIRE_BUFFER_MS = 25;
+
+export function getWorkingDurationRefreshDelay(elapsedMs: number): number {
+  const resolution = elapsedMs < MINUTE_MS ? SECOND_MS : MINUTE_MS;
+  const remainder = Math.max(0, elapsedMs) % resolution;
+  return resolution - remainder + TIMER_EARLY_FIRE_BUFFER_MS;
+}
+
+export function getSidebarLifecycleRefreshDelay(
+  snoozedUntilValues: Iterable<string | null>,
+  nowMs: number,
+): number {
+  let delay = MINUTE_MS - (nowMs % MINUTE_MS) + TIMER_EARLY_FIRE_BUFFER_MS;
+
+  for (const snoozedUntil of snoozedUntilValues) {
+    if (snoozedUntil === null) continue;
+    const wakeAt = Date.parse(snoozedUntil);
+    if (!Number.isFinite(wakeAt) || wakeAt <= nowMs) continue;
+    delay = Math.min(delay, wakeAt - nowMs + TIMER_EARLY_FIRE_BUFFER_MS);
+  }
+
+  return Math.max(TIMER_EARLY_FIRE_BUFFER_MS, delay);
 }
 
 export function getActiveHarnessSessionStats(input: {

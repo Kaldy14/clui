@@ -11,10 +11,7 @@ import { Effect, Layer } from "effect";
 
 import { createLogger } from "../../logger";
 import { Open } from "../../open";
-import {
-  buildCodexHookConfigOverrides,
-  buildHookSettingsJson,
-} from "../../hooks/hookSettings";
+import { buildCodexHookConfigOverrides, buildHookSettingsJson } from "../../hooks/hookSettings";
 import { loadServerSettings } from "../../serverSettings";
 import {
   PtyAdapter,
@@ -28,7 +25,12 @@ import {
   type ClaudeSessionManagerShape,
   type ClaudeSessionState,
 } from "../Services/ClaudeSession";
-import { assertValidCwd, createSpawnEnv, runWithThreadLock } from "../terminalUtils";
+import {
+  assertValidCwd,
+  BoundedLineBuffer,
+  createSpawnEnv,
+  runWithThreadLock,
+} from "../terminalUtils";
 import {
   getSessionProcessRegistryDir,
   removeSessionProcessRegistryEntry,
@@ -41,82 +43,13 @@ const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
 
-// ── ScrollbackRingBuffer ──────────────────────────────────────────────
-
-class ScrollbackRingBuffer {
-  private lines: string[] = [];
-  private partial = "";
-  private readonly maxLines: number;
-  /** Monotonic byte counter — total bytes ever appended (never resets on trim). */
-  private _totalBytes = 0;
-  /** Bytes that were dropped when the ring buffer trimmed old lines. */
-  private _droppedBytes = 0;
-
-  constructor(maxLines: number) {
-    this.maxLines = maxLines;
-  }
-
-  append(data: string): void {
-    this._totalBytes += data.length;
-    const combined = this.partial + data;
-    const parts = combined.split("\n");
-    // Last element is the partial (incomplete line)
-    this.partial = parts.pop()!;
-    // Everything else is complete lines
-    for (const line of parts) {
-      this.lines.push(line);
-    }
-    // Trim if over limit
-    if (this.lines.length > this.maxLines) {
-      const dropped = this.lines.slice(0, this.lines.length - this.maxLines);
-      // +1 per line for the '\n' delimiter that was split away
-      for (const line of dropped) {
-        this._droppedBytes += line.length + 1;
-      }
-      this.lines = this.lines.slice(this.lines.length - this.maxLines);
-    }
-  }
-
-  /** Current byte offset — the total number of bytes appended so far. */
-  get offset(): number {
-    return this._totalBytes;
-  }
-
-  materialize(): string {
-    if (this.lines.length === 0) return this.partial;
-    const joined = this.lines.join("\n");
-    return this.partial.length > 0 ? `${joined}\n${this.partial}` : `${joined}\n`;
-  }
-
-  /**
-   * Return only the data appended since `sinceOffset` bytes. If the requested
-   * offset is older than what the ring buffer still holds (lines were trimmed),
-   * returns `null` to signal the caller must do a full reset.
-   */
-  materializeSince(sinceOffset: number): string | null {
-    if (sinceOffset > this._totalBytes) return null; // stale offset from previous session — force full reset
-    if (sinceOffset === this._totalBytes) return ""; // nothing new
-    const currentData = this.materialize();
-    const availableStart = this._totalBytes - currentData.length;
-    if (sinceOffset < availableStart) return null; // requested data was already trimmed
-    return currentData.slice(sinceOffset - availableStart);
-  }
-
-  clear(): void {
-    this.lines = [];
-    this.partial = "";
-    this._totalBytes = 0;
-    this._droppedBytes = 0;
-  }
-}
-
 // ── Types ─────────────────────────────────────────────────────────────
 
 type PtyCodingHarness = Exclude<CodingHarness, "pi">;
 
 interface ClaudeSessionEntry extends ClaudeSessionState {
   harness: PtyCodingHarness;
-  scrollbackBuffer: ScrollbackRingBuffer;
+  scrollbackBuffer: BoundedLineBuffer;
   process: PtyProcess | null;
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
@@ -203,7 +136,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         harness,
         claudeSessionId,
         lastInteractedAt: Date.now(),
-        scrollbackBuffer: new ScrollbackRingBuffer(this.historyLineLimit),
+        scrollbackBuffer: new BoundedLineBuffer(this.historyLineLimit),
         cols: input.cols,
         rows: input.rows,
         status: "new" as TerminalStatus,
@@ -406,10 +339,13 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     if (!entry || !entry.process || entry.status !== "active") {
       throw new Error(`No active session for thread: ${threadId}`);
     }
+    const sizeChanged = entry.cols !== cols || entry.rows !== rows;
     entry.cols = cols;
     entry.rows = rows;
     entry.lastInteractedAt = Date.now();
-    entry.process.resize(cols, rows);
+    if (sizeChanged) {
+      entry.process.resize(cols, rows);
+    }
   }
 
   getSessionStatus(threadId: string): TerminalStatus {
@@ -420,8 +356,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   async reconcileActiveSessions(maxActive: number): Promise<void> {
     for (const harness of ["claudeCode", "codexCli"] as const) {
       const activeSessions = [...this.sessions.values()].filter(
-        (entry) =>
-          entry.harness === harness && entry.status === "active" && entry.process !== null,
+        (entry) => entry.harness === harness && entry.status === "active" && entry.process !== null,
       );
 
       if (activeSessions.length <= maxActive) continue;

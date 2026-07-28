@@ -4,6 +4,73 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-28 — Bound Clui CPU, memory, and idle energy usage
+
+**Problem:** A live Clui session accumulated blocked Git children, polled Git and GitHub state for
+archived worktrees, kept diff workers active while the panel was closed, prevented display and disk
+sleep, and retained or repeatedly copied large terminal histories. Additional hot paths performed
+per-message reconnect polling, full Pi transcript reads, per-chunk synchronous log writes, redundant
+PTY resizes, and one process scan per running auxiliary terminal. The current SQLite file also
+contained hundreds of megabytes of reclaimable free pages.
+
+**Root cause:** Untracked paths were passed directly to `git diff --no-index`, so a file named `-`
+was interpreted as stdin without a timeout or abort path. Resource limits were mostly count-based,
+hidden UI remained mounted, archived threads participated in polling, terminal buffers trimmed by
+array copying, disconnected WebSocket messages each created a timer, and several persistence paths
+rewrote or reread complete files. Desktop sleep prevention used the broad `caffeinate -dims`
+assertion and packaged logs synchronously appended each output fragment.
+
+**Fix:** Added one abortable, timeout-bounded Git runner that closes stdin and disambiguates literal
+`-` paths. Diff rendering is now lazy-loaded only while open; sidebar Git polling is limited to
+visible/current non-archived threads; sidebar timers use visibility-aware minute/deadline cadence;
+and disconnected WebSocket output uses a bounded, resize-coalescing queue. Added byte-budgeted xterm
+eviction, shorter detached retention, shared amortized O(1) server history buffers, slower bounded
+history persistence, one shared process snapshot per poll, redundant-resize suppression, Pi RPC
+timeouts and reliable kill escalation, incremental transcript range reads, slow-client WebSocket
+backpressure, and lower-frequency hidden-aware Pi state rendering. Desktop logging now batches up
+to a bounded threshold and flushes on shutdown, backend crash backoff resets only after stable
+uptime, the custom protocol enables code caching, and macOS sleep prevention uses idle-system-only
+`caffeinate -i`. Large databases with at least 75% free pages receive guarded best-effort
+compaction.
+
+**Affected files:**
+
+- `apps/desktop/src/main.ts`
+- `apps/desktop/src/rotatingFileSink.test.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
+- `apps/server/src/diffReview/DiffCollector.ts`
+- `apps/server/src/diffReview/DiffCollector.test.ts`
+- `apps/server/src/gitProcess.ts`
+- `apps/server/src/macosSleepPreventer.ts`
+- `apps/server/src/persistence/Layers/Sqlite.ts`
+- `apps/server/src/persistence/Layers/Sqlite.test.ts`
+- `apps/server/src/piTranscript.ts`
+- `apps/server/src/piTranscript.test.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts`
+- `apps/server/src/terminal/Layers/Manager.ts`
+- `apps/server/src/terminal/Layers/Manager.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/terminal/terminalUtils.ts`
+- `apps/server/src/terminal/terminalUtils.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/lib/claudeTerminalCache.ts`
+- `apps/web/src/routes/_chat.tsx`
+- `apps/web/src/routes/_chat.$threadId.tsx`
+- `apps/web/src/wsNativeApi.ts`
+- `apps/web/src/wsTransport.ts`
+- `apps/web/src/wsTransport.test.ts`
+- `packages/shared/src/logging.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-28 — Make Pi attention states durable and consistent
 
 **Problem:** Pi questions could briefly show `Needs Input` before reverting to `Working`; HTML-mode

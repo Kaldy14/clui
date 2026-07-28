@@ -13,6 +13,11 @@ import TerminalToolbar from "~/components/TerminalToolbar";
 import ThreadTerminalView from "~/components/ThreadTerminalView";
 
 const ThreadTerminalDrawer = lazy(() => import("../components/ThreadTerminalDrawer"));
+const DiffWorkerPoolProvider = lazy(() =>
+  import("../components/DiffWorkerPoolProvider").then((module) => ({
+    default: module.DiffWorkerPoolProvider,
+  })),
+);
 
 const newTerminalId = () => crypto.randomUUID().slice(0, 8);
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
@@ -21,14 +26,10 @@ const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
 
-const DiffPanelSheet = (props: {
-  children: ReactNode;
-  diffOpen: boolean;
-  onCloseDiff: () => void;
-}) => {
+const DiffPanelSheet = (props: { children: ReactNode; onCloseDiff: () => void }) => {
   return (
     <Sheet
-      open={props.diffOpen}
+      open
       onOpenChange={(open) => {
         if (!open) {
           props.onCloseDiff();
@@ -38,7 +39,6 @@ const DiffPanelSheet = (props: {
       <SheetPopup
         side="right"
         showCloseButton={false}
-        keepMounted
         className="w-[min(88vw,820px)] max-w-[820px] p-0"
       >
         {props.children}
@@ -63,28 +63,22 @@ const DiffLoadingFallback = (props: { inline: boolean }) => {
   );
 };
 
-const DiffPanelInlineSidebar = (props: {
-  diffOpen: boolean;
-  onCloseDiff: () => void;
-  onOpenDiff: () => void;
-}) => {
-  const { diffOpen, onCloseDiff, onOpenDiff } = props;
+const DiffPanelInlineSidebar = (props: { onCloseDiff: () => void }) => {
+  const { onCloseDiff } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
-      if (open) {
-        onOpenDiff();
-        return;
+      if (!open) {
+        onCloseDiff();
       }
-      onCloseDiff();
     },
-    [onCloseDiff, onOpenDiff],
+    [onCloseDiff],
   );
   const shouldAcceptInlineSidebarWidth = useCallback(() => true, []);
 
   return (
     <SidebarProvider
-      defaultOpen={false}
-      open={diffOpen}
+      defaultOpen
+      open
       onOpenChange={onOpenChange}
       className="w-auto min-h-0 flex-none bg-transparent"
       style={{ "--sidebar-width": DIFF_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
@@ -194,17 +188,6 @@ function ChatThreadRouteView() {
       },
     });
   }, [navigate, threadId]);
-  const openDiff = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
-    });
-  }, [navigate, threadId]);
-
   // Mark thread as visited when navigating to it.
   useEffect(() => {
     if (!threadsHydrated || !routeThreadExists) return;
@@ -261,7 +244,13 @@ function ChatThreadRouteView() {
             <ThreadTerminalDrawerContainer key={threadId} threadId={threadId} />
           </div>
         </SidebarInset>
-        <DiffPanelInlineSidebar diffOpen={diffOpen} onCloseDiff={closeDiff} onOpenDiff={openDiff} />
+        {diffOpen ? (
+          <Suspense fallback={<DiffLoadingFallback inline />}>
+            <DiffWorkerPoolProvider>
+              <DiffPanelInlineSidebar onCloseDiff={closeDiff} />
+            </DiffWorkerPoolProvider>
+          </Suspense>
+        ) : null}
       </>
     );
   }
@@ -277,11 +266,15 @@ function ChatThreadRouteView() {
           <ThreadTerminalDrawerContainer key={threadId} threadId={threadId} />
         </div>
       </SidebarInset>
-      <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
+      {diffOpen ? (
         <Suspense fallback={<DiffLoadingFallback inline={false} />}>
-          <DiffPanel mode="sheet" />
+          <DiffWorkerPoolProvider>
+            <DiffPanelSheet onCloseDiff={closeDiff}>
+              <DiffPanel mode="sheet" />
+            </DiffPanelSheet>
+          </DiffWorkerPoolProvider>
         </Suspense>
-      </DiffPanelSheet>
+      ) : null}
     </>
   );
 }

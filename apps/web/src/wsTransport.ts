@@ -13,8 +13,14 @@ interface RequestOptions {
   readonly timeoutMs?: number;
 }
 
+interface FireAndForgetOptions {
+  /** Keep only the latest disconnected message for this key. */
+  readonly coalesceKey?: string;
+}
+
 const REQUEST_TIMEOUT_MS = 120_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+const MAX_QUEUED_OUTBOUND_MESSAGES = 256;
 const decodeWsResponseFromJson = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponse));
 const isWsPushEnvelope = Schema.is(WsPush);
 const isWebSocketResponseEnvelope = Schema.is(WebSocketResponse);
@@ -27,6 +33,12 @@ interface WsRequestEnvelope {
   };
 }
 
+interface QueuedOutboundMessage {
+  readonly message: WsRequestEnvelope;
+  readonly tracked: boolean;
+  readonly coalesceKey?: string;
+}
+
 export class WsTransport {
   private ws: WebSocket | null = null;
   private nextId = 1;
@@ -34,6 +46,7 @@ export class WsTransport {
   private readonly listeners = new Map<string, Set<PushListener>>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly outboundQueue: QueuedOutboundMessage[] = [];
   private disposed = false;
   private readonly url: string;
 
@@ -67,6 +80,7 @@ export class WsTransport {
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
+        this.removeQueuedMessage(id);
         reject(new Error(`Request timed out: ${method}`));
       }, options?.timeoutMs ?? REQUEST_TIMEOUT_MS);
 
@@ -76,7 +90,7 @@ export class WsTransport {
         timeout,
       });
 
-      this.send(message);
+      this.send(message, { tracked: true });
     });
   }
 
@@ -84,11 +98,17 @@ export class WsTransport {
    * Send a request without waiting for or tracking a response.
    * Use for operations where the result is not needed (e.g., terminal write/resize).
    */
-  fireAndForget(method: string, params?: unknown): void {
+  fireAndForget(method: string, params?: unknown, options?: FireAndForgetOptions): void {
     if (typeof method !== "string" || method.length === 0) return;
     const id = String(this.nextId++);
     const body = params != null ? { ...params, _tag: method } : { _tag: method };
-    this.send({ id, body });
+    this.send(
+      { id, body },
+      {
+        tracked: false,
+        ...(options?.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
+      },
+    );
   }
 
   subscribe(channel: string, listener: PushListener): () => void {
@@ -114,6 +134,7 @@ export class WsTransport {
       this.reconnectTimer = null;
     }
     this.rejectPending("Transport disposed");
+    this.outboundQueue.length = 0;
     this.ws?.close();
     this.ws = null;
   }
@@ -126,6 +147,7 @@ export class WsTransport {
     ws.addEventListener("open", () => {
       this.ws = ws;
       this.reconnectAttempt = 0;
+      this.flushOutboundQueue();
     });
 
     ws.addEventListener("message", (event) => {
@@ -135,6 +157,7 @@ export class WsTransport {
     ws.addEventListener("close", () => {
       this.ws = null;
       this.rejectPending("Connection lost");
+      this.outboundQueue.length = 0;
       this.scheduleReconnect();
     });
 
@@ -188,29 +211,69 @@ export class WsTransport {
     }
   }
 
-  private send(message: WsRequestEnvelope) {
+  private send(
+    message: WsRequestEnvelope,
+    options: { readonly tracked: boolean; readonly coalesceKey?: string },
+  ) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
       return;
     }
 
-    // If not connected, wait for connection
-    const waitForOpen = () => {
-      const timeout = setTimeout(() => clearInterval(check), REQUEST_TIMEOUT_MS);
-      const check = setInterval(() => {
-        if (this.disposed) {
-          clearInterval(check);
-          clearTimeout(timeout);
-          return;
+    if (this.disposed) return;
+    this.enqueueOutboundMessage({
+      message,
+      tracked: options.tracked,
+      ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
+    });
+  }
+
+  private enqueueOutboundMessage(queued: QueuedOutboundMessage): void {
+    if (queued.coalesceKey) {
+      const existingIndex = this.outboundQueue.findIndex(
+        (candidate) => candidate.coalesceKey === queued.coalesceKey,
+      );
+      if (existingIndex >= 0) {
+        this.outboundQueue.splice(existingIndex, 1);
+      }
+    }
+
+    if (this.outboundQueue.length >= MAX_QUEUED_OUTBOUND_MESSAGES) {
+      const droppableIndex = this.outboundQueue.findIndex((candidate) => !candidate.tracked);
+      if (droppableIndex >= 0) {
+        this.outboundQueue.splice(droppableIndex, 1);
+      } else if (queued.tracked) {
+        const pending = this.pending.get(queued.message.id);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          this.pending.delete(queued.message.id);
+          pending.reject(new Error("Outbound WebSocket queue is full"));
         }
-        if (this.ws?.readyState === WebSocket.OPEN) {
-          clearInterval(check);
-          clearTimeout(timeout);
-          this.ws.send(JSON.stringify(message));
-        }
-      }, 50);
-    };
-    waitForOpen();
+        return;
+      } else {
+        return;
+      }
+    }
+
+    this.outboundQueue.push(queued);
+  }
+
+  private flushOutboundQueue(): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const queued = this.outboundQueue.splice(0);
+    for (const item of queued) {
+      if (item.tracked && !this.pending.has(item.message.id)) continue;
+      ws.send(JSON.stringify(item.message));
+    }
+  }
+
+  private removeQueuedMessage(id: string): void {
+    const index = this.outboundQueue.findIndex((queued) => queued.message.id === id);
+    if (index >= 0) {
+      this.outboundQueue.splice(index, 1);
+    }
   }
 
   private rejectPending(reason: string) {
