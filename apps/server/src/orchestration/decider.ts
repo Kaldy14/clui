@@ -19,6 +19,7 @@ import {
 
 const nowIso = () => new Date().toISOString();
 const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
+const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
@@ -49,6 +50,79 @@ function withEventBase(
     correlationId: input.commandId,
     metadata: input.metadata ?? {},
   };
+}
+
+function activityRequestId(
+  activity: OrchestrationReadModel["threads"][number]["activities"][number],
+) {
+  if (
+    typeof activity.payload !== "object" ||
+    activity.payload === null ||
+    !("requestId" in activity.payload) ||
+    typeof activity.payload.requestId !== "string"
+  ) {
+    return null;
+  }
+  return activity.payload.requestId;
+}
+
+function hasOpenBlockingRequest(thread: OrchestrationReadModel["threads"][number]): boolean {
+  const approvals = new Set<string>();
+  const userInputs = new Set<string>();
+  for (const activity of thread.activities) {
+    const requestId = activityRequestId(activity);
+    if (requestId === null) continue;
+    if (activity.kind === "approval.requested") {
+      approvals.add(requestId);
+    } else if (
+      activity.kind === "approval.resolved" ||
+      (activity.kind === "provider.approval.respond.failed" &&
+        typeof activity.payload === "object" &&
+        activity.payload !== null &&
+        "detail" in activity.payload &&
+        typeof activity.payload.detail === "string" &&
+        activity.payload.detail.includes("Unknown pending permission request"))
+    ) {
+      approvals.delete(requestId);
+    } else if (activity.kind === "user-input.requested") {
+      userInputs.add(requestId);
+    } else if (activity.kind === "user-input.resolved") {
+      userInputs.delete(requestId);
+    }
+  }
+  return approvals.size > 0 || userInputs.size > 0;
+}
+
+function hasQueuedTurnStart(
+  thread: OrchestrationReadModel["threads"][number],
+  now: string,
+): boolean {
+  const latestUserMessage = thread.messages
+    .filter((message) => message.role === "user")
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .at(-1);
+  if (!latestUserMessage) return false;
+  const messageAt = Date.parse(latestUserMessage.createdAt);
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(messageAt) || !Number.isFinite(nowMs)) return false;
+  if (Math.abs(nowMs - messageAt) > QUEUED_TURN_START_GRACE_MS) return false;
+  if (thread.session?.status === "error") return false;
+  if (thread.latestTurn === null) return true;
+  return [
+    thread.latestTurn.requestedAt,
+    thread.latestTurn.startedAt,
+    thread.latestTurn.completedAt,
+  ].every((candidate) => candidate === null || Date.parse(candidate) < messageAt);
+}
+
+function lifecycleThreadError(
+  command: OrchestrationCommand,
+  detail: string,
+): OrchestrationCommandInvariantError {
+  return new OrchestrationCommandInvariantError({
+    commandType: command.type,
+    detail,
+  });
 }
 
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
@@ -220,6 +294,175 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.settle": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' is archived or deleted and cannot be settled.`,
+        );
+      }
+      if (
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        thread.latestTurn?.state === "running" ||
+        thread.hookStatus === "working" ||
+        thread.hookStatus === "pendingApproval" ||
+        thread.hookStatus === "needsInput"
+      ) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' has active work and cannot be settled.`,
+        );
+      }
+      if (hasOpenBlockingRequest(thread)) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' is waiting on approval or user input and cannot be settled.`,
+        );
+      }
+      const occurredAt = nowIso();
+      if (hasQueuedTurnStart(thread, occurredAt)) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' has a queued turn and cannot be settled.`,
+        );
+      }
+      const alreadySettled = thread.settledOverride === "settled" && thread.settledAt !== null;
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.settled",
+        payload: {
+          threadId: command.threadId,
+          settledAt: alreadySettled ? thread.settledAt : occurredAt,
+          updatedAt: alreadySettled ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.unsettle": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' is archived or deleted and cannot be un-settled.`,
+        );
+      }
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.unsettled",
+        payload: {
+          threadId: command.threadId,
+          reason: command.reason,
+          updatedAt: thread.settledOverride === "active" ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.snooze": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' is archived or deleted and cannot be snoozed.`,
+        );
+      }
+      const occurredAt = nowIso();
+      if (!(Date.parse(command.snoozedUntil) > Date.parse(occurredAt))) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' snooze time must be in the future.`,
+        );
+      }
+      if (
+        hasOpenBlockingRequest(thread) ||
+        thread.hookStatus === "pendingApproval" ||
+        thread.hookStatus === "needsInput"
+      ) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' is waiting on approval or user input and cannot be snoozed.`,
+        );
+      }
+      if (hasQueuedTurnStart(thread, occurredAt)) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' has a queued turn and cannot be snoozed.`,
+        );
+      }
+      const existingSnoozedAt =
+        thread.snoozedUntil === command.snoozedUntil && thread.snoozedAt !== null
+          ? thread.snoozedAt
+          : null;
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.snoozed",
+        payload: {
+          threadId: command.threadId,
+          snoozedUntil: command.snoozedUntil,
+          snoozedAt: existingSnoozedAt ?? occurredAt,
+          updatedAt: existingSnoozedAt === null ? occurredAt : thread.updatedAt,
+        },
+      };
+    }
+
+    case "thread.unsnooze": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* lifecycleThreadError(
+          command,
+          `Thread '${command.threadId}' is archived or deleted and cannot be woken.`,
+        );
+      }
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.unsnoozed",
+        payload: {
+          threadId: command.threadId,
+          reason: command.reason,
+          updatedAt: thread.snoozedUntil === null ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       const thread = yield* requireThread({
         readModel,
@@ -313,7 +556,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
@@ -366,7 +609,40 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
-      return [userMessageEvent, turnStartRequestedEvent];
+      const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (thread.settledOverride !== null) {
+        lifecycleResetEvents.push({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      if (thread.snoozedUntil !== null) {
+        lifecycleResetEvents.push({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {
@@ -487,12 +763,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.set": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -506,6 +782,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      const isSessionActivity =
+        command.session.status === "starting" || command.session.status === "running";
+      if (thread.settledOverride === null || !isSessionActivity) {
+        return sessionSetEvent;
+      }
+      return [
+        {
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        },
+        sessionSetEvent,
+      ];
     }
 
     case "thread.message.assistant.delta": {
@@ -632,7 +930,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.activity.append": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
@@ -645,7 +943,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ? ((command.activity.payload as { requestId: string })
               .requestId as OrchestrationEvent["metadata"]["requestId"])
           : undefined;
-      return {
+      const activityAppendedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -659,6 +957,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           activity: command.activity,
         },
       };
+      const wakesSettledThread =
+        command.activity.kind === "approval.requested" ||
+        command.activity.kind === "user-input.requested";
+      if (thread.settledOverride === null || !wakesSettledThread) {
+        return activityAppendedEvent;
+      }
+      return [
+        {
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        },
+        activityAppendedEvent,
+      ];
     }
 
     case "thread.turn.usage.update": {

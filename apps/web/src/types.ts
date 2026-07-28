@@ -126,6 +126,10 @@ export interface Thread {
   /** Only bumped when the user actively interacts (new turn starts). */
   lastInteractedAt: string;
   archivedAt: string | null;
+  settledOverride: "settled" | "active" | null;
+  settledAt: string | null;
+  snoozedUntil: string | null;
+  snoozedAt: string | null;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
   /** UI-local completion marker for terminal-backed harnesses that do not emit orchestration turns. */

@@ -1,4 +1,5 @@
 import {
+  type CodingHarness,
   DEFAULT_CLAUDE_CODE_PROXY_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeCodeBackend,
@@ -12,17 +13,19 @@ import {
   isClaudeCodeProxyModel,
 } from "@clui/shared/claudeCodeProxy";
 import type { ClaudeSessionEvent, PiSessionEvent } from "@clui/contracts";
-import { PlayIcon, TerminalIcon } from "lucide-react";
-
-import { Checkbox } from "./ui/checkbox";
-import { Kbd } from "./ui/kbd";
+import {
+  Code2Icon,
+  FolderGit2Icon,
+  FolderIcon,
+  GaugeIcon,
+  MonitorIcon,
+  PlayIcon,
+  ShieldAlertIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  CODING_HARNESS_LABELS,
-  CODING_HARNESS_OPTIONS,
-  useAppSettings,
-} from "../appSettings";
+import { CODING_HARNESS_LABELS, CODING_HARNESS_OPTIONS, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import {
@@ -44,6 +47,7 @@ import {
   stripMarkdownCodeFences,
 } from "../lib/terminalOutputMarkdown";
 import { requestTerminalRepaint } from "../lib/terminalPtyRepaint";
+import { PI_TERMINAL_LINE_HEIGHT, terminalLineHeightForHarness } from "../lib/terminalSurfaceTheme";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { THREAD_SELECTED_EVENT, isThreadSelectedEventFor } from "../lib/threadSelectionEvent";
 import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
@@ -58,6 +62,13 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import type { Thread } from "../types";
 import type { EnvMode } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
+import { HarnessIcon } from "./HarnessIcon";
+import {
+  NewThreadChoiceMenu,
+  NewThreadToggleControl,
+  type NewThreadChoice,
+} from "./NewThreadComposerControls";
+import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
 import PiHtmlThreadView from "./PiHtmlThreadView";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -85,6 +96,48 @@ const NEW_THREAD_HARNESS_OPTIONS = CODING_HARNESS_OPTIONS.map((value) => ({
   value,
   label: CODING_HARNESS_LABELS[value],
 }));
+const NEW_THREAD_HARNESS_CHOICES: readonly NewThreadChoice<CodingHarness>[] =
+  NEW_THREAD_HARNESS_OPTIONS.map((option) => ({
+    value: option.value,
+    label: option.label,
+    icon: <HarnessIcon harness={option.value} className="size-4 shrink-0" />,
+  }));
+const NEW_THREAD_ENVIRONMENT_CHOICES: readonly NewThreadChoice<EnvMode>[] = [
+  {
+    value: "local",
+    label: "Local",
+    icon: <FolderIcon className="size-4 shrink-0 opacity-70" />,
+  },
+  {
+    value: "worktree",
+    label: "Worktree",
+    icon: <FolderGit2Icon className="size-4 shrink-0 opacity-70" />,
+  },
+];
+const PI_RENDER_MODE_CHOICES: readonly NewThreadChoice<PiRenderMode>[] = [
+  {
+    value: "terminal",
+    label: "Terminal",
+    icon: <TerminalIcon className="size-4 shrink-0 opacity-70" />,
+  },
+  {
+    value: "html",
+    label: "HTML",
+    icon: <Code2Icon className="size-4 shrink-0 opacity-70" />,
+  },
+];
+const CLAUDE_BACKEND_CHOICES: readonly NewThreadChoice<ClaudeCodeBackend>[] = [
+  {
+    value: "anthropic",
+    label: "Anthropic",
+    icon: <HarnessIcon harness="claudeCode" className="size-4 shrink-0" />,
+  },
+  {
+    value: "codex",
+    label: "Codex",
+    icon: <HarnessIcon harness="codexCli" className="size-4 shrink-0" />,
+  },
+];
 function scheduleTerminalRecoveryPasses(runPass: () => void): () => void {
   const rafIds = new Set<number>();
   const timeoutIds = new Set<number>();
@@ -121,6 +174,13 @@ function scheduleTerminalRecoveryPasses(runPass: () => void): () => void {
 function refreshTerminal(entry: claudeCache.CachedTerminal): void {
   entry.fitAddon.fit();
   entry.terminal.refresh(0, Math.max(0, entry.terminal.rows - 1));
+}
+
+function configureTerminalLineHeight(
+  entry: claudeCache.CachedTerminal,
+  harness: HarnessKind,
+): void {
+  entry.terminal.options.lineHeight = terminalLineHeightForHarness(harness);
 }
 
 function startHarnessSession(
@@ -620,274 +680,236 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     [handleStart, starting, cwd, isWorktreePending, isWorktreeBaseSelected],
   );
 
+  const selectedProxyModel = isClaudeCodeProxyModel(thread.model)
+    ? thread.model
+    : DEFAULT_CLAUDE_CODE_PROXY_MODEL;
+  const selectedProxyModelLabel =
+    CLAUDE_CODE_PROXY_MODEL_OPTIONS.find((option) => option.value === selectedProxyModel)?.label ??
+    selectedProxyModel;
+  const environmentLabel =
+    effectiveEnvMode === "local"
+      ? "Current checkout"
+      : thread.worktreePath
+        ? "Worktree"
+        : "New worktree";
+  const startDisabled = starting || (!cwd && !isWorktreePending) || !isWorktreeBaseSelected;
+  const startLabel = starting
+    ? isWorktreePending
+      ? "Creating worktree"
+      : "Starting"
+    : `Start ${CODING_HARNESS_LABELS[thread.harness]}`;
+
   return (
     <div
       ref={containerRef}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
-      className="flex h-full flex-col items-center justify-center p-8 outline-none"
+      className="relative flex h-full min-h-0 items-center justify-center overflow-y-auto px-3 py-28 outline-none sm:px-6"
     >
-      <div className="flex w-full max-w-2xl flex-col items-center gap-5 animate-fade-in">
-        {/* App logo with subtle glow */}
-        <div className="relative animate-zoom-fade-in">
-          <div className="absolute inset-0 rounded-full bg-primary/10 blur-xl" />
-          <img src="/favicon.svg" alt="" aria-hidden="true" className="relative size-12" />
-        </div>
-
-        {/* Copy — fixed height to prevent shift */}
-        <div className="flex h-12 flex-col items-center justify-center gap-1 text-center">
-          <h2 className="text-lg font-semibold tracking-tight text-foreground">
-            {`New ${CODING_HARNESS_LABELS[thread.harness]} Session`}
-          </h2>
-          <p
-            className="max-w-sm truncate font-mono text-[11px] text-muted-foreground/60 transition-opacity duration-200"
-            title={isWorktreePending && thread.branch ? `Worktree from ${thread.branch}` : cwd}
-          >
-            {isWorktreePending && thread.branch ? (
-              <>
-                Worktree from <span className="text-muted-foreground/80">{thread.branch}</span>
-              </>
-            ) : (
-              cwd || "\u00A0"
-            )}
-          </p>
-        </div>
-
-        {/* Branch/worktree picker */}
-        {branchToolbar.isReady && branchToolbar.activeProjectCwd && (
-          <div className="flex w-full flex-col items-center gap-2.5 animate-fade-in-up-delay">
-            <div className="flex items-center gap-2">
-              <div
-                role="group"
-                aria-label="Environment"
-                className="flex items-center rounded-md bg-muted/60 p-0.5"
-              >
-                {[
-                  { value: "local" as const, label: "Local" },
-                  { value: "worktree" as const, label: "Worktree" },
-                ].map((mode) => (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() => setEnvMode(mode.value)}
-                    disabled={!!thread.worktreePath}
-                    className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
-                      effectiveEnvMode === mode.value
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground/70 hover:text-foreground"
-                    }`}
-                  >
-                    {mode.label}
-                  </button>
-                ))}
-              </div>
-              <BranchToolbarBranchSelector
-                activeProjectCwd={branchToolbar.activeProjectCwd}
-                activeThreadBranch={branchToolbar.activeThreadBranch}
-                activeWorktreePath={branchToolbar.activeWorktreePath}
-                branchCwd={branchToolbar.branchCwd}
-                dedupeRemotes={false}
-                deferCheckout
-                effectiveEnvMode={effectiveEnvMode}
-                envLocked={!!thread.worktreePath}
-                onSetThreadBranch={setThreadBranch}
-                onCheckoutPullRequestRequest={(ref) => {
-                  setPrInitialReference(ref);
-                  setPrDialogOpen(true);
-                }}
-              />
-            </div>
-            {isWorktreePending && (
-              <p className="max-w-64 text-center text-[10px] text-muted-foreground/50">
-                Creates a detached worktree from the selected base. Create the feature branch later
-                from inside the worktree.
-              </p>
-            )}
+      <div className="w-full">
+        <div
+          className={`new-thread-composer-glass-shell relative mx-auto w-full max-w-3xl animate-fade-in ${
+            branchToolbar.isReady && branchToolbar.activeProjectCwd
+              ? "new-thread-composer-glass-shell-with-context"
+              : ""
+          }`}
+        >
+          <div className="absolute inset-x-0 bottom-full z-0 pb-8">
+            <NewThreadProjectPicker activeProject={project ?? null} />
           </div>
-        )}
 
-        {/* Prompt composer — first prompt, harness, YOLO, and launch share one surface */}
-        <div className="w-full overflow-hidden rounded-xl border border-border/50 bg-background/80 shadow-sm transition-colors focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/25 animate-fade-in-up-delay">
-          <textarea
-            ref={initialPromptRef}
-            value={initialPrompt}
-            onChange={(event) => setInitialPrompt(event.target.value)}
-            onPaste={handleInitialPromptPaste}
-            onKeyDown={handlePromptKeyDown}
-            placeholder={`Ask ${CODING_HARNESS_LABELS[thread.harness]} what to do first...`}
-            aria-label="First prompt"
-            rows={6}
-            spellCheck
-            className="max-h-[40vh] min-h-36 w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/40"
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 px-2 py-2 dark:border-border/20">
-            <div className="flex items-center gap-2">
-              <div
-                role="group"
-                aria-label="Coding harness"
-                className="flex items-center rounded-md bg-muted/60 p-0.5"
-              >
-                {NEW_THREAD_HARNESS_OPTIONS.map((option) => (
+          <div className="new-thread-composer-glass-host relative z-10 w-full rounded-[22px]">
+            <div className="group rounded-[22px] p-px">
+              <div className="rounded-[20px] transition-colors duration-200">
+                <div className="relative px-3 pb-2 pt-3.5 sm:px-4 sm:pt-4">
+                  <textarea
+                    ref={initialPromptRef}
+                    value={initialPrompt}
+                    onChange={(event) => setInitialPrompt(event.target.value)}
+                    onPaste={handleInitialPromptPaste}
+                    onKeyDown={handlePromptKeyDown}
+                    placeholder={`Ask ${CODING_HARNESS_LABELS[thread.harness]} what to do first...`}
+                    aria-label="First prompt"
+                    rows={3}
+                    spellCheck
+                    className="block max-h-50 min-h-[4.375rem] w-full resize-none overflow-y-auto whitespace-pre-wrap bg-transparent text-[16px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/35 sm:text-[14px]"
+                  />
+                </div>
+
+                <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+                  <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <NewThreadChoiceMenu
+                      ariaLabel="Choose coding harness"
+                      value={thread.harness}
+                      label={CODING_HARNESS_LABELS[thread.harness]}
+                      icon={<HarnessIcon harness={thread.harness} className="size-4 shrink-0" />}
+                      options={NEW_THREAD_HARNESS_CHOICES}
+                      onValueChange={handleHarnessChange}
+                    />
+
+                    <span aria-hidden="true" className="mx-0.5 h-4 w-px shrink-0 bg-border/70" />
+
+                    {thread.harness === "pi" && (
+                      <>
+                        <NewThreadChoiceMenu
+                          ariaLabel="Choose pi render mode"
+                          value={piRenderMode}
+                          label={piRenderMode === "html" ? "HTML" : "Terminal"}
+                          icon={
+                            piRenderMode === "html" ? (
+                              <Code2Icon className="size-4 shrink-0 opacity-70" />
+                            ) : (
+                              <TerminalIcon className="size-4 shrink-0 opacity-70" />
+                            )
+                          }
+                          options={PI_RENDER_MODE_CHOICES}
+                          onValueChange={handlePiRenderModeChange}
+                        />
+                        {activeProjectCwd && (
+                          <NewThreadToggleControl
+                            checked={localFastMode}
+                            label="Fast"
+                            ariaLabel="Use OpenAI Fast mode for this pi thread"
+                            icon={<GaugeIcon className="size-4" />}
+                            onCheckedChange={(next) => {
+                              setLocalFastMode(next);
+                              setPiFastMode(threadId, next);
+                              writeNewThreadFastModePreference(activeProjectCwd, next);
+                            }}
+                          />
+                        )}
+                      </>
+                    )}
+
+                    {thread.harness === "claudeCode" && (
+                      <>
+                        <NewThreadChoiceMenu
+                          ariaLabel="Choose Claude Code backend"
+                          value={thread.claudeCodeBackend}
+                          label={thread.claudeCodeBackend === "codex" ? "Codex" : "Anthropic"}
+                          icon={
+                            <HarnessIcon
+                              harness={
+                                thread.claudeCodeBackend === "codex" ? "codexCli" : "claudeCode"
+                              }
+                              className="size-4 shrink-0"
+                            />
+                          }
+                          options={CLAUDE_BACKEND_CHOICES}
+                          onValueChange={handleClaudeCodeBackendChange}
+                        />
+                        {thread.claudeCodeBackend === "codex" && (
+                          <NewThreadChoiceMenu
+                            ariaLabel="Choose Codex model"
+                            value={selectedProxyModel}
+                            label={selectedProxyModelLabel}
+                            icon={<MonitorIcon className="size-4 shrink-0 opacity-70" />}
+                            options={CLAUDE_CODE_PROXY_MODEL_OPTIONS}
+                            onValueChange={handleClaudeCodeProxyModelChange}
+                          />
+                        )}
+                      </>
+                    )}
+
+                    {thread.harness !== "pi" && (
+                      <NewThreadToggleControl
+                        checked={dangerouslySkipPermissions}
+                        label="YOLO"
+                        ariaLabel="Skip all permission prompts"
+                        icon={<ShieldAlertIcon className="size-4" />}
+                        tone="danger"
+                        onCheckedChange={setYolo}
+                      />
+                    )}
+                  </div>
+
                   <button
-                    key={option.value}
                     type="button"
-                    onClick={() => handleHarnessChange(option.value)}
-                    className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors ${
-                      thread.harness === option.value
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground/70 hover:text-foreground"
-                    }`}
+                    disabled={startDisabled}
+                    aria-busy={starting}
+                    aria-label={startLabel}
+                    title={startLabel}
+                    onClick={handleStart}
+                    className="relative isolate flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/90 text-primary-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] enabled:hover:scale-105 enabled:hover:bg-primary active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none sm:size-8"
                   >
-                    {option.label}
+                    {starting ? (
+                      <span
+                        className="size-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
                   </button>
-                ))}
+                </div>
               </div>
-              {thread.harness === "pi" && (
-                <div
-                  role="group"
-                  aria-label="pi render mode"
-                  className="flex items-center rounded-md bg-muted/60 p-0.5"
-                >
-                  {[
-                    { value: "terminal" as const, label: "Terminal" },
-                    { value: "html" as const, label: "HTML" },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => handlePiRenderModeChange(option.value)}
-                      className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors ${
-                        piRenderMode === option.value
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground/70 hover:text-foreground"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {thread.harness === "claudeCode" && (
-                <div
-                  role="group"
-                  aria-label="Claude Code backend"
-                  className="flex items-center rounded-md bg-muted/60 p-0.5"
-                >
-                  {[
-                    { value: "anthropic" as const, label: "Anthropic" },
-                    { value: "codex" as const, label: "Codex" },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => handleClaudeCodeBackendChange(option.value)}
-                      className={`rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors ${
-                        thread.claudeCodeBackend === option.value
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground/70 hover:text-foreground"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {thread.harness === "claudeCode" && thread.claudeCodeBackend === "codex" && (
-                <select
-                  aria-label="Codex model"
-                  value={
-                    isClaudeCodeProxyModel(thread.model)
-                      ? thread.model
-                      : DEFAULT_CLAUDE_CODE_PROXY_MODEL
-                  }
-                  onChange={(event) =>
-                    handleClaudeCodeProxyModelChange(event.target.value as ClaudeCodeProxyModel)
-                  }
-                  className="h-7 rounded-md border border-border/40 bg-background px-2 text-xs font-medium text-foreground outline-none focus:border-primary/50 dark:border-border/20"
-                >
-                  {CLAUDE_CODE_PROXY_MODEL_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {thread.harness === "pi" && activeProjectCwd && (
-                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs font-medium text-muted-foreground/70 transition-colors hover:text-foreground dark:border-border/20">
-                  <Checkbox
-                    checked={localFastMode}
-                    onCheckedChange={(checked) => {
-                      const next = checked === true;
-                      setLocalFastMode(next);
-                      setPiFastMode(threadId, next);
-                      writeNewThreadFastModePreference(activeProjectCwd, next);
-                    }}
-                    aria-label="Use OpenAI Fast mode for this pi thread"
-                  />
-                  Fast mode
-                </label>
-              )}
-              {thread.harness !== "pi" && (
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={dangerouslySkipPermissions}
-                  onClick={() => setYolo(!dangerouslySkipPermissions)}
-                  title="Skip all permission prompts (--dangerously-skip-permissions)"
-                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
-                    dangerouslySkipPermissions
-                      ? "border-red-500/40 bg-red-500/10 text-red-500"
-                      : "border-border/40 text-muted-foreground/70 hover:text-foreground dark:border-border/20"
-                  }`}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={`size-1.5 rounded-full ${
-                      dangerouslySkipPermissions ? "bg-red-500" : "bg-muted-foreground/40"
-                    }`}
-                  />
-                  YOLO
-                </button>
-              )}
             </div>
-            <button
-              type="button"
-              disabled={starting || (!cwd && !isWorktreePending) || !isWorktreeBaseSelected}
-              aria-busy={starting}
-              onClick={handleStart}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-50"
+          </div>
+
+          {branchToolbar.isReady && branchToolbar.activeProjectCwd && (
+            <div className="new-thread-composer-context-strip relative z-0 -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 px-1 pb-1 pt-5">
+              <div className="flex min-w-0 flex-1 items-center gap-1">
+                <NewThreadChoiceMenu
+                  ariaLabel="Choose local checkout or worktree"
+                  value={effectiveEnvMode}
+                  label={environmentLabel}
+                  icon={
+                    effectiveEnvMode === "worktree" ? (
+                      <FolderGit2Icon className="size-4 shrink-0 opacity-70" />
+                    ) : (
+                      <FolderIcon className="size-4 shrink-0 opacity-70" />
+                    )
+                  }
+                  options={NEW_THREAD_ENVIRONMENT_CHOICES}
+                  onValueChange={setEnvMode}
+                  className="min-w-0 max-w-full"
+                  disabled={!!thread.worktreePath}
+                  compact
+                />
+              </div>
+              <div className="flex min-w-0 flex-1 justify-end">
+                <BranchToolbarBranchSelector
+                  activeProjectCwd={branchToolbar.activeProjectCwd}
+                  activeThreadBranch={branchToolbar.activeThreadBranch}
+                  activeWorktreePath={branchToolbar.activeWorktreePath}
+                  branchCwd={branchToolbar.branchCwd}
+                  dedupeRemotes={false}
+                  deferCheckout
+                  effectiveEnvMode={effectiveEnvMode}
+                  envLocked={!!thread.worktreePath}
+                  onSetThreadBranch={setThreadBranch}
+                  onCheckoutPullRequestRequest={(ref) => {
+                    setPrInitialReference(ref);
+                    setPrDialogOpen(true);
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <p
+              role="alert"
+              className="absolute inset-x-0 top-full mt-3 text-center text-xs text-destructive animate-fade-in-up"
             >
-              {starting ? (
-                <>
-                  <span className="size-3 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
-                  {isWorktreePending ? "Creating worktree..." : "Starting..."}
-                </>
-              ) : (
-                <>
-                  <TerminalIcon className="size-3.5 opacity-80" aria-hidden="true" />
-                  {thread.harness === "pi"
-                    ? "Start pi"
-                    : `Start ${CODING_HARNESS_LABELS[thread.harness]}`}
-                </>
-              )}
-            </button>
-          </div>
+              {error}
+            </p>
+          )}
         </div>
-
-        {/* Keyboard hint */}
-        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/50 animate-fade-in-up-delay-2">
-          <Kbd className="h-4 bg-muted/60 px-1 text-[10px]">Enter</Kbd>
-          {hasInitialPrompt ? "starts & sends the prompt" : "starts"}
-          <span className="text-muted-foreground/30">·</span>
-          <Kbd className="h-4 bg-muted/60 px-1 text-[10px]">Shift+Enter</Kbd>
-          new line
-        </p>
-
-        {error && (
-          <p role="alert" className="text-center text-xs text-destructive animate-fade-in-up">
-            {error}
-          </p>
-        )}
       </div>
 
       <PullRequestThreadDialog
@@ -962,6 +984,7 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
     const cached = claudeCache.get(threadId);
     if (cached) {
       claudeCache.attach(threadId, el);
+      configureTerminalLineHeight(cached, thread.harness);
       cached.terminal.options.disableStdin = true;
       // Fit after layout has settled so read-only scrollback renders at correct dimensions.
       const cancelRecovery = scheduleTerminalRecoveryPasses(() => refreshTerminal(cached));
@@ -974,6 +997,7 @@ function DormantTerminalView({ threadId, thread }: { threadId: ThreadId; thread:
 
     // Otherwise, fetch scrollback and render in a new terminal
     const entry = claudeCache.attach(threadId, el);
+    configureTerminalLineHeight(entry, thread.harness);
     entry.terminal.options.disableStdin = true;
     const api = readNativeApi();
     if (!api) {
@@ -1245,6 +1269,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     let repaintOffsetBaselineInvalid = false;
 
     const entry = claudeCache.attach(threadId, el);
+    configureTerminalLineHeight(entry, harness);
     const { terminal, fitAddon } = entry;
     const terminalWriteQueue = createTerminalWriteQueue(terminal);
     const queuedTerminalWriter = {
@@ -2112,7 +2137,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
             color: terminalTheme.foreground,
             fontFamily: settings.terminalFontFamily,
             fontSize: `${settings.terminalFontSize}px`,
-            lineHeight: 1.2,
+            lineHeight: PI_TERMINAL_LINE_HEIGHT,
           }}
         >
           <div className="m-0 overflow-hidden whitespace-pre px-0 py-0">

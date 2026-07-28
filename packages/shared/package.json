@@ -39,6 +39,10 @@
     "./piTuiInput": {
       "types": "./src/piTuiInput.ts",
       "import": "./src/piTuiInput.ts"
+    },
+    "./threadLifecycle": {
+      "types": "./src/threadLifecycle.ts",
+      "import": "./src/threadLifecycle.ts"
     }
   },
   "scripts": {

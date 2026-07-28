@@ -22,6 +22,11 @@ import {
 } from "@clui/contracts";
 import { getModelOptions, normalizeModelSlug } from "@clui/shared/model";
 import { CLAUDE_CODE_PROXY_MODEL_OPTIONS } from "@clui/shared/claudeCodeProxy";
+import {
+  DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+  MAX_AUTO_SETTLE_AFTER_DAYS,
+  MIN_AUTO_SETTLE_AFTER_DAYS,
+} from "@clui/shared/threadLifecycle";
 
 import {
   CODING_HARNESS_LABELS,
@@ -697,9 +702,7 @@ function SettingsRouteView() {
                       onClick={() => updateSettings({ defaultCodingHarness: option })}
                     >
                       <span className="flex flex-col">
-                        <span className="text-sm font-medium">
-                          {CODING_HARNESS_LABELS[option]}
-                        </span>
+                        <span className="text-sm font-medium">{CODING_HARNESS_LABELS[option]}</span>
                         <span className="text-xs">{CODING_HARNESS_DESCRIPTIONS[option]}</span>
                       </span>
                       {selected ? (
@@ -909,9 +912,9 @@ function SettingsRouteView() {
                         Prevent macOS sleep while a thread is working
                       </label>
                       <p className="text-xs text-muted-foreground">
-                        Keeps your Mac awake with <code>caffeinate</code> while the active harness is
-                        processing a turn. Sleep is allowed again when the thread
-                        completes, exits, hibernates, or waits for input.
+                        Keeps your Mac awake with <code>caffeinate</code> while the active harness
+                        is processing a turn. Sleep is allowed again when the thread completes,
+                        exits, hibernates, or waits for input.
                       </p>
                     </div>
                     <Switch
@@ -975,14 +978,73 @@ function SettingsRouteView() {
 
               <div className="space-y-4">
                 <div className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="max-w-xl">
+                      <h3 className="text-xs font-medium text-foreground">
+                        Auto-settle inactive threads
+                      </h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Move inactive work into the compact Settled shelf. New activity wakes it;
+                        threads with merged or closed pull requests always settle.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.sidebarAutoSettleAfterDays !== null}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          sidebarAutoSettleAfterDays: checked
+                            ? DEFAULT_AUTO_SETTLE_AFTER_DAYS
+                            : null,
+                        })
+                      }
+                      aria-label="Auto-settle inactive threads"
+                    />
+                  </div>
+
+                  {settings.sidebarAutoSettleAfterDays !== null ? (
+                    <label
+                      htmlFor="auto-settle-inactive-days"
+                      className="mt-3 block space-y-1 border-t border-border/70 pt-3"
+                    >
+                      <span className="text-xs font-medium text-foreground">
+                        Days of inactivity before auto-settle
+                      </span>
+                      <p className="text-xs text-muted-foreground">
+                        Choose between {MIN_AUTO_SETTLE_AFTER_DAYS} and {MAX_AUTO_SETTLE_AFTER_DAYS}{" "}
+                        days.
+                      </p>
+                      <Input
+                        id="auto-settle-inactive-days"
+                        type="number"
+                        min={MIN_AUTO_SETTLE_AFTER_DAYS}
+                        max={MAX_AUTO_SETTLE_AFTER_DAYS}
+                        className="w-28"
+                        value={settings.sidebarAutoSettleAfterDays}
+                        onChange={(event) => {
+                          const days = Number(event.target.value);
+                          if (
+                            Number.isInteger(days) &&
+                            days >= MIN_AUTO_SETTLE_AFTER_DAYS &&
+                            days <= MAX_AUTO_SETTLE_AFTER_DAYS
+                          ) {
+                            updateSettings({ sidebarAutoSettleAfterDays: days });
+                          }
+                        }}
+                        aria-label="Days of inactivity before auto-settle"
+                      />
+                    </label>
+                  ) : null}
+                </div>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-3">
                   <div className="space-y-3">
                     <label htmlFor="auto-archive-inactive-days" className="block space-y-1">
                       <span className="text-xs font-medium text-foreground">
                         Auto-archive inactive chats
                       </span>
                       <p className="text-xs text-muted-foreground">
-                        Threads are archived when their last server update is older than this many
-                        days. Use 0 to disable automatic archiving.
+                        Settled threads are archived after this later cleanup threshold. Use 0 to
+                        disable automatic archiving.
                       </p>
                       <div className="flex flex-wrap items-center gap-3">
                         <Input

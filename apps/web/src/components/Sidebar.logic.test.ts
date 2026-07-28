@@ -9,9 +9,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createThreadAndNavigate,
+  formatWorkingDurationLabel,
   getActiveHarnessSessionStats,
   hasUnseenCompletion,
+  resolveSidebarV2Status,
   resolveThreadStatusPill,
+  resolveWorkingStartedAt,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 
@@ -24,8 +27,10 @@ function makeLatestTurn(overrides?: {
     state: "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
-    startedAt: overrides?.startedAt ?? "2026-03-09T10:00:00.000Z",
-    completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
+    startedAt:
+      overrides?.startedAt === undefined ? "2026-03-09T10:00:00.000Z" : overrides.startedAt,
+    completedAt:
+      overrides?.completedAt === undefined ? "2026-03-09T10:05:00.000Z" : overrides.completedAt,
   };
 }
 
@@ -115,6 +120,7 @@ describe("createThreadAndNavigate", () => {
       createdAt: "2026-04-23T10:00:00.000Z",
       branch: null,
       worktreePath: null,
+      replace: true,
     });
 
     expect(events).toEqual(["dispatch:start"]);
@@ -137,6 +143,11 @@ describe("createThreadAndNavigate", () => {
         claudeCodeBackend: "codex",
       }),
     );
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/$threadId",
+      params: { threadId: ThreadId.makeUnsafe("thread-1") },
+      replace: true,
+    });
   });
 
   it("does not add local state or navigate when thread.create fails", async () => {
@@ -189,6 +200,148 @@ describe("hasUnseenCompletion", () => {
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
       }),
     ).toBe(true);
+  });
+});
+
+describe("Sidebar v2 status parity", () => {
+  const session = {
+    provider: "codex" as const,
+    status: "running" as const,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:02:00.000Z",
+    orchestrationStatus: "running" as const,
+  };
+  const idleThread = {
+    hookStatus: null,
+    session,
+    terminalStatus: "new" as const,
+  };
+
+  it("uses t3code's high-level Working state instead of the activity detail", () => {
+    expect(
+      resolveSidebarV2Status({
+        thread: {
+          ...idleThread,
+          activityStatus: "thinking",
+          hookStatus: "working",
+          terminalStatus: "active",
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("working");
+  });
+
+  it("prioritizes authoritative approval and input hooks", () => {
+    expect(
+      resolveSidebarV2Status({
+        thread: { ...idleThread, hookStatus: "pendingApproval", terminalStatus: "active" },
+        hasPendingApprovals: false,
+        hasPendingUserInput: true,
+      }),
+    ).toBe("approval");
+    expect(
+      resolveSidebarV2Status({
+        thread: { ...idleThread, hookStatus: "needsInput", terminalStatus: "active" },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("input");
+  });
+
+  it("does not let stale derived blockers override an active working hook", () => {
+    expect(
+      resolveSidebarV2Status({
+        thread: { ...idleThread, hookStatus: "working", terminalStatus: "active" },
+        hasPendingApprovals: true,
+        hasPendingUserInput: true,
+      }),
+    ).toBe("working");
+  });
+
+  it("maps connecting, errors, and idle sessions to the t3code states", () => {
+    expect(
+      resolveSidebarV2Status({
+        thread: { ...idleThread, session: { ...session, status: "connecting" } },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("working");
+    expect(
+      resolveSidebarV2Status({
+        thread: { ...idleThread, hookStatus: "error", terminalStatus: "active" },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarV2Status({
+        thread: { ...idleThread, session: { ...session, status: "ready" } },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("ready");
+  });
+});
+
+describe("resolveWorkingStartedAt", () => {
+  const session = {
+    provider: "codex" as const,
+    status: "running" as const,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:02:00.000Z",
+    orchestrationStatus: "running" as const,
+  };
+
+  it("uses the active turn start, then its request time", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ completedAt: null }),
+        lastInteractedAt: "2026-03-09T10:01:00.000Z",
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ completedAt: null, startedAt: null }),
+        lastInteractedAt: "2026-03-09T10:01:00.000Z",
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("uses Clui's turn interaction time before the long-lived PTY session timestamp", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: null,
+        lastInteractedAt: "2026-03-09T10:01:00.000Z",
+        session,
+      }),
+    ).toBe("2026-03-09T10:01:00.000Z");
+  });
+
+  it("falls through malformed timestamps", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: null,
+        lastInteractedAt: "not-a-date",
+        session,
+      }),
+    ).toBe("2026-03-09T10:02:00.000Z");
+  });
+});
+
+describe("formatWorkingDurationLabel", () => {
+  it("matches t3code's seconds, minutes, and hours formatting", () => {
+    expect(formatWorkingDurationLabel(0)).toBe("0s");
+    expect(formatWorkingDurationLabel(42_000)).toBe("42s");
+    expect(formatWorkingDurationLabel(5 * 60_000)).toBe("5m");
+    expect(formatWorkingDurationLabel(90 * 60_000)).toBe("1h 30m");
+  });
+
+  it("clamps negative and non-finite durations", () => {
+    expect(formatWorkingDurationLabel(-5_000)).toBe("0s");
+    expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
   });
 });
 

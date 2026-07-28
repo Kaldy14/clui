@@ -444,9 +444,77 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             updatedAt: event.payload.updatedAt,
             lastInteractedAt: event.payload.createdAt,
             archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
             deletedAt: null,
           });
           return;
+
+        case "thread.settled": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            settledOverride: "settled",
+            settledAt: event.payload.settledAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.unsettled": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            settledOverride: event.payload.reason === "user" ? "active" : null,
+            settledAt: null,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.snoozed": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            snoozedUntil: event.payload.snoozedUntil,
+            snoozedAt: event.payload.snoozedAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.unsnoozed": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            snoozedUntil: null,
+            snoozedAt: null,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
 
         case "thread.meta-updated": {
           const existingRow = yield* projectionThreadRepository.getById({

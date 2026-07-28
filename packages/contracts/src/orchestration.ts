@@ -363,6 +363,12 @@ export const OrchestrationThread = Schema.Struct({
   /** Only bumped when the user actively interacts (new turn starts). Used for sidebar sort. */
   lastInteractedAt: IsoDateTime.pipe(Schema.withDecodingDefault(() => "")),
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  snoozedUntil: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  snoozedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(Schema.withDecodingDefault(() => [])),
@@ -431,6 +437,33 @@ const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
   commandId: CommandId,
   threadId: ThreadId,
+});
+
+const ThreadSettleCommand = Schema.Struct({
+  type: Schema.Literal("thread.settle"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
+const ThreadUnsettleCommand = Schema.Struct({
+  type: Schema.Literal("thread.unsettle"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  reason: Schema.Literal("user"),
+});
+
+const ThreadSnoozeCommand = Schema.Struct({
+  type: Schema.Literal("thread.snooze"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  snoozedUntil: IsoDateTime,
+});
+
+const ThreadUnsnoozeCommand = Schema.Struct({
+  type: Schema.Literal("thread.unsnooze"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  reason: Schema.Literal("user"),
 });
 
 const ThreadMetaUpdateCommand = Schema.Struct({
@@ -554,6 +587,10 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectDeleteCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
+  ThreadSettleCommand,
+  ThreadUnsettleCommand,
+  ThreadSnoozeCommand,
+  ThreadUnsnoozeCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
@@ -573,6 +610,10 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectDeleteCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
+  ThreadSettleCommand,
+  ThreadUnsettleCommand,
+  ThreadSnoozeCommand,
+  ThreadUnsnoozeCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
@@ -699,6 +740,10 @@ export const OrchestrationEventType = Schema.Literals([
   "project.deleted",
   "thread.created",
   "thread.deleted",
+  "thread.settled",
+  "thread.unsettled",
+  "thread.snoozed",
+  "thread.unsnoozed",
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
@@ -771,6 +816,31 @@ export const ThreadCreatedPayload = Schema.Struct({
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
   deletedAt: IsoDateTime,
+});
+
+export const ThreadSettledPayload = Schema.Struct({
+  threadId: ThreadId,
+  settledAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadUnsettledPayload = Schema.Struct({
+  threadId: ThreadId,
+  reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadSnoozedPayload = Schema.Struct({
+  threadId: ThreadId,
+  snoozedUntil: IsoDateTime,
+  snoozedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadUnsnoozedPayload = Schema.Struct({
+  threadId: ThreadId,
+  reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
 });
 
 export const ThreadMetaUpdatedPayload = Schema.Struct({
@@ -958,6 +1028,26 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.deleted"),
     payload: ThreadDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.settled"),
+    payload: ThreadSettledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.unsettled"),
+    payload: ThreadUnsettledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.snoozed"),
+    payload: ThreadSnoozedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.unsnoozed"),
+    payload: ThreadUnsnoozedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

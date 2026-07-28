@@ -43,6 +43,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           updated_at,
           last_interacted_at,
           archived_at,
+          settled_override,
+          settled_at,
+          snoozed_until,
+          snoozed_at,
           deleted_at
         )
         VALUES (
@@ -68,6 +72,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.updatedAt},
           ${row.lastInteractedAt},
           ${row.archivedAt},
+          ${row.settledOverride},
+          ${row.settledAt},
+          ${row.snoozedUntil},
+          ${row.snoozedAt},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -93,6 +101,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           updated_at = excluded.updated_at,
           last_interacted_at = excluded.last_interacted_at,
           archived_at = excluded.archived_at,
+          settled_override = excluded.settled_override,
+          settled_at = excluded.settled_at,
+          snoozed_until = excluded.snoozed_until,
+          snoozed_at = excluded.snoozed_at,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -125,6 +137,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           updated_at AS "updatedAt",
           last_interacted_at AS "lastInteractedAt",
           archived_at AS "archivedAt",
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt",
+          snoozed_until AS "snoozedUntil",
+          snoozed_at AS "snoozedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -171,6 +187,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           updated_at AS "updatedAt",
           last_interacted_at AS "lastInteractedAt",
           archived_at AS "archivedAt",
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt",
+          snoozed_until AS "snoozedUntil",
+          snoozed_at AS "snoozedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

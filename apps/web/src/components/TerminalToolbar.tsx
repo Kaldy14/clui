@@ -58,6 +58,7 @@ import type { Icon } from "./Icons";
 import { CursorIcon, VisualStudioCode, Zed } from "./Icons";
 import ProjectPromptsControl, { type NewProjectPromptInput } from "./ProjectPromptsControl";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { SidebarTrigger } from "./ui/sidebar";
 import { Button } from "./ui/button";
 import { Group, GroupSeparator } from "./ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
@@ -788,6 +789,8 @@ export default function TerminalToolbar({
       <div
         className={`flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-card/60 px-2 backdrop-blur-sm dark:border-border/25 dark:bg-card/40${isElectron ? " drag-region" : ""}`}
       >
+        {!isElectron ? <SidebarTrigger className="size-6 shrink-0 md:hidden" /> : null}
+
         {/* Title */}
         <div className="flex min-w-0 flex-1">
           <EditableTitle

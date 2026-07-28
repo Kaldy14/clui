@@ -355,6 +355,10 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.titleSource !== incoming.titleSource) return true;
   if (existing.bookmarked !== incoming.bookmarked) return true;
   if (existing.archivedAt !== incoming.archivedAt) return true;
+  if (existing.settledOverride !== incoming.settledOverride) return true;
+  if (existing.settledAt !== incoming.settledAt) return true;
+  if (existing.snoozedUntil !== incoming.snoozedUntil) return true;
+  if (existing.snoozedAt !== incoming.snoozedAt) return true;
   if (existing.terminalStatus !== incoming.terminalStatus) return true;
   if (existing.hookStatus !== incoming.hookStatus) return true;
   if ((existing.activityStatus ?? null) !== (incoming.activityStatus ?? null)) return true;
@@ -434,9 +438,11 @@ function projectChanged(existing: Project, incoming: Project): boolean {
 const pendingBranchUpdates = new Map<string, number>();
 const pendingArchiveUpdates = new Map<string, number>();
 const pendingBookmarkUpdates = new Map<string, number>();
+const pendingLifecycleUpdates = new Map<string, number>();
 const BRANCH_UPDATE_GUARD_MS = 5_000;
 const ARCHIVE_UPDATE_GUARD_MS = 5_000;
 const BOOKMARK_UPDATE_GUARD_MS = 5_000;
+const LIFECYCLE_UPDATE_GUARD_MS = 5_000;
 
 export function markBranchUpdatePending(threadId: string): void {
   pendingBranchUpdates.set(threadId, Date.now());
@@ -479,6 +485,20 @@ function hasPendingBookmarkUpdate(threadId: string): boolean {
   if (ts === undefined) return false;
   if (Date.now() - ts > BOOKMARK_UPDATE_GUARD_MS) {
     pendingBookmarkUpdates.delete(threadId);
+    return false;
+  }
+  return true;
+}
+
+function markLifecycleUpdatePending(threadId: string): void {
+  pendingLifecycleUpdates.set(threadId, Date.now());
+}
+
+function hasPendingLifecycleUpdate(threadId: string): boolean {
+  const ts = pendingLifecycleUpdates.get(threadId);
+  if (ts === undefined) return false;
+  if (Date.now() - ts > LIFECYCLE_UPDATE_GUARD_MS) {
+    pendingLifecycleUpdates.delete(threadId);
     return false;
   }
   return true;
@@ -532,6 +552,17 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         pendingBookmarkUpdates.delete(thread.id);
       }
       const preserveLocalBookmark = existing != null && hasPendingBookmarkUpdate(thread.id);
+      if (
+        existing &&
+        pendingLifecycleUpdates.has(thread.id) &&
+        thread.settledOverride === existing.settledOverride &&
+        thread.settledAt === existing.settledAt &&
+        thread.snoozedUntil === existing.snoozedUntil &&
+        thread.snoozedAt === existing.snoozedAt
+      ) {
+        pendingLifecycleUpdates.delete(thread.id);
+      }
+      const preserveLocalLifecycle = existing != null && hasPendingLifecycleUpdate(thread.id);
       const hasSnapshotHookStatus = thread.hookStatus !== undefined;
       const hasSnapshotActivityStatus = thread.activityStatus !== undefined;
       const terminalStatus = hasSnapshotHookStatus
@@ -602,6 +633,10 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         branch: preserveLocalBranch ? existing.branch : thread.branch,
         worktreePath: preserveLocalBranch ? existing.worktreePath : thread.worktreePath,
         archivedAt: preserveLocalArchivedAt ? existing.archivedAt : (thread.archivedAt ?? null),
+        settledOverride: preserveLocalLifecycle ? existing.settledOverride : thread.settledOverride,
+        settledAt: preserveLocalLifecycle ? existing.settledAt : thread.settledAt,
+        snoozedUntil: preserveLocalLifecycle ? existing.snoozedUntil : thread.snoozedUntil,
+        snoozedAt: preserveLocalLifecycle ? existing.snoozedAt : thread.snoozedAt,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
           turnId: checkpoint.turnId,
           completedAt: checkpoint.completedAt,
@@ -775,6 +810,10 @@ export function addOptimisticThread(
     updatedAt: input.createdAt,
     lastInteractedAt: input.createdAt,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
     latestTurn: null,
     lastVisitedAt: input.createdAt,
     lastCompletedAt: undefined,
@@ -825,6 +864,34 @@ export function setThreadArchived(
   const threads = updateThread(state.threads, threadId, (thread) => {
     if (thread.archivedAt === archivedAt) return thread;
     return { ...thread, archivedAt };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setThreadSettled(
+  state: AppState,
+  threadId: ThreadId,
+  settledOverride: Thread["settledOverride"],
+  settledAt: string | null,
+): AppState {
+  markLifecycleUpdatePending(threadId);
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.settledOverride === settledOverride && thread.settledAt === settledAt) return thread;
+    return { ...thread, settledOverride, settledAt };
+  });
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function setThreadSnoozed(
+  state: AppState,
+  threadId: ThreadId,
+  snoozedUntil: string | null,
+  snoozedAt: string | null,
+): AppState {
+  markLifecycleUpdatePending(threadId);
+  const threads = updateThread(state.threads, threadId, (thread) => {
+    if (thread.snoozedUntil === snoozedUntil && thread.snoozedAt === snoozedAt) return thread;
+    return { ...thread, snoozedUntil, snoozedAt };
   });
   return threads === state.threads ? state : { ...state, threads };
 }
@@ -1014,6 +1081,16 @@ interface AppStore extends AppState {
   setProjectOrder: (order: string[]) => void;
   removeThread: (threadId: ThreadId) => void;
   setThreadArchived: (threadId: ThreadId, archivedAt: string | null) => void;
+  setThreadSettled: (
+    threadId: ThreadId,
+    settledOverride: Thread["settledOverride"],
+    settledAt: string | null,
+  ) => void;
+  setThreadSnoozed: (
+    threadId: ThreadId,
+    snoozedUntil: string | null,
+    snoozedAt: string | null,
+  ) => void;
   setThreadBookmarked: (threadId: ThreadId, bookmarked: boolean) => void;
   setHookStatus: (threadId: ThreadId, hookStatus: ClaudeHookStatus | null) => void;
   setActivityStatus: (threadId: ThreadId, activityStatus: AgentActivityStatus | null) => void;
@@ -1078,6 +1155,10 @@ export const useStore = create<AppStore>((set) => ({
     }),
   setThreadArchived: (threadId, archivedAt) =>
     set((state) => setThreadArchived(state, threadId, archivedAt)),
+  setThreadSettled: (threadId, settledOverride, settledAt) =>
+    set((state) => setThreadSettled(state, threadId, settledOverride, settledAt)),
+  setThreadSnoozed: (threadId, snoozedUntil, snoozedAt) =>
+    set((state) => setThreadSnoozed(state, threadId, snoozedUntil, snoozedAt)),
   setThreadBookmarked: (threadId, bookmarked) =>
     set((state) => setThreadBookmarked(state, threadId, bookmarked)),
   setHookStatus: (threadId, hookStatus) =>

@@ -1,5 +1,4 @@
 import type { OrchestrationThread, ThreadId } from "@clui/contracts";
-
 export const AUTO_ARCHIVE_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -25,12 +24,13 @@ export function shouldAutoArchiveThread(
   if (inactiveDays <= 0) return false;
   if (thread.deletedAt !== null || thread.archivedAt !== null) return false;
   if (isThreadBusy(thread)) return false;
+  if (thread.settledOverride !== "settled" || thread.settledAt === null) return false;
 
-  const updatedAt = parseIsoTime(thread.updatedAt);
-  if (updatedAt === null) return false;
+  const lastInteractedAt = parseIsoTime(thread.lastInteractedAt || thread.updatedAt);
+  if (lastInteractedAt === null) return false;
 
   const cutoff = now.getTime() - inactiveDays * MS_PER_DAY;
-  return updatedAt <= cutoff;
+  return lastInteractedAt <= cutoff;
 }
 
 export function findAutoArchivableThreads(

@@ -12,6 +12,8 @@ import {
   reorderProjects,
   setThreadArchived,
   setThreadBookmarked,
+  setThreadSettled,
+  setThreadSnoozed,
   syncServerReadModel,
   setTerminalStatus,
   setTerminalLifecycle,
@@ -42,6 +44,10 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     updatedAt: "2026-02-13T00:00:00.000Z",
     lastInteractedAt: "2026-02-13T00:00:00.000Z",
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
     latestTurn: null,
     branch: null,
     worktreePath: null,
@@ -100,6 +106,10 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     updatedAt: "2026-02-27T00:00:00.000Z",
     lastInteractedAt: "2026-02-27T00:00:00.000Z",
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
     deletedAt: null,
     messages: [],
     activities: [],
@@ -574,6 +584,41 @@ describe("bookmarked", () => {
     const threadId = initialState.threads[0]!.id;
 
     expect(setThreadBookmarked(initialState, threadId, true)).toBe(initialState);
+  });
+});
+
+describe("thread lifecycle", () => {
+  it("preserves an optimistic settle against a stale snapshot", () => {
+    const initialState = makeState(makeThread());
+    const threadId = initialState.threads[0]!.id;
+    const settledAt = "2026-04-19T10:00:00.000Z";
+    const optimisticState = setThreadSettled(initialState, threadId, "settled", settledAt);
+    const next = syncServerReadModel(
+      optimisticState,
+      makeReadModel(makeReadModelThread({ settledOverride: null, settledAt: null })),
+    );
+
+    expect(next.threads[0]?.settledOverride).toBe("settled");
+    expect(next.threads[0]?.settledAt).toBe(settledAt);
+  });
+
+  it("accepts lifecycle state once the server snapshot catches up", () => {
+    const initialState = makeState(makeThread());
+    const threadId = initialState.threads[0]!.id;
+    const snoozedAt = "2026-04-19T10:00:00.000Z";
+    const snoozedUntil = "2026-04-20T10:00:00.000Z";
+    const optimisticState = setThreadSnoozed(initialState, threadId, snoozedUntil, snoozedAt);
+    const caughtUp = syncServerReadModel(
+      optimisticState,
+      makeReadModel(makeReadModelThread({ snoozedUntil, snoozedAt })),
+    );
+    const subsequent = syncServerReadModel(
+      caughtUp,
+      makeReadModel(makeReadModelThread({ snoozedUntil: null, snoozedAt: null })),
+    );
+
+    expect(caughtUp.threads[0]?.snoozedUntil).toBe(snoozedUntil);
+    expect(subsequent.threads[0]?.snoozedUntil).toBeNull();
   });
 });
 

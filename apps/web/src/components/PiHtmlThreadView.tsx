@@ -33,7 +33,7 @@ import {
   addPiHtmlComposerInsertListener,
   dispatchPiHtmlComposerInsert,
 } from "../lib/piHtmlComposerEvents";
-import { TERMINAL_LINE_HEIGHT } from "../lib/terminalSurfaceTheme";
+import { PI_TERMINAL_LINE_HEIGHT as TERMINAL_LINE_HEIGHT } from "../lib/terminalSurfaceTheme";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";

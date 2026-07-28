@@ -1,7 +1,13 @@
+import type { CodingHarness } from "@clui/contracts";
 import type { Terminal } from "@xterm/xterm";
 import { terminalThemeFromApp } from "./terminalTheme";
 
 export const TERMINAL_LINE_HEIGHT = 1.2;
+export const PI_TERMINAL_LINE_HEIGHT = 1.1;
+
+export function terminalLineHeightForHarness(harness: CodingHarness): number {
+  return harness === "pi" ? PI_TERMINAL_LINE_HEIGHT : TERMINAL_LINE_HEIGHT;
+}
 
 /**
  * Keep the host DOM surface in sync with the terminal theme.

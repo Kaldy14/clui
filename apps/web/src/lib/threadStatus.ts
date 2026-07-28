@@ -33,6 +33,17 @@ export interface PrStatusIndicator {
 
 export type ThreadPr = GitStatusResult["pr"];
 
+export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]): string {
+  switch (state) {
+    case "open":
+      return "group-hover/v2-row:text-emerald-600 dark:group-hover/v2-row:text-emerald-300/90";
+    case "merged":
+      return "group-hover/v2-row:text-violet-600 dark:group-hover/v2-row:text-violet-300/90";
+    case "closed":
+      return "group-hover/v2-row:text-red-600 dark:group-hover/v2-row:text-red-300/90";
+  }
+}
+
 export function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const minutes = Math.floor(diff / 60_000);
@@ -226,15 +237,15 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
     return {
       label: "PR open",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} PR open: ${pr.title}`,
+      tooltip: `PR #${pr.number} - Open: ${pr.title}`,
       url: pr.url,
     };
   }
   if (pr.state === "closed") {
     return {
       label: "PR closed",
-      colorClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} PR closed: ${pr.title}`,
+      colorClass: "text-red-600 dark:text-red-300/90",
+      tooltip: `PR #${pr.number} - Closed: ${pr.title}`,
       url: pr.url,
     };
   }
@@ -242,7 +253,7 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
     return {
       label: "PR merged",
       colorClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} PR merged: ${pr.title}`,
+      tooltip: `PR #${pr.number} - Merged: ${pr.title}`,
       url: pr.url,
     };
   }

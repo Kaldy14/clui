@@ -374,6 +374,7 @@ describe("createSessionEventState", () => {
       expect(state._terminalStartedAt.size).toBe(0);
       expect(state._workingIdleTimers.size).toBe(0);
       expect(state._workingIdleLastReset.size).toBe(0);
+      expect(state._workingStartedAt.size).toBe(0);
     });
   });
 
@@ -569,6 +570,26 @@ describe("createSessionEventState", () => {
   });
 
   describe("handleTurnStart", () => {
+    it("keeps a stable working start while the turn is active", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      const startedAt = Date.now();
+
+      state.handleTurnStart("t1");
+      vi.advanceTimersByTime(5_000);
+
+      expect(state.getWorkingStartedAt("t1")).toBe(startedAt);
+    });
+
+    it("clears the working start when the turn completes", () => {
+      ctx.terminalStatusByThread.set("t1", "active");
+      state.handleTurnStart("t1");
+      expect(state.getWorkingStartedAt("t1")).not.toBeNull();
+
+      state.handleHookStatus("t1", "completed");
+
+      expect(state.getWorkingStartedAt("t1")).toBeNull();
+    });
+
     it("bypasses post-completion stale window", () => {
       ctx.terminalStatusByThread.set("t1", "active");
       // Complete the thread

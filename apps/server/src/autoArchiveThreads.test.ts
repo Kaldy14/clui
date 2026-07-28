@@ -40,8 +40,12 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
     latestTurn: null,
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: OLD,
-    lastInteractedAt: "2026-04-01T00:00:00.000Z",
+    lastInteractedAt: overrides.lastInteractedAt ?? overrides.updatedAt ?? OLD,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
     deletedAt: null,
     messages: [],
     proposedPlans: [],
@@ -53,11 +57,20 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
 }
 
 describe("auto archive thread selection", () => {
-  it("selects inactive unarchived threads whose updatedAt is past the day threshold", () => {
-    const oldThread = makeThread({ id: ThreadId.makeUnsafe("old-thread"), updatedAt: OLD });
+  it("selects settled inactive threads whose last interaction is past the day threshold", () => {
+    const oldThread = makeThread({
+      id: ThreadId.makeUnsafe("old-thread"),
+      updatedAt: OLD,
+      lastInteractedAt: OLD,
+      settledOverride: "settled",
+      settledAt: OLD,
+    });
     const recentThread = makeThread({
       id: ThreadId.makeUnsafe("recent-thread"),
       updatedAt: RECENT,
+      lastInteractedAt: RECENT,
+      settledOverride: "settled",
+      settledAt: OLD,
     });
 
     expect(findAutoArchivableThreads([oldThread, recentThread], 14, NOW)).toEqual([oldThread.id]);
@@ -100,5 +113,25 @@ describe("auto archive thread selection", () => {
 
   it("treats zero days as disabled", () => {
     expect(shouldAutoArchiveThread(makeThread(), 0, NOW)).toBe(false);
+  });
+
+  it("keeps explicitly active threads out of later cleanup", () => {
+    expect(
+      shouldAutoArchiveThread(
+        makeThread({ settledOverride: "active", lastInteractedAt: OLD }),
+        14,
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not archive derived auto-settled threads before settlement is persisted", () => {
+    expect(
+      shouldAutoArchiveThread(
+        makeThread({ settledOverride: null, settledAt: null, lastInteractedAt: OLD }),
+        14,
+        NOW,
+      ),
+    ).toBe(false);
   });
 });

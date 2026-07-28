@@ -1,7 +1,7 @@
 import type { GitBranch } from "@clui/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import {
   type CSSProperties,
   useCallback,
@@ -437,12 +437,13 @@ export function BranchToolbarBranchSelector({
       value={resolvedActiveBranch}
     >
       <ComboboxTrigger
-        render={<Button variant="outline" size="xs" />}
-        className="border-border/50 bg-muted/40 text-foreground/80 shadow-none hover:bg-muted hover:text-foreground dark:border-border/30 dark:bg-muted/20 dark:hover:bg-muted/40"
+        render={<Button variant="ghost" size="xs" />}
+        className="min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80"
         disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
       >
-        <span className="max-w-[140px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon />
+        <GitBranchIcon className="size-3 shrink-0 opacity-70" />
+        <span className="min-w-0 max-w-60 truncate">{triggerLabel}</span>
+        <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </ComboboxTrigger>
       <ComboboxPopup align="end" side="top" className="w-80">
         <div className="border-b p-1">

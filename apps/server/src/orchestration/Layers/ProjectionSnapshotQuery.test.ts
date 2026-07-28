@@ -268,6 +268,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           updatedAt: "2026-02-24T00:00:03.000Z",
           lastInteractedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
           deletedAt: null,
           messages: [
             {

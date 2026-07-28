@@ -40,6 +40,13 @@ type ThreadStatusInput = Pick<
   | "activityStatus"
 >;
 
+export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "ready";
+
+type SidebarV2StatusInput = Pick<
+  Thread,
+  "activityStatus" | "hookStatus" | "session" | "terminalStatus"
+>;
+
 type HarnessSessionStatsThread = Pick<Thread, "harness" | "terminalStatus">;
 
 export interface ActiveHarnessSessionStats {
@@ -90,7 +97,11 @@ export async function createThreadAndNavigate(input: {
   api: {
     orchestration: Pick<NativeApi["orchestration"], "dispatchCommand">;
   };
-  navigate: (input: { to: "/$threadId"; params: { threadId: ThreadId } }) => Promise<unknown>;
+  navigate: (input: {
+    to: "/$threadId";
+    params: { threadId: ThreadId };
+    replace?: boolean;
+  }) => Promise<unknown>;
   addOptimisticThread: (input: {
     id: ThreadId;
     projectId: ProjectId;
@@ -111,6 +122,7 @@ export async function createThreadAndNavigate(input: {
   createdAt: string;
   branch?: string | null;
   worktreePath?: string | null;
+  replace?: boolean;
 }): Promise<ThreadId> {
   const branch = input.branch ?? null;
   const worktreePath = input.worktreePath ?? null;
@@ -150,6 +162,7 @@ export async function createThreadAndNavigate(input: {
   await input.navigate({
     to: "/$threadId",
     params: { threadId: input.threadId },
+    ...(input.replace === undefined ? {} : { replace: input.replace }),
   });
 
   return input.threadId;
@@ -164,6 +177,75 @@ export function hasUnseenCompletion(
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
+}
+
+/**
+ * Maps Clui's terminal-backed lifecycle into t3code's Sidebar v2 status model.
+ * Activity details such as "Thinking" and "Using Tool" intentionally remain
+ * inside the thread view; the sidebar exposes only the stable high-level state.
+ */
+export function resolveSidebarV2Status(input: {
+  thread: SidebarV2StatusInput;
+  hasPendingApprovals: boolean;
+  hasPendingUserInput: boolean;
+}): SidebarV2Status {
+  const { hasPendingApprovals, hasPendingUserInput, thread } = input;
+  const terminalIsActive = thread.terminalStatus === "active";
+
+  if (thread.hookStatus === "pendingApproval" || (!terminalIsActive && hasPendingApprovals)) {
+    return "approval";
+  }
+  if (thread.hookStatus === "needsInput" || (!terminalIsActive && hasPendingUserInput)) {
+    return "input";
+  }
+  if (thread.hookStatus === "error" || thread.session?.status === "error") {
+    return "failed";
+  }
+  if (
+    thread.hookStatus === "working" ||
+    thread.session?.status === "running" ||
+    thread.session?.status === "connecting"
+  ) {
+    return "working";
+  }
+  return "ready";
+}
+
+function firstValidTimestamp(
+  ...candidates: ReadonlyArray<string | null | undefined>
+): string | null {
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    if (!Number.isNaN(Date.parse(candidate))) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Uses t3code's active-turn/session timing anchors. `lastInteractedAt` is the
+ * terminal-harness fallback because Clui keeps one PTY session across turns.
+ */
+export function resolveWorkingStartedAt(
+  thread: Pick<Thread, "lastInteractedAt" | "latestTurn" | "session">,
+): string | null {
+  const turn = thread.latestTurn;
+  if (turn && turn.completedAt === null) {
+    return firstValidTimestamp(
+      turn.startedAt,
+      turn.requestedAt,
+      thread.lastInteractedAt,
+      thread.session?.updatedAt,
+    );
+  }
+  return firstValidTimestamp(thread.lastInteractedAt, thread.session?.updatedAt);
+}
+
+export function formatWorkingDurationLabel(elapsedMs: number): string {
+  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function resolveThreadStatusPill(input: {

@@ -4,6 +4,182 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-28 — Match t3code's complete new-thread composition
+
+**Problem:** Clui's new-thread project picker matched t3code, but the surrounding page still used
+Clui's legacy stacked setup layout instead of t3code's compact centered composer and joined checkout
+strip.
+
+**Root cause:** `NewThreadView` treated prompt, harness settings, environment, and launch as separate
+panels. The t3code layout keeps those controls inside one 22px composer surface with a narrower
+attached branch context.
+
+**Fix:** Cross-checked the current local t3code source and ported its complete hero composition:
+`max-w-3xl` glass shell, centered editable project headline, 70px prompt editor, inline harness
+controls, circular Start action, and 724×48px checkout/branch strip. Reused Clui's existing harness,
+Pi render mode, Fast, Claude backend/model, YOLO, Local/Worktree, branch, PR, draft, image-paste, and
+session-start behavior. Added shared typed menu/toggle controls, harness icons, responsive horizontal
+overflow, and the t3code glass fallback. Verified the result against an isolated temporary Clui
+instance without restarting or replacing the installed app.
+
+**Affected files:**
+
+- `.agents/plans/sidebar-v2-parity.md`
+- `apps/web/src/components/BranchToolbarBranchSelector.tsx`
+- `apps/web/src/components/NewThreadComposerControls.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/index.css`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-28 — Match t3code working status and new-thread project picker
+
+**Problem:** Sidebar v2 exposed terminal implementation labels such as `Thinking` without showing
+how long work had been active, and Clui's new-thread screen locked the draft to the project chosen
+before navigation with no in-composer project picker.
+
+**Root cause:** The new sidebar reused Clui's legacy status-pill resolver instead of t3code's
+Sidebar v2 state model and had no stable per-turn timer anchor. New threads are persisted
+immediately in Clui, while t3code's hero picker switches between project-scoped composer drafts.
+
+**Fix:** Ported t3code's `Working <elapsed>` status taxonomy, one-second timer, accessibility
+behavior, and reduced-motion animation, backed by a stable terminal-turn start timestamp. Added
+t3code's dotted `What should we build in <project>?` radio picker to Clui's new-thread hero,
+promoted the active project in the menu, reused each project's newest unstarted thread, replaced
+browser history when switching, restored project-specific prompt drafts, and connected `New
+project` to Clui's existing folder/path flow. Extracted thread creation into a shared hook and made
+the setup controls wrap cleanly on narrow screens.
+
+**Affected files:**
+
+- `.agents/plans/sidebar-v2-parity.md`
+- `apps/web/src/components/NewThreadProjectPicker.tsx`
+- `apps/web/src/components/NewThreadView.logic.ts`
+- `apps/web/src/components/NewThreadView.logic.test.ts`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/hooks/useNewThreadHandler.ts`
+- `apps/web/src/index.css`
+- `apps/web/src/lib/projectAddRequest.ts`
+- `apps/web/src/lib/sessionEventState.ts`
+- `apps/web/src/lib/sessionEventState.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
+## 2026-07-28 — Tighten Pi terminal rows and compact tool output
+
+**Problem:** Pi terminal rows were more widely spaced than desired, and successful bash tool calls
+showed multi-line output previews that made routine tool activity visually noisy.
+
+**Root cause:** Pi used the shared `1.2` terminal line-height, while the installed `pi-tool-display`
+extension retained its `opencode` bash mode with a ten-line collapsed preview.
+
+**Fix:** Added a Pi-specific `1.1` line-height for both native xterm and HTML Pi views while keeping
+other harness terminals unchanged. Configured `pi-tool-display` to hide read/search/MCP results and
+show only a compact bash result summary unless tool output is explicitly expanded.
+
+**Affected files:**
+
+- `apps/web/src/lib/terminalSurfaceTheme.ts`
+- `apps/web/src/lib/terminalSurfaceTheme.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/PiHtmlThreadView.tsx`
+- `docs/CHANGELOG-DEV.md`
+- `~/.pi/agent/extensions/pi-tool-display/config.json`
+
+---
+
+## 2026-07-28 — Rebuild and replace the local macOS app
+
+**Problem:** The installed `/Applications/Clui (Alpha).app` was still version `0.0.28` and did not
+contain the Sidebar v2 work from the current workspace.
+
+**Root cause:** The current `0.0.30` workspace had not yet been packaged and copied over the older
+local application bundle.
+
+**Fix:** Built the unsigned arm64 DMG and ZIP through the desktop packaging task, moved the old app
+bundle to Trash as a recoverable backup, installed the new bundle, launched it, and verified its
+version, architecture, database migrations, authenticated orchestration snapshot, and rendered UI.
+Rebuilt and replaced it again after the working-duration and project-picker parity follow-ups, then
+verified the installed picker against the persisted local project list.
+
+**Affected files and artifacts:**
+
+- `docs/CHANGELOG-DEV.md`
+- `release/Clui-0.0.30-arm64.dmg`
+- `release/Clui-0.0.30-arm64.zip`
+- `/Applications/Clui (Alpha).app`
+- `~/.Trash/Clui (Alpha).app-pre-v0.0.30-20260728-155308`
+- `~/.Trash/Clui (Alpha).app-pre-t3-parity-20260728-1718`
+
+---
+
+## 2026-07-28 — Port t3code Sidebar v2 lifecycle and visual hierarchy
+
+**Problem:** Clui's sidebar still grouped threads by project and treated archive as the only way to
+clear inactive work. It lacked t3code Sidebar v2's flat inbox, compact history, snooze/wake
+lifecycle, harness identity, pull-request state, and dedicated light/dark sidebar surfaces.
+
+**Root cause:** Clui retained the original project-accordion UI and only persisted archive
+metadata. There were no settlement or snooze commands, projection fields, migrations, shared
+eligibility rules, or optimistic store reconciliation for a softer inbox lifecycle.
+
+**Fix:** Cross-checked the current local t3code implementation and ported its Sidebar v2 structure,
+surface tokens, harness icons, project filter, row actions, snoozed/settled shelves, timed wake and
+Woke indicator, configurable three-day auto-settle default, and pull-request colors and
+auto-settlement. Added persisted settle/snooze commands and events with server-side busy/input
+guards, projection migrations, optimistic stale-snapshot protection, and focused lifecycle tests.
+Archive remains a distinct cleanup action and automatic archive now only removes explicitly
+settled threads after its own retention window. Added a reachable mobile sidebar trigger to active
+thread pages.
+
+**Affected files:**
+
+- `.agents/plans/sidebar-v2-parity.md`
+- `packages/contracts/src/orchestration.ts`
+- `packages/shared/package.json`
+- `packages/shared/src/threadLifecycle.ts`
+- `packages/shared/src/threadLifecycle.test.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations/031_ProjectionThreadsSettled.ts`
+- `apps/server/src/persistence/Migrations/032_ProjectionThreadsSnoozed.ts`
+- `apps/server/src/persistence/Services/ProjectionThreads.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/decider.lifecycle.test.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/projector.test.ts`
+- `apps/server/src/orchestration/Schemas.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`
+- `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
+- `apps/server/src/orchestration/commandInvariants.test.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
+- `apps/server/src/autoArchiveThreads.ts`
+- `apps/server/src/autoArchiveThreads.test.ts`
+- `apps/web/src/appSettings.ts`
+- `apps/web/src/components/HarnessIcon.tsx`
+- `apps/web/src/components/Sidebar.snooze.ts`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/TerminalToolbar.tsx`
+- `apps/web/src/components/ThreadSearchDialog.logic.test.ts`
+- `apps/web/src/index.css`
+- `apps/web/src/lib/threadLifecycle.ts`
+- `apps/web/src/lib/threadStatus.ts`
+- `apps/web/src/lib/threadStatus.test.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `apps/web/src/store.ts`
+- `apps/web/src/store.test.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/worktreeCleanup.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-22 — Add `codexCli` as a new thread harness option
 
 **Problem:** Clui only exposed Claude Code and pi as thread harness choices, but there was no way to create a thread that explicitly targeted codex-cli through the same terminal UI flow.

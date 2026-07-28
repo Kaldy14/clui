@@ -36,6 +36,8 @@ export interface SessionEventState {
   handleStarted(rawThreadId: string): void;
   handleDormant(rawThreadId: string, reason: "hibernated" | "exited"): void;
   handleInterrupted(rawThreadId: string): void;
+  /** Stable start of the current terminal-backed turn, used by Sidebar v2's elapsed timer. */
+  getWorkingStartedAt(rawThreadId: string): number | null;
   /** Clear all internal tracking state for a single thread (does NOT touch the store). */
   clearThread(rawThreadId: string): void;
   clearAll(): void;
@@ -47,6 +49,8 @@ export interface SessionEventState {
   _workingIdleTimers: Map<string, ReturnType<typeof setTimeout>>;
   /** Exposed for testing */
   _workingIdleLastReset: Map<string, number>;
+  /** Exposed for testing */
+  _workingStartedAt: Map<string, number>;
   /** Exposed for testing */
   _turnInProgress: Map<string, boolean>;
   /** Exposed for testing */
@@ -87,6 +91,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   const terminalStartedAt = new Map<string, number>();
   const workingIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const workingIdleLastReset = new Map<string, number>();
+  const workingStartedAt = new Map<string, number>();
   // Tracks whether a turn is in progress per thread.  Set to true when a real
   // hook fires (UserPromptSubmit / PostToolUse → "working"), set to false when
   // the turn ends (Stop → "completed", interrupt, or terminal exit).
@@ -146,6 +151,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
             completedAt.set(rawThreadId, now());
             pendingApprovalAt.delete(rawThreadId);
             turnConfirmed.delete(rawThreadId);
+            workingStartedAt.delete(rawThreadId);
           }
           deps.setHookStatus(rawThreadId, null);
         }
@@ -172,6 +178,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       turnInProgress.delete(rawThreadId);
       pendingApprovalAt.delete(rawThreadId);
       turnConfirmed.delete(rawThreadId);
+      workingStartedAt.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, "completed");
       return { applied: true, hookStatus: "completed" };
@@ -213,6 +220,9 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       terminalStartedAt.delete(rawThreadId);
       pendingApprovalAt.delete(rawThreadId);
       turnInProgress.set(rawThreadId, true);
+      if (!workingStartedAt.has(rawThreadId)) {
+        workingStartedAt.set(rawThreadId, now());
+      }
       if (!isPostCompletionRecovery) {
         // Normal PostToolUse during an active turn — confirm so the idle
         // timer re-arms indefinitely (a Stop hook will eventually fire).
@@ -237,8 +247,12 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     clearWorkingIdleTimer(rawThreadId);
     if (hookStatus === "pendingApproval" || hookStatus === "needsInput") {
       pendingApprovalAt.set(rawThreadId, now());
+      if (!workingStartedAt.has(rawThreadId)) {
+        workingStartedAt.set(rawThreadId, now());
+      }
     } else {
       pendingApprovalAt.delete(rawThreadId);
+      workingStartedAt.delete(rawThreadId);
     }
     deps.setHookStatus(rawThreadId, hookStatus);
     return { applied: true, hookStatus };
@@ -251,6 +265,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     pendingApprovalAt.delete(rawThreadId);
     turnInProgress.set(rawThreadId, true);
     turnConfirmed.delete(rawThreadId);
+    workingStartedAt.set(rawThreadId, now());
     clearWorkingIdleTimer(rawThreadId);
     deps.setHookStatus(rawThreadId, "working");
     resetWorkingIdleTimer(rawThreadId, true);
@@ -281,6 +296,9 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       const startTs = terminalStartedAt.get(rawThreadId);
       const inStartupGrace = startTs != null && now() - startTs < STARTUP_GRACE_MS;
       if (!inStartupGrace && (!doneTs || now() - doneTs >= COMPLETED_GRACE_MS)) {
+        if (!workingStartedAt.has(rawThreadId)) {
+          workingStartedAt.set(rawThreadId, now());
+        }
         deps.setHookStatus(rawThreadId, "working");
         resetWorkingIdleTimer(rawThreadId, true);
       }
@@ -302,6 +320,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
         turnInProgress.delete(rawThreadId);
         pendingApprovalAt.delete(rawThreadId);
         turnConfirmed.delete(rawThreadId);
+        workingStartedAt.delete(rawThreadId);
         prevOutputTail.delete(rawThreadId);
         clearWorkingIdleTimer(rawThreadId);
         deps.setHookStatus(rawThreadId, null);
@@ -314,6 +333,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
       completedAt.set(rawThreadId, now());
       turnInProgress.delete(rawThreadId);
       turnConfirmed.delete(rawThreadId);
+      workingStartedAt.delete(rawThreadId);
       prevOutputTail.delete(rawThreadId);
       clearWorkingIdleTimer(rawThreadId);
       deps.setHookStatus(rawThreadId, "error");
@@ -326,6 +346,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
   function handleStarted(rawThreadId: string): void {
     terminalStartedAt.set(rawThreadId, now());
     completedAt.delete(rawThreadId);
+    workingStartedAt.delete(rawThreadId);
     deps.setTerminalStatus(rawThreadId, "active");
   }
 
@@ -337,6 +358,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
+    workingStartedAt.delete(rawThreadId);
     deps.setTerminalLifecycle(rawThreadId, "dormant", null, reason);
   }
 
@@ -347,7 +369,12 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     turnConfirmed.delete(rawThreadId);
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
+    workingStartedAt.delete(rawThreadId);
     deps.setHookStatus(rawThreadId, null);
+  }
+
+  function getWorkingStartedAt(rawThreadId: string): number | null {
+    return workingStartedAt.get(rawThreadId) ?? null;
   }
 
   function clearThread(rawThreadId: string): void {
@@ -358,6 +385,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     prevOutputTail.delete(rawThreadId);
     clearWorkingIdleTimer(rawThreadId);
     terminalStartedAt.delete(rawThreadId);
+    workingStartedAt.delete(rawThreadId);
   }
 
   function clearAll(): void {
@@ -370,6 +398,7 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     workingIdleTimers.clear();
     workingIdleLastReset.clear();
     terminalStartedAt.clear();
+    workingStartedAt.clear();
   }
 
   return {
@@ -379,12 +408,14 @@ export function createSessionEventState(deps: SessionEventDeps): SessionEventSta
     handleStarted,
     handleDormant,
     handleInterrupted,
+    getWorkingStartedAt,
     clearThread,
     clearAll,
     _completedAt: completedAt,
     _terminalStartedAt: terminalStartedAt,
     _workingIdleTimers: workingIdleTimers,
     _workingIdleLastReset: workingIdleLastReset,
+    _workingStartedAt: workingStartedAt,
     _turnInProgress: turnInProgress,
     _pendingApprovalAt: pendingApprovalAt,
     _turnConfirmed: turnConfirmed,

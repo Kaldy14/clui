@@ -2,6 +2,11 @@ import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
 import { DEFAULT_CODING_HARNESS, type CodingHarness, type ProviderKind } from "@clui/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@clui/shared/model";
+import {
+  DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+  MAX_AUTO_SETTLE_AFTER_DAYS,
+  MIN_AUTO_SETTLE_AFTER_DAYS,
+} from "@clui/shared/threadLifecycle";
 
 const APP_SETTINGS_STORAGE_KEY = "clui:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -53,6 +58,14 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_COLOR_THEME as string)),
   ),
   stickyPiInputMirror: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  sidebarAutoSettleAfterDays: Schema.NullOr(
+    Schema.Int.check(
+      Schema.isBetween({
+        minimum: MIN_AUTO_SETTLE_AFTER_DAYS,
+        maximum: MAX_AUTO_SETTLE_AFTER_DAYS,
+      }),
+    ),
+  ).pipe(Schema.withConstructorDefault(() => Option.some(DEFAULT_AUTO_SETTLE_AFTER_DAYS))),
   whisperModel: Schema.String.check(Schema.isMaxLength(64)).pipe(
     Schema.withConstructorDefault(() => Option.some("small")),
   ),

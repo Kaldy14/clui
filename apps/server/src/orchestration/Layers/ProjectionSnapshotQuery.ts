@@ -191,6 +191,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt",
           last_interacted_at AS "lastInteractedAt",
           archived_at AS "archivedAt",
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt",
+          snoozed_until AS "snoozedUntil",
+          snoozed_at AS "snoozedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -592,6 +596,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             updatedAt: row.updatedAt,
             lastInteractedAt: row.lastInteractedAt ?? row.updatedAt,
             archivedAt: row.archivedAt,
+            settledOverride: row.settledOverride,
+            settledAt: row.settledAt,
+            snoozedUntil: row.snoozedUntil,
+            snoozedAt: row.snoozedAt,
             deletedAt: row.deletedAt,
             messages: messagesByThread.get(row.threadId) ?? [],
             proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
