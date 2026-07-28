@@ -81,7 +81,7 @@ describe("harness output subscriptions", () => {
     });
   });
 
-  it("does not resolve ready while hidden because hidden subscriptions are empty", async () => {
+  it("keeps the active terminal subscribed while the document is hidden", async () => {
     const documentStub = installDocumentStub("hidden");
     const { registerHarnessOutputSubscription } = await import("./harnessOutputSubscriptions");
     const api = {
@@ -95,22 +95,20 @@ describe("harness output subscriptions", () => {
     void registration.ready.then(() => {
       ready = true;
     });
-    await Promise.resolve();
-
-    expect(ready).toBe(false);
-    expect(api.server.setHarnessOutputSubscriptions).not.toHaveBeenCalledWith({
-      claudeThreadIds: [],
-      piThreadIds: ["thread-1"],
-    });
-
-    documentStub.setVisibilityState("visible");
     await registration.ready;
+    await Promise.resolve();
 
     expect(ready).toBe(true);
     expect(api.server.setHarnessOutputSubscriptions).toHaveBeenLastCalledWith({
       claudeThreadIds: [],
       piThreadIds: ["thread-1"],
     });
+
+    documentStub.setVisibilityState("visible");
+    await Promise.resolve();
+
+    expect(ready).toBe(true);
+    expect(api.server.setHarnessOutputSubscriptions).toHaveBeenCalledTimes(1);
 
     registration.unsubscribe();
   });

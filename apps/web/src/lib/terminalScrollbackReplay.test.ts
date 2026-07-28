@@ -74,4 +74,24 @@ describe("resolveScrollbackReplay", () => {
       }),
     ).toEqual({ scrollback: "def", nextLastServerOffset: 6 });
   });
+
+  it("keeps only live output after an inactive-thread catch-up snapshot", () => {
+    const catchUp = resolveScrollbackReplay({
+      scrollback: "away",
+      resultOffset: 8,
+      reset: false,
+      sinceOffset: 4,
+      lastServerOffset: 4,
+    });
+    const bufferedLive = resolveScrollbackReplay({
+      scrollback: "awaylive",
+      resultOffset: 12,
+      reset: false,
+      sinceOffset: 4,
+      lastServerOffset: catchUp.nextLastServerOffset,
+    });
+
+    expect(catchUp).toEqual({ scrollback: "away", nextLastServerOffset: 8 });
+    expect(bufferedLive).toEqual({ scrollback: "live", nextLastServerOffset: 12 });
+  });
 });

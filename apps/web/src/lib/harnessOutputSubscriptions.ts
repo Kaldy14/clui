@@ -12,10 +12,7 @@ let initialized = false;
 let syncQueued = false;
 let lastSentSignature: string | null = null;
 
-function payloadForVisibility() {
-  if (document.visibilityState !== "visible") {
-    return { claudeThreadIds: [], piThreadIds: [] };
-  }
+function subscriptionPayload() {
   return {
     claudeThreadIds: [...claudeThreadIds].map((threadId) => ThreadId.makeUnsafe(threadId)),
     piThreadIds: [...piThreadIds].map((threadId) => ThreadId.makeUnsafe(threadId)),
@@ -30,7 +27,7 @@ function syncNow(): Promise<void> {
   syncQueued = false;
   if (!apiRef) return Promise.resolve();
 
-  const payload = payloadForVisibility();
+  const payload = subscriptionPayload();
   const signature = payloadSignature(payload);
   if (signature === lastSentSignature) return Promise.resolve();
   lastSentSignature = signature;
@@ -52,19 +49,6 @@ function syncNowWithRetry(attemptsRemaining = 2): Promise<void> {
   });
 }
 
-function syncWhenVisible(): Promise<void> {
-  if (document.visibilityState === "visible") return syncNowWithRetry();
-
-  return new Promise<void>((resolve, reject) => {
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      syncNowWithRetry().then(resolve, reject);
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-  });
-}
-
 function scheduleSync(): void {
   if (syncQueued) return;
   syncQueued = true;
@@ -76,11 +60,6 @@ function scheduleSync(): void {
 function ensureInitialized(): void {
   if (initialized) return;
   initialized = true;
-
-  document.addEventListener("visibilitychange", () => {
-    lastSentSignature = null;
-    scheduleSync();
-  });
 
   onServerWelcome(() => {
     lastSentSignature = null;
@@ -110,7 +89,7 @@ export function registerHarnessOutputSubscription(
   // bytes, and those bytes can still be filtered because the subscription has
   // not reached the server yet. A later PTY resize then makes the missing TUI
   // frame appear, which looks like a render bug.
-  const ready = syncWhenVisible();
+  const ready = syncNowWithRetry();
 
   return {
     ready,

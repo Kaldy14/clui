@@ -4,6 +4,34 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-07-28 — Preserve terminal output while the app or thread is inactive
+
+**Problem:** Returning to a working terminal after switching threads or putting Clui in the
+background could show only a partial current repaint. Output produced while inactive, including the
+current line, was missing from the cached terminal history.
+
+**Root cause:** The active-terminal repaint optimization removed offset-based scrollback catch-up
+on reattach, while harness subscriptions were explicitly cleared whenever the document became
+hidden. The server continued retaining PTY output, but the client neither streamed those bytes in
+the background nor requested the missing offset range when the terminal remounted.
+
+**Fix:** Keep the selected terminal subscribed while Clui is hidden and parse background output
+into the cached xterm on a throttled timer. On thread reattach, wait for the subscription
+acknowledgement, fetch only the server delta after the cache's last committed offset, de-duplicate
+live bytes received during that request, then request the existing authoritative PTY repaint.
+Server-reset responses still rebuild the local terminal, while normal reattach preserves complete
+history without replaying already-rendered output.
+
+**Affected files:**
+
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/harnessOutputSubscriptions.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
+- `apps/web/src/lib/terminalScrollbackReplay.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-28 — Match t3code's complete new-thread composition
 
 **Problem:** Clui's new-thread project picker matched t3code, but the surrounding page still used

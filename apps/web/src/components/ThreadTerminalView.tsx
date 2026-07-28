@@ -47,12 +47,16 @@ import {
   stripMarkdownCodeFences,
 } from "../lib/terminalOutputMarkdown";
 import { requestTerminalRepaint } from "../lib/terminalPtyRepaint";
+import { resolveScrollbackReplay } from "../lib/terminalScrollbackReplay";
 import { PI_TERMINAL_LINE_HEIGHT, terminalLineHeightForHarness } from "../lib/terminalSurfaceTheme";
 import { terminalThemeFromApp } from "../lib/terminalTheme";
 import { THREAD_SELECTED_EVENT, isThreadSelectedEventFor } from "../lib/threadSelectionEvent";
 import { createTerminalWriteQueue } from "../lib/terminalWriteQueue";
 import { shouldConvertWheelToArrowKeys } from "../lib/terminalWheelRouting";
-import { restoreTerminalInputModesForHarness } from "../lib/terminalReplay";
+import {
+  restoreTerminalInputModesForHarness,
+  writeTerminalFullResetForReplay,
+} from "../lib/terminalReplay";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import { submitThreadPrompt } from "../lib/threadInput";
 import { setupProjectScript } from "../projectScripts";
@@ -1245,19 +1249,24 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
 
     let disposed = false;
 
-    // ── Gate: buffer ALL writes until fit(), subscription ack, and PTY repaint ──
-    // Active attach no longer replays the full scrollback history (that caused
-    // severe lag on long sessions). Instead it resets the local xterm, forces
-    // the harness TUI to repaint via a real SIGWINCH, and then releases only
-    // the buffered + live output. This is fast and produces a correct current
-    // screen because the PTY itself sends the authoritative frame.
+    // ── Gate: buffer ALL writes until fit(), catch-up, and PTY repaint ──
+    // The subscription is acknowledged before requesting the missing offset
+    // range, so live output cannot fall into the gap between those operations.
+    // A repaint still follows catch-up to make the current TUI frame authoritative.
     const eventBuffer: HarnessSessionEvent[] = [];
     let preReadyOutputData = "";
     let preReadyOutputMaxOffset: number | null = null;
     let preReadyOutputCompacted = false;
     let terminalReady = false;
     let fitComplete = false;
-    let subscriptionAcked = false;
+    let catchUpReady = false;
+    let pendingCatchUp: {
+      scrollback: string | null;
+      offset: number;
+      reset: boolean;
+      sinceOffset: number;
+    } | null = null;
+    let gateSyncedOffset: number | null = null;
     let gateOpened = false;
     const REPAINT_SETTLE_MS = 120;
     const MAX_REPAINT_GATE_RETRIES = 12;
@@ -1483,6 +1492,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     let queuedOutputMaxOffset: number | null = null;
     let queuedOutputCompacted = false;
     let outputWriteRafId: number | null = null;
+    let outputWriteTimeoutId: number | null = null;
 
     const recordOutputOffset = (offset: number | null) => {
       if (offset != null && (repaintOffsetBaselineInvalid || offset > entry.lastServerOffset)) {
@@ -1495,6 +1505,10 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       if (outputWriteRafId !== null) {
         cancelAnimationFrame(outputWriteRafId);
         outputWriteRafId = null;
+      }
+      if (outputWriteTimeoutId !== null) {
+        window.clearTimeout(outputWriteTimeoutId);
+        outputWriteTimeoutId = null;
       }
       if (!queuedOutputData || disposed) return;
 
@@ -1509,17 +1523,26 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         scheduleInitialTerminalVisualSettle(wasCompacted);
         scheduleTerminalPaintRefresh();
         if (wasCompacted) scheduleCatchUpRedraw();
+        recordOutputOffset(offset);
       });
-      recordOutputOffset(offset);
     };
 
     const scheduleOutputWriteFlush = () => {
-      if (document.visibilityState !== "visible") return;
-      if (outputWriteRafId !== null) return;
-      outputWriteRafId = requestAnimationFrame(() => {
-        outputWriteRafId = null;
+      if (outputWriteRafId !== null || outputWriteTimeoutId !== null) return;
+      if (document.visibilityState === "visible") {
+        outputWriteRafId = requestAnimationFrame(() => {
+          outputWriteRafId = null;
+          flushQueuedOutputWrite();
+        });
+        return;
+      }
+      // Background tabs pause requestAnimationFrame. Keep parsing subscribed
+      // output into the cached xterm at a low cadence so history and offsets
+      // remain complete while the app is out of focus.
+      outputWriteTimeoutId = window.setTimeout(() => {
+        outputWriteTimeoutId = null;
         flushQueuedOutputWrite();
-      });
+      }, 100);
     };
 
     const enqueueOutputWrite = (data: string, offset: number) => {
@@ -1561,10 +1584,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         eventBuffer.push(event);
         return;
       }
-      const next = appendCompactedTerminalOutput(
-        preReadyOutputData,
-        fenceFilterRef.current.process(event.data),
-      );
+      const next = appendCompactedTerminalOutput(preReadyOutputData, event.data);
       preReadyOutputData = next.data;
       preReadyOutputCompacted = preReadyOutputCompacted || next.compacted;
       preReadyOutputMaxOffset = Math.max(preReadyOutputMaxOffset ?? event.offset, event.offset);
@@ -1583,9 +1603,47 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       });
     };
 
-    /** Open the terminal gate once fit and subscription ack are both ready. */
+    /** Open the terminal gate once fit and offset catch-up are both ready. */
     const openTerminalGate = () => {
-      if (!fitComplete || !subscriptionAcked || disposed || terminalReady || gateOpened) return;
+      if (!fitComplete || !catchUpReady || disposed || terminalReady || gateOpened) return;
+
+      let syncedOffset = gateSyncedOffset ?? entry.lastServerOffset;
+      const catchUp = pendingCatchUp;
+      pendingCatchUp = null;
+      if (catchUp) {
+        // A reset response is authoritative for a restarted/trimmed server
+        // buffer, even when its new offset is lower than the cached one.
+        const replay = resolveScrollbackReplay({
+          scrollback: catchUp.scrollback,
+          resultOffset: catchUp.offset,
+          reset: catchUp.reset,
+          sinceOffset: catchUp.sinceOffset,
+          lastServerOffset: catchUp.reset ? 0 : entry.lastServerOffset,
+        });
+        syncedOffset = replay.nextLastServerOffset;
+        gateSyncedOffset = syncedOffset;
+        if (catchUp.reset) {
+          repaintOffsetBaselineInvalid = true;
+          writeTerminalFullResetForReplay(queuedTerminalWriter, harness);
+        } else {
+          restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
+        }
+
+        const catchUpData = replay.scrollback
+          ? fenceFilterRef.current.process(replay.scrollback)
+          : "";
+        if (catchUpData) {
+          const offset = syncedOffset;
+          scrollGuardedWrite(catchUpData, () => {
+            recordOutputOffset(offset);
+            restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
+            scheduleInitialTerminalVisualSettle();
+            scheduleTerminalPaintRefresh();
+          });
+        } else {
+          recordOutputOffset(syncedOffset);
+        }
+      }
 
       // Force the harness TUI to repaint with a real SIGWINCH. A same-size
       // resize can be ignored by the PTY/TUI; a one-row nudge followed by the
@@ -1596,9 +1654,8 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       }
       gateOpened = true;
 
-      // Preserve the cached xterm buffer/scrollback on reattach. The PTY repaint
-      // refreshes the live screen without throwing away history, so normal scroll
-      // and pi's alternate-buffer scroll keep working after thread switches.
+      // Preserve the caught-up xterm buffer/scrollback on reattach. The PTY
+      // repaint refreshes the live screen without throwing away history.
       restoreTerminalInputModesForHarness(queuedTerminalWriter, harness);
       // The cached offset may belong to an older server-side session. We keep
       // the stored value until fresh output arrives, then accept that first
@@ -1613,21 +1670,34 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
         if (disposed || terminalReady) return;
         terminalReady = true;
 
-        if (preReadyOutputData) {
-          const data = preReadyOutputData;
-          const offset = preReadyOutputMaxOffset ?? 0;
+        if (preReadyOutputData && preReadyOutputMaxOffset != null) {
+          const bufferedEndOffset = preReadyOutputMaxOffset;
+          const bufferedStartOffset = Math.max(0, bufferedEndOffset - preReadyOutputData.length);
+          const replay = resolveScrollbackReplay({
+            scrollback: preReadyOutputData,
+            resultOffset: bufferedEndOffset,
+            reset: false,
+            sinceOffset: bufferedStartOffset,
+            lastServerOffset: syncedOffset,
+          });
+          const data = replay.scrollback ? fenceFilterRef.current.process(replay.scrollback) : "";
+          const offset = replay.nextLastServerOffset;
           const wasCompacted = preReadyOutputCompacted;
           preReadyOutputData = "";
           preReadyOutputMaxOffset = null;
           preReadyOutputCompacted = false;
-          scrollGuardedWrite(data, () => {
-            scheduleInitialTerminalVisualSettle(wasCompacted);
-            scheduleTerminalPaintRefresh();
-            if (wasCompacted) scheduleCatchUpRedraw();
-          });
-          recordOutputOffset(offset);
+          if (data) {
+            scrollGuardedWrite(data, () => {
+              recordOutputOffset(offset);
+              scheduleInitialTerminalVisualSettle(wasCompacted);
+              scheduleTerminalPaintRefresh();
+              if (wasCompacted) scheduleCatchUpRedraw();
+            });
+          } else {
+            recordOutputOffset(offset);
+          }
         } else {
-          recordOutputOffset(preReadyOutputMaxOffset);
+          preReadyOutputData = "";
           preReadyOutputMaxOffset = null;
           preReadyOutputCompacted = false;
         }
@@ -1652,30 +1722,54 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
     });
 
     const onVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      flushQueuedOutputWrite();
+      if (document.visibilityState === "visible") {
+        flushQueuedOutputWrite();
+        return;
+      }
+      if (outputWriteRafId !== null) {
+        cancelAnimationFrame(outputWriteRafId);
+        outputWriteRafId = null;
+      }
+      scheduleOutputWriteFlush();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
-    // Wait for the server to acknowledge the harness output subscription before
-    // forcing a PTY repaint. Otherwise the repaint bytes could still be filtered
-    // because the subscription has not been applied yet.
+    // Subscribe first, then fetch exactly the server range missing from the
+    // cached xterm. Live output received during the request stays behind the
+    // gate and is de-duplicated against the returned offset.
+    const sinceOffset = entry.lastServerOffset;
     void outputSubscription.ready.then(
       () => {
         if (disposed) return;
-        subscriptionAcked = true;
-        openTerminalGate();
+        void getHarnessScrollback(api, harness, { threadId, sinceOffset }).then(
+          (result) => {
+            if (disposed) return;
+            pendingCatchUp = {
+              scrollback: result.scrollback,
+              offset: result.offset,
+              reset: result.reset ?? false,
+              sinceOffset,
+            };
+            catchUpReady = true;
+            openTerminalGate();
+          },
+          () => {
+            if (disposed) return;
+            // Subscription is active, so current/future output is still safe.
+            // Let the repaint recover the live frame if the catch-up RPC failed.
+            catchUpReady = true;
+            openTerminalGate();
+          },
+        );
       },
       () => {
-        // Do not reset/repaint unless the server has acknowledged the output
-        // subscription. Otherwise the fresh repaint bytes can be filtered out.
+        // Do not catch up/repaint unless the server acknowledged the output
+        // subscription; fresh repaint bytes could otherwise be filtered out.
       },
     );
 
-    // Do not let live output overtake the repaint gate. PTY bytes are stateful
-    // terminal commands, not replaceable records: if a late output event is
-    // processed before the repaint settles, the first attach can show a partial
-    // or stale frame.
+    // PTY bytes are stateful terminal commands, so live output must not overtake
+    // either the catch-up response or the authoritative repaint.
 
     // Intercept macOS navigation shortcuts before the browser captures them
     terminal.attachCustomKeyEventHandler((event) => {
@@ -2019,6 +2113,7 @@ function ActiveTerminalView({ threadId, thread }: { threadId: ThreadId; thread: 
       searchAddonRef.current = null;
       cancelAnimationFrame(initialFitRafId);
       if (outputWriteRafId !== null) cancelAnimationFrame(outputWriteRafId);
+      if (outputWriteTimeoutId !== null) window.clearTimeout(outputWriteTimeoutId);
       if (catchUpRedrawRafId !== null) cancelAnimationFrame(catchUpRedrawRafId);
       if (terminalPaintRefreshRafId !== null) cancelAnimationFrame(terminalPaintRefreshRafId);
       if (repaintGateRetryRafId !== null) cancelAnimationFrame(repaintGateRetryRafId);
