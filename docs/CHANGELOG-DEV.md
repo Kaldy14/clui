@@ -4,6 +4,20 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Keep Journey agent output in the node toolbar
+
+**Problem:** The agent-output icon disappeared when a Journey node was expanded and was replaced by a second labelled action inside the node content.
+
+**Root cause:** The compact toolbar action was explicitly restricted to collapsed nodes, while expanded details separately rendered the same action.
+
+**Fix:** Made the top-right agent-output icon persistent across collapsed, expanded, and focused node states, and removed the duplicate action from expanded content. The icon remains conditional on real agent output and preserves its active inspector state.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Collapse Journey nodes when leaving focused view
 
 **Problem:** Clicking the zoom-out control on a focused Journey node returned to the full graph but left the node expanded, requiring a second click to close it.

@@ -48,7 +48,6 @@ import {
   MessageSquareTextIcon,
   Minimize2Icon,
   NetworkIcon,
-  PanelRightOpenIcon,
   StickyNoteIcon,
   PlayIcon,
   RotateCcwIcon,
@@ -530,7 +529,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
           </span>
         </button>
         <div className="nodrag flex shrink-0 items-center gap-0.5">
-          {!data.expanded && hasAgentOutput && (
+          {hasAgentOutput && (
             <button
               type="button"
               className={cn(
@@ -589,22 +588,6 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
         <div className="nodrag nowheel space-y-4 border-t border-border/50 px-3 py-3">
           {node.summary && (
             <p className="text-xs leading-4 text-muted-foreground">{node.summary}</p>
-          )}
-
-          {hasAgentOutput && (
-            <button
-              type="button"
-              className={cn(
-                "flex items-center gap-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
-                data.agentWorking &&
-                  "text-sky-700 hover:text-sky-800 dark:text-sky-300 dark:hover:text-sky-200",
-              )}
-              onClick={() => data.onOpenAgentOutput(node.id)}
-            >
-              <BotIcon className="size-3.5" />
-              {data.agentWorking ? "View live agent output" : "View agent output"}
-              <PanelRightOpenIcon className="size-3.5" />
-            </button>
           )}
 
           {node.detailMarkdown && (
