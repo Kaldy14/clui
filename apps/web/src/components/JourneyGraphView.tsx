@@ -1,13 +1,13 @@
+import { type JourneyProjectionSnapshot } from "@clui/contracts";
 import type {
-  ClaudeSessionEvent,
   CodingHarness,
+  JourneyAttemptFence,
   JourneyNode,
   JourneyNodeStatus,
   JourneyNodeType,
   JourneyQuestionnaireAnswer,
   JourneyQuestionnaireField,
   JourneySnapshot,
-  PiSessionEvent,
   ThreadId,
 } from "@clui/contracts";
 import {
@@ -62,25 +62,28 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
-  buildJourneyAgentPrompt,
   JOURNEY_NODE_EXPANDED_WIDTH,
   JOURNEY_NODE_FOCUSED_WIDTH,
   JOURNEY_NODE_HEIGHT,
   JOURNEY_NODE_WIDTH,
   journeyNodeZIndex,
   layoutJourneyNodes,
-  makeInitialJourney,
-  nextAutomaticJourneyNodeId,
-  parseJourneyAgentResponse,
-  settleJourneyAgentSnapshot,
   toggleJourneyNodeFocusState,
-  withJourneyNode,
 } from "../lib/journeyGraph";
-import { latestCodexExecAgentMessage } from "../lib/codexExecJsonl";
-import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscriptions";
+import {
+  activeJourneyRuns,
+  isJourneyRunActive,
+  journeyInteractionSubmitCommand,
+  journeyRootStartCommand,
+  journeySteeringRemoveCommand,
+  latestAttemptFenceForRun,
+  latestRunForNode,
+  selectJourneySteeringRun,
+} from "../lib/journeyProjectionClient";
+import { subscribeJourneyProjection } from "../lib/journeyProjectionSubscription";
 import { cn, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
-import { updateThread, useStore } from "../store";
+import { useStore } from "../store";
 import {
   selectThreadTerminalState,
   useTerminalStateStore,
@@ -100,9 +103,9 @@ type JourneyNodeData = {
   focused: boolean;
   agentWorking: boolean;
   agentOutputOpen: boolean;
+  interactionBlockedReason: string | null;
   onToggleExpanded: (nodeId: string) => void;
   onToggleFocus: (nodeId: string) => void;
-  onToggleTodo: (nodeId: string, todoId: string, completed: boolean) => void;
   onSubmitInteraction: (
     nodeId: string,
     answers: Record<string, JourneyQuestionnaireAnswer>,
@@ -239,9 +242,11 @@ function isRequiredFieldMissing(field: JourneyQuestionnaireField, value: unknown
 function JourneyInteractionForm({
   node,
   onSubmit,
+  blockedReason,
 }: {
   node: JourneyNode;
   onSubmit: (answers: Record<string, JourneyQuestionnaireAnswer>) => void;
+  blockedReason: string | null;
 }) {
   const interaction = node.interaction;
   const [stepIndex, setStepIndex] = useState(() => {
@@ -419,7 +424,7 @@ function JourneyInteractionForm({
         <Button
           type="button"
           size="sm"
-          disabled={missingRequired}
+          disabled={missingRequired || blockedReason !== null}
           onClick={() => {
             if (isLastStep) {
               onSubmit(answers);
@@ -431,6 +436,11 @@ function JourneyInteractionForm({
           {isLastStep ? interaction.submitLabel : "Next"}
         </Button>
       </footer>
+      {blockedReason && (
+        <p className="text-xs leading-5 text-amber-700 dark:text-amber-300" role="alert">
+          {blockedReason}
+        </p>
+      )}
     </section>
   );
 }
@@ -588,9 +598,8 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                 <label key={todo.id} className="flex items-start gap-2 text-xs text-foreground">
                   <Checkbox
                     checked={todo.completed}
-                    onCheckedChange={(checked) =>
-                      data.onToggleTodo(node.id, todo.id, checked === true)
-                    }
+                    disabled
+                    aria-label={`${todo.title} (read only)`}
                   />
                   <span
                     className={cn(
@@ -616,6 +625,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                 key={node.interaction.id}
                 node={node}
                 onSubmit={(answers) => data.onSubmitInteraction(node.id, answers)}
+                blockedReason={data.interactionBlockedReason}
               />
             </div>
           )}
@@ -682,12 +692,14 @@ function JourneyAgentOutputPanel({
   harness,
   node,
   running,
+  fence,
   onClose,
 }: {
   threadId: ThreadId;
   harness: JourneyHarness;
   node: JourneyNode | null;
   running: boolean;
+  fence: JourneyAttemptFence | null;
   onClose: () => void;
 }) {
   const type = node ? NODE_TYPE_PRESENTATION[node.type] : null;
@@ -732,7 +744,7 @@ function JourneyAgentOutputPanel({
         </Button>
       </header>
       <div className="min-h-0 flex-1">
-        <JourneyAgentOutputView threadId={threadId} harness={harness} />
+        <JourneyAgentOutputView threadId={threadId} harness={harness} fence={fence} />
       </div>
     </aside>
   );
@@ -853,7 +865,7 @@ function JourneyPromptComposer({
   onSubmit,
 }: {
   message: string;
-  queue: readonly JourneyPromptQueueItem[];
+  queue: readonly JourneyComposerQueueItem[];
   agentBusy: boolean;
   expanded: boolean;
   onMessageChange: (message: string) => void;
@@ -896,15 +908,17 @@ function JourneyPromptComposer({
               <span className="shrink-0 text-[10px] text-muted-foreground">
                 {index === 0 ? "Next" : `Queued ${index + 1}`}
               </span>
-              <button
-                type="button"
-                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                aria-label={`Remove queued prompt: ${item.message}`}
-                title="Remove from queue"
-                onClick={() => onRemoveQueuedPrompt(item.id)}
-              >
-                <XIcon className="size-3.5" />
-              </button>
+              {item.removable && (
+                <button
+                  type="button"
+                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label={`Remove queued prompt: ${item.message}`}
+                  title="Remove from queue"
+                  onClick={() => onRemoveQueuedPrompt(item.id)}
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -959,21 +973,13 @@ function JourneyPromptComposer({
   );
 }
 
-function latestAssistantItem(
-  items: readonly { id: string; role: string; text: string; createdAt: string | null }[],
-): { id: string; text: string; createdAt: string | null } | null {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    if (item?.role === "assistant" && item.text.trim()) {
-      return { id: item.id, text: item.text, createdAt: item.createdAt };
-    }
-  }
-  return null;
-}
-
 function journeyHarnessForThread(harness: CodingHarness | undefined): JourneyHarness {
   return harness === "codexCli" ? "codexCli" : "pi";
 }
+
+type JourneyComposerQueueItem = JourneyPromptQueueItem & {
+  readonly removable?: boolean;
+};
 
 export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const thread = useStore((state) => state.threads.find((entry) => entry.id === threadId));
@@ -987,17 +993,17 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const clearNewThreadPromptDraft = useTerminalStateStore(
     (state) => state.clearNewThreadPromptDraft,
   );
-  const journeyPromptQueue = useTerminalStateStore(
+  const localPromptQueue = useTerminalStateStore(
     (state) =>
       selectThreadTerminalState(state.terminalStateByThreadId, threadId).journeyPromptQueue ??
       EMPTY_JOURNEY_PROMPT_QUEUE,
   );
   const enqueueJourneyPrompt = useTerminalStateStore((state) => state.enqueueJourneyPrompt);
   const removeJourneyPrompt = useTerminalStateStore((state) => state.removeJourneyPrompt);
-  const dangerouslySkipPermissions = useTerminalStateStore(
-    (state) => selectThreadTerminalState(state.terminalStateByThreadId, threadId).yoloMode,
-  );
   const bootstrapDestinationRef = useRef(initialDestination.trim());
+  const [projection, setProjection] = useState<JourneyProjectionSnapshot | null>(null);
+  const [layoutDirection, setLayoutDirection] = useState<"TB" | "LR">("TB");
+  const layoutInitializedRef = useRef(false);
   const [destination, setDestination] = useState(initialDestination);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
@@ -1008,330 +1014,33 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     Record<string, { height: number; expanded: boolean; focused: boolean }>
   >({});
   const [starting, setStarting] = useState(false);
-  const [agentRunNodeId, setAgentRunNodeId] = useState<string | null>(null);
-  const pendingRunRef = useRef<{
-    nodeId: string;
-    finishing: boolean;
-    baselineJourneyUpdatedAt: string;
-    baselineAssistantId: string | null;
-    baselineAssistantText: string | null;
-  } | null>(null);
-  const queueLaunchRef = useRef<string | null>(null);
-  const journey = thread?.journey ?? null;
+  const dispatchingPromptRef = useRef<string | null>(null);
+  const journey = projection?.journey ?? thread?.journey ?? null;
   const journeyHarness = journeyHarnessForThread(thread?.harness);
-
-  const persistJourney = useCallback(
-    async (snapshot: JourneySnapshot) => {
-      const api = readNativeApi();
-      if (!api) throw new Error("Clui is not connected to the server.");
-      useStore.setState((state) => {
-        const threads = updateThread(state.threads, threadId, (entry) => ({
-          ...entry,
-          journey: snapshot,
-          updatedAt: snapshot.updatedAt,
-        }));
-        return threads === state.threads ? state : { threads };
-      });
-      await api.orchestration.dispatchCommand({
-        type: "thread.journey.update",
-        commandId: newCommandId(),
-        threadId,
-        journey: snapshot,
-        createdAt: new Date().toISOString(),
-      });
-    },
-    [threadId],
-  );
-
-  const failPendingRun = useCallback(
-    async (error: unknown) => {
-      const pending = pendingRunRef.current;
-      pendingRunRef.current = null;
-      setAgentRunNodeId(null);
-      const message = error instanceof Error ? error.message : "The journey agent failed.";
-      const current = useStore.getState().threads.find((entry) => entry.id === threadId)?.journey;
-      if (pending && current) {
-        const now = new Date().toISOString();
-        const failed = withJourneyNode(current, pending.nodeId, (node) => ({
-          ...node,
-          status: "failed",
-          activity: [
-            ...node.activity,
-            {
-              id: `agent-error-${crypto.randomUUID()}`,
-              kind: "system",
-              summary: "Agent run failed",
-              detailMarkdown: message,
-              createdAt: now,
-            },
-          ],
-          updatedAt: now,
-        }));
-        await persistJourney({ ...failed, activeNodeId: pending.nodeId }).catch(() => undefined);
-      }
-      toastManager.add({ type: "error", title: "Journey agent failed", description: message });
-    },
-    [persistJourney, threadId],
-  );
-
-  const finishAgentRun = useCallback(async () => {
-    const pending = pendingRunRef.current;
-    if (!pending || pending.finishing) return;
-    pending.finishing = true;
-    try {
-      const api = readNativeApi();
-      if (!api) throw new Error("Clui is not connected to the server.");
-      let responseText: string | null = null;
-      for (let attempt = 0; attempt < 12; attempt += 1) {
-        if (journeyHarness === "pi") {
-          const transcript = await api.pi.getTranscript({ threadId });
-          const candidate = latestAssistantItem(transcript.items);
-          if (
-            candidate &&
-            (candidate.id !== pending.baselineAssistantId ||
-              candidate.text !== pending.baselineAssistantText)
-          ) {
-            responseText = candidate.text;
-            break;
-          }
-        } else {
-          const scrollback = await api.claude.getScrollback({ threadId });
-          responseText = latestCodexExecAgentMessage(scrollback.scrollback ?? "");
-          if (responseText) break;
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, 150));
-      }
-      const readModel = await api.orchestration.getSnapshot();
-      const serverJourney =
-        readModel.threads.find((entry) => entry.id === threadId)?.journey ?? null;
-      const hasLiveToolUpdates =
-        serverJourney !== null && serverJourney.updatedAt !== pending.baselineJourneyUpdatedAt;
-      let settled: JourneySnapshot;
-      if (hasLiveToolUpdates) {
-        settled = settleJourneyAgentSnapshot(serverJourney);
-      } else {
-        if (!responseText) throw new Error("The journey agent completed without a graph update.");
-        settled = settleJourneyAgentSnapshot(parseJourneyAgentResponse(responseText));
-      }
-      const currentDirection = serverJourney?.layoutDirection ?? settled.layoutDirection;
-      await persistJourney({ ...settled, layoutDirection: currentDirection });
-      pendingRunRef.current = null;
-      setAgentRunNodeId(null);
-      if (settled.activeNodeId) setExpandedNodeId(settled.activeNodeId);
-    } catch (error) {
-      await failPendingRun(error);
-    }
-  }, [failPendingRun, journeyHarness, persistJourney, threadId]);
 
   useEffect(() => {
     const api = readNativeApi();
     if (!api) return;
-    const outputSubscription = registerHarnessOutputSubscription(api, journeyHarness, threadId);
-    const handleSessionEvent = (event: ClaudeSessionEvent | PiSessionEvent) => {
-      if (event.threadId !== threadId) return;
-      if (event.type === "hookStatus" && event.hookStatus === "completed") {
-        void finishAgentRun();
-      }
-      if ((event.type === "exited" || event.type === "hibernated") && pendingRunRef.current) {
-        void finishAgentRun();
-      }
-      if (event.type === "error" && pendingRunRef.current) {
-        void failPendingRun(new Error(event.message));
-      }
-    };
-    const unsubscribe =
-      journeyHarness === "pi"
-        ? api.pi.onSessionEvent(handleSessionEvent)
-        : api.claude.onSessionEvent(handleSessionEvent);
-    return () => {
-      outputSubscription.unsubscribe();
-      unsubscribe();
-    };
-  }, [failPendingRun, finishAgentRun, journeyHarness, threadId]);
+    const subscription = subscribeJourneyProjection({
+      api,
+      threadId,
+      onSnapshot: setProjection,
+    });
+    return () => subscription.dispose();
+  }, [threadId]);
 
   useEffect(() => {
-    const declaredActiveNode = journey?.nodes.find((node) => node.id === journey.activeNodeId);
-    const activeNode =
-      declaredActiveNode?.status === "running"
-        ? declaredActiveNode
-        : journey?.nodes.find((node) => node.status === "running");
-    if (
-      !journey ||
-      !activeNode ||
-      !thread ||
-      activeNode.status !== "running" ||
-      thread.terminalStatus === "new" ||
-      pendingRunRef.current
-    ) {
-      return;
-    }
-    const baselineJourneyUpdatedAt = journey.updatedAt;
-
-    let cancelled = false;
-    const resumePendingRun = async () => {
-      const api = readNativeApi();
-      if (!api) return;
-      if (journeyHarness === "codexCli") {
-        const scrollback = await api.claude.getScrollback({ threadId });
-        const hasCompletedResponse =
-          latestCodexExecAgentMessage(scrollback.scrollback ?? "") !== null &&
-          (thread.hookStatus === "completed" || thread.terminalStatus === "dormant");
-        if (cancelled || pendingRunRef.current) return;
-        pendingRunRef.current = {
-          nodeId: activeNode.id,
-          finishing: false,
-          baselineJourneyUpdatedAt,
-          baselineAssistantId: null,
-          baselineAssistantText: null,
-        };
-        setAgentRunNodeId(activeNode.id);
-        if (hasCompletedResponse || thread.hookStatus === "completed") {
-          await finishAgentRun();
-          return;
-        }
-        if (thread.terminalStatus === "dormant") {
-          throw new Error("The Codex journey agent stopped before returning a graph update.");
-        }
-        return;
-      }
-
-      const baselineItem = latestAssistantItem((await api.pi.getTranscript({ threadId })).items);
-      const hasCompletedResponse =
-        baselineItem?.createdAt != null &&
-        baselineItem.createdAt >= activeNode.updatedAt &&
-        (thread.hookStatus === "completed" || thread.terminalStatus === "dormant");
-      if (cancelled || pendingRunRef.current) return;
-      pendingRunRef.current = {
-        nodeId: activeNode.id,
-        finishing: false,
-        baselineJourneyUpdatedAt,
-        baselineAssistantId: hasCompletedResponse ? null : (baselineItem?.id ?? null),
-        baselineAssistantText: hasCompletedResponse ? null : (baselineItem?.text ?? null),
-      };
-      setAgentRunNodeId(activeNode.id);
-      if (hasCompletedResponse) {
-        await finishAgentRun();
-        return;
-      }
-      if (thread.terminalStatus === "dormant") {
-        throw new Error("The journey agent stopped before returning a graph update.");
-      }
-      if (
-        useStore.getState().threads.find((entry) => entry.id === threadId)?.hookStatus ===
-        "completed"
-      ) {
-        const latestItem = latestAssistantItem((await api.pi.getTranscript({ threadId })).items);
-        if (
-          latestItem &&
-          (latestItem.id !== baselineItem?.id || latestItem.text !== baselineItem?.text)
-        ) {
-          await finishAgentRun();
-        }
-      }
-    };
-    void resumePendingRun().catch(failPendingRun);
-    return () => {
-      cancelled = true;
-    };
-  }, [failPendingRun, finishAgentRun, journey, journeyHarness, thread, threadId]);
-
-  const runAgent = useCallback(
-    async (snapshot: JourneySnapshot, nodeId: string, message = "") => {
-      if (!thread || !project || pendingRunRef.current) return false;
-      const api = readNativeApi();
-      if (!api) return false;
-      const cwd = thread.worktreePath ?? project.cwd;
-      const now = new Date().toISOString();
-      const runningSnapshot = {
-        ...withJourneyNode(snapshot, nodeId, (node) => ({
-          ...node,
-          status: "running",
-          activity: [
-            ...node.activity,
-            {
-              id: `agent-start-${crypto.randomUUID()}`,
-              kind: "agent" as const,
-              summary: "Agent started working",
-              detailMarkdown: message.trim(),
-              createdAt: now,
-            },
-          ],
-          updatedAt: now,
-        })),
-        activeNodeId: nodeId,
-      } satisfies JourneySnapshot;
-      pendingRunRef.current = {
-        nodeId,
-        finishing: false,
-        baselineJourneyUpdatedAt: runningSnapshot.updatedAt,
-        baselineAssistantId: null,
-        baselineAssistantText: null,
-      };
-      setAgentRunNodeId(nodeId);
-
-      try {
-        await persistJourney(runningSnapshot);
-        const prompt = buildJourneyAgentPrompt({
-          snapshot: runningSnapshot,
-          focusNodeId: nodeId,
-          userMessage: message,
-        });
-
-        if (journeyHarness === "codexCli") {
-          await api.claude.start({
-            threadId,
-            cwd,
-            cols: 120,
-            rows: 32,
-            executionMode: "exec",
-            initialPrompt: prompt,
-            ...(thread.claudeSessionId ? { resumeSessionId: thread.claudeSessionId } : {}),
-            ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
-          });
-          return true;
-        }
-
-        const baselineTranscript = await api.pi.getTranscript({ threadId });
-        const baselineAssistant = latestAssistantItem(baselineTranscript.items);
-        if (pendingRunRef.current?.nodeId === nodeId) {
-          pendingRunRef.current.baselineAssistantId = baselineAssistant?.id ?? null;
-          pendingRunRef.current.baselineAssistantText = baselineAssistant?.text ?? null;
-        }
-        if (thread.terminalStatus === "active") {
-          await api.pi.prompt({ threadId, message: prompt });
-        } else {
-          await api.pi.start({
-            threadId,
-            cwd,
-            cols: 120,
-            rows: 32,
-            htmlMode: true,
-            initialPrompt: prompt,
-            ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
-          });
-        }
-        return true;
-      } catch (error) {
-        await failPendingRun(error);
-        return true;
-      }
-    },
-    [
-      dangerouslySkipPermissions,
-      failPendingRun,
-      journeyHarness,
-      persistJourney,
-      project,
-      thread,
-      threadId,
-    ],
-  );
+    if (!journey || layoutInitializedRef.current) return;
+    layoutInitializedRef.current = true;
+    setLayoutDirection(journey.layoutDirection);
+  }, [journey]);
 
   const queueAgentPrompt = useCallback(
     (nodeId: string, message?: string) => {
-      const normalizedMessage = message?.trim() || "Continue working from this node.";
+      const normalizedMessage = message?.trim();
+      if (!normalizedMessage) return;
       enqueueJourneyPrompt(threadId, {
-        id: `journey-prompt-${crypto.randomUUID()}`,
+        id: "journey-prompt-" + crypto.randomUUID(),
         message: normalizedMessage,
         nodeId,
         createdAt: new Date().toISOString(),
@@ -1341,80 +1050,110 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   );
 
   useEffect(() => {
-    const nextPrompt = journeyPromptQueue[0];
-    const automaticNodeId = journey ? nextAutomaticJourneyNodeId(journey) : null;
-    if (
-      !journey ||
-      (!nextPrompt && !automaticNodeId) ||
-      queueLaunchRef.current ||
-      pendingRunRef.current ||
-      agentRunNodeId !== null ||
-      journey.nodes.some((node) => node.status === "running")
-    ) {
-      return;
-    }
+    const item = localPromptQueue[0];
+    if (!item || !projection || dispatchingPromptRef.current) return;
+    const target = selectJourneySteeringRun(projection, item.nodeId);
+    if (!target) return;
 
-    const nodeId = nextPrompt
-      ? journey.nodes.some((node) => node.id === nextPrompt.nodeId)
-        ? nextPrompt.nodeId
-        : (journey.activeNodeId ?? journey.nodes[0]?.id)
-      : automaticNodeId;
-    if (!nodeId) {
-      if (nextPrompt) removeJourneyPrompt(threadId, nextPrompt.id);
-      return;
-    }
-
-    const automaticNode = journey.nodes.find((node) => node.id === nodeId);
-    queueLaunchRef.current =
-      nextPrompt?.id ?? `automatic:${nodeId}:${automaticNode?.updatedAt ?? ""}`;
-    const launch = runAgent(
-      journey,
-      nodeId,
-      nextPrompt?.message ??
-        `Continue the concrete work in "${automaticNode?.title ?? nodeId}" autonomously. Do not create future placeholder nodes; perform the work now and record the real result.`,
-    );
-    void launch
-      .then((consumed) => {
-        if (consumed && nextPrompt) removeJourneyPrompt(threadId, nextPrompt.id);
+    const api = readNativeApi();
+    if (!api) return;
+    dispatchingPromptRef.current = item.id;
+    void api.orchestration
+      .dispatchCommand({
+        type: "journey.steering.enqueue",
+        commandId: newCommandId(),
+        threadId,
+        runId: target.runId,
+        nodeId: target.nodeId,
+        itemId: item.id,
+        prompt: item.message,
+        createdAt: item.createdAt,
+      })
+      .then(() => removeJourneyPrompt(threadId, item.id))
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not queue Journey prompt",
+          description: error instanceof Error ? error.message : String(error),
+        });
       })
       .finally(() => {
-        queueLaunchRef.current = null;
+        dispatchingPromptRef.current = null;
       });
-  }, [agentRunNodeId, journey, journeyPromptQueue, removeJourneyPrompt, runAgent, threadId]);
+  }, [localPromptQueue, projection, removeJourneyPrompt, threadId]);
 
   const handleSubmitAgentMessage = useCallback(() => {
     const message = agentMessage.trim();
     if (!message || !journey) return;
-    const target = journey.activeNodeId ?? journey.nodes[0]?.id;
-    if (!target) return;
-    queueAgentPrompt(target, message);
+    const activeCoordinator = projection?.runs.find(
+      (run) => run.role === "coordinator" && isJourneyRunActive(run),
+    );
+    const targetNodeId = activeCoordinator?.nodeId ?? journey.activeNodeId ?? journey.nodes[0]?.id;
+    if (!targetNodeId) return;
+    queueAgentPrompt(targetNodeId, message);
     setAgentMessage("");
     setComposerExpanded(false);
-  }, [agentMessage, journey, queueAgentPrompt]);
+  }, [agentMessage, journey, projection, queueAgentPrompt]);
+
+  const handleRemoveQueuedPrompt = useCallback(
+    (promptId: string) => {
+      const localItem = localPromptQueue.find((item) => item.id === promptId);
+      if (localItem) {
+        removeJourneyPrompt(threadId, promptId);
+        return;
+      }
+      const durableItem = projection?.steering.find(
+        (item) => item.id === promptId && item.status === "queued",
+      );
+      const api = readNativeApi();
+      if (!durableItem || !api) return;
+      void api.orchestration
+        .dispatchCommand(
+          journeySteeringRemoveCommand({
+            commandId: newCommandId(),
+            item: durableItem,
+            createdAt: new Date().toISOString(),
+          }),
+        )
+        .catch((error) =>
+          toastManager.add({
+            type: "error",
+            title: "Could not remove queued Journey prompt",
+            description: error instanceof Error ? error.message : String(error),
+          }),
+        );
+    },
+    [localPromptQueue, projection?.steering, removeJourneyPrompt, threadId],
+  );
 
   const handleStartJourney = useCallback(async () => {
-    if (!destination.trim() || starting) return;
+    const normalizedDestination = destination.trim();
+    if (!normalizedDestination || starting || !thread || !project) return;
+    const api = readNativeApi();
+    if (!api) return;
     setStarting(true);
-    clearNewThreadPromptDraft(threadId);
-    const snapshot = makeInitialJourney(destination);
+    const createdAt = new Date().toISOString();
     try {
-      await persistJourney(snapshot);
-      setExpandedNodeId("destination");
-      await runAgent(
-        snapshot,
-        "destination",
-        "Start concrete work toward the destination now. Create only nodes for work you are actively starting, real results, or genuine human/external blockers; do not prebuild a roadmap of future placeholder nodes.",
+      await api.orchestration.dispatchCommand(
+        journeyRootStartCommand({
+          commandId: newCommandId(),
+          threadId,
+          destination: normalizedDestination,
+          harness: journeyHarness,
+          createdAt,
+        }),
       );
+      clearNewThreadPromptDraft(threadId);
     } catch (error) {
       toastManager.add({
         type: "error",
         title: "Could not start journey",
-        description: error instanceof Error ? error.message : "The journey could not be saved.",
+        description: error instanceof Error ? error.message : String(error),
       });
     } finally {
       setStarting(false);
     }
-  }, [clearNewThreadPromptDraft, destination, persistJourney, runAgent, starting, threadId]);
+  }, [clearNewThreadPromptDraft, destination, journeyHarness, project, starting, thread, threadId]);
 
   useEffect(() => {
     if (journey || !bootstrapDestinationRef.current) return;
@@ -1422,54 +1161,35 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     void handleStartJourney();
   }, [handleStartJourney, journey]);
 
-  const handleToggleTodo = useCallback(
-    (nodeId: string, todoId: string, completed: boolean) => {
-      if (!journey) return;
-      const updated = withJourneyNode(journey, nodeId, (node) => ({
-        ...node,
-        todos: node.todos.map((todo) => (todo.id === todoId ? { ...todo, completed } : todo)),
-        updatedAt: new Date().toISOString(),
-      }));
-      void persistJourney(updated);
-    },
-    [journey, persistJourney],
-  );
-
   const handleSubmitInteraction = useCallback(
     (nodeId: string, answers: Record<string, JourneyQuestionnaireAnswer>) => {
-      if (!journey) return;
-      const now = new Date().toISOString();
-      const updated = withJourneyNode(journey, nodeId, (node) => ({
-        ...node,
-        status: "ready",
-        interaction: node.interaction
-          ? { ...node.interaction, answers, submittedAt: now }
-          : node.interaction,
-        activity: [
-          ...node.activity,
-          {
-            id: `human-answer-${crypto.randomUUID()}`,
-            kind: "human",
-            summary: "Answered questionnaire",
-            detailMarkdown: JSON.stringify(answers),
-            createdAt: now,
-          },
-        ],
-        updatedAt: now,
-      }));
-      queueAgentPrompt(nodeId, `The user answered: ${JSON.stringify(answers)}`);
-      void persistJourney(updated);
+      const api = readNativeApi();
+      if (!api || !projection) return;
+      void journeyInteractionSubmitCommand({
+        commandId: newCommandId(),
+        projection,
+        nodeId,
+        answers,
+        actorId: "clui-user",
+        timestamp: new Date().toISOString(),
+      })
+        .then((command) => api.orchestration.dispatchCommand(command))
+        .catch((error) =>
+          toastManager.add({
+            type: "error",
+            title: "Could not record Journey response",
+            description:
+              (error instanceof Error ? error.message : String(error)) +
+              " Refresh the Journey and review the current proposal before trying again.",
+          }),
+        );
     },
-    [journey, persistJourney, queueAgentPrompt],
+    [projection],
   );
 
-  const handleDirectionChange = useCallback(
-    (layoutDirection: "TB" | "LR") => {
-      if (!journey || journey.layoutDirection === layoutDirection) return;
-      void persistJourney({ ...journey, layoutDirection, updatedAt: new Date().toISOString() });
-    },
-    [journey, persistJourney],
-  );
+  const handleDirectionChange = useCallback((layoutDirection: "TB" | "LR") => {
+    setLayoutDirection(layoutDirection);
+  }, []);
 
   const handleToggleNodeExpanded = useCallback(
     (nodeId: string) => {
@@ -1485,9 +1205,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       const next = toggleJourneyNodeFocusState(nodeId, focusedNodeId);
       setFocusedNodeId(next.focusedNodeId);
       setExpandedNodeId(next.expandedNodeId);
-      if (next.focusedNodeId) {
-        setAgentOutputNodeId(null);
-      }
+      if (next.focusedNodeId) setAgentOutputNodeId(null);
     },
     [focusedNodeId],
   );
@@ -1497,6 +1215,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setFocusedNodeId(null);
+      setExpandedNodeId(null);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -1544,8 +1263,15 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
 
   const layouts = useMemo(
     () =>
-      journey ? layoutJourneyNodes(journey, expandedNodeId, focusedNodeId, measuredHeights) : [],
-    [expandedNodeId, focusedNodeId, journey, measuredHeights],
+      journey
+        ? layoutJourneyNodes(
+            { ...journey, layoutDirection },
+            expandedNodeId,
+            focusedNodeId,
+            measuredHeights,
+          )
+        : [],
+    [expandedNodeId, focusedNodeId, journey, layoutDirection, measuredHeights],
   );
   const flowNodes = useMemo<JourneyFlowNode[]>(() => {
     if (!journey) return [];
@@ -1557,23 +1283,24 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         width: JOURNEY_NODE_WIDTH,
         height: JOURNEY_NODE_HEIGHT,
       };
+      const run = projection ? latestRunForNode(projection, node.id) : null;
       return {
         id: node.id,
         type: "journey",
         position: { x: layout.x, y: layout.y },
         data: {
           journeyNode: node,
-          direction: journey.layoutDirection,
+          direction: layoutDirection,
           expanded: expandedNodeId === node.id,
           focused: focusedNodeId === node.id,
-          agentWorking:
-            agentRunNodeId !== null &&
-            journey.activeNodeId === node.id &&
-            node.status === "running",
+          agentWorking: run !== null && isJourneyRunActive(run),
           agentOutputOpen: agentOutputNodeId === node.id,
+          interactionBlockedReason:
+            node.type === "proposal" && !projection
+              ? "Waiting for the authoritative proposal revision before approval."
+              : null,
           onToggleExpanded: handleToggleNodeExpanded,
           onToggleFocus: handleToggleNodeFocus,
-          onToggleTodo: handleToggleTodo,
           onSubmitInteraction: handleSubmitInteraction,
           onRunAgent: queueAgentPrompt,
           onOpenAgentOutput: setAgentOutputNodeId,
@@ -1587,17 +1314,17 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       };
     });
   }, [
-    agentRunNodeId,
     agentOutputNodeId,
     expandedNodeId,
     focusedNodeId,
+    handleNodeHeightChange,
     handleSubmitInteraction,
     handleToggleNodeExpanded,
     handleToggleNodeFocus,
-    handleToggleTodo,
-    handleNodeHeightChange,
     journey,
+    layoutDirection,
     layouts,
+    projection,
     queueAgentPrompt,
   ]);
 
@@ -1625,13 +1352,34 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     }));
   }, [journey]);
 
+  const runningRuns = projection ? activeJourneyRuns(projection) : [];
   const agentOutputNode = agentOutputNodeId
     ? (journey?.nodes.find((node) => node.id === agentOutputNodeId) ?? null)
     : null;
-  const agentOutputRunning =
-    agentOutputNode !== null &&
-    journey?.activeNodeId === agentOutputNode.id &&
-    (agentRunNodeId === agentOutputNode.id || agentOutputNode.status === "running");
+  const selectedRun =
+    projection && agentOutputNode ? latestRunForNode(projection, agentOutputNode.id) : null;
+  const selectedFence =
+    projection && selectedRun
+      ? latestAttemptFenceForRun(projection.attempts, selectedRun.runId)
+      : null;
+  const agentOutputRunning = selectedRun !== null && isJourneyRunActive(selectedRun);
+
+  const durableQueue: JourneyComposerQueueItem[] =
+    projection?.steering
+      .filter((item) => item.status === "queued")
+      .map((item) => ({
+        id: item.id,
+        message: item.prompt,
+        nodeId: item.nodeId,
+        createdAt: item.createdAt,
+        removable: true,
+      })) ?? [];
+  const composerQueue: JourneyComposerQueueItem[] = [
+    ...localPromptQueue.map((item) => ({ ...item, removable: true })),
+    ...durableQueue.filter(
+      (item) => !localPromptQueue.some((localItem) => localItem.id === item.id),
+    ),
+  ];
 
   if (!thread || !project) return null;
 
@@ -1688,16 +1436,19 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
               {journey.destination}
             </p>
             <p className="hidden shrink-0 text-[10px] text-muted-foreground sm:block">
-              {journey.nodes.length} nodes ·{" "}
+              {journey.nodes.length} nodes · {runningRuns.length} active ·{" "}
               {journey.nodes.filter((node) => node.status === "waitingForUser").length} waiting ·{" "}
               {journeyHarness === "pi" ? "Pi" : "Codex"}
-              {journeyPromptQueue.length > 0 ? ` · ${journeyPromptQueue.length} queued` : ""}
+              {composerQueue.length > 0 ? " · " + composerQueue.length + " queued" : ""}
             </p>
           </div>
           <JourneyHeaderControls
-            direction={journey.layoutDirection}
+            direction={layoutDirection}
             focusedNodeId={focusedNodeId}
-            onClearFocus={() => setFocusedNodeId(null)}
+            onClearFocus={() => {
+              setFocusedNodeId(null);
+              setExpandedNodeId(null);
+            }}
             onDirectionChange={handleDirectionChange}
           />
         </header>
@@ -1732,14 +1483,12 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
             <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3 sm:px-5">
               <JourneyPromptComposer
                 message={agentMessage}
-                queue={journeyPromptQueue}
-                agentBusy={
-                  agentRunNodeId !== null || journey.nodes.some((node) => node.status === "running")
-                }
+                queue={composerQueue}
+                agentBusy={runningRuns.length > 0}
                 expanded={composerExpanded}
                 onMessageChange={setAgentMessage}
                 onExpandedChange={setComposerExpanded}
-                onRemoveQueuedPrompt={(promptId) => removeJourneyPrompt(threadId, promptId)}
+                onRemoveQueuedPrompt={handleRemoveQueuedPrompt}
                 onSubmit={handleSubmitAgentMessage}
               />
             </div>
@@ -1750,6 +1499,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
               harness={journeyHarness}
               node={agentOutputNode}
               running={agentOutputRunning}
+              fence={selectedFence}
               onClose={() => setAgentOutputNodeId(null)}
             />
           )}

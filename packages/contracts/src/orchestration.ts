@@ -1,6 +1,27 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
-import { JourneyMutation, JourneySnapshot } from "./journey";
+import {
+  JourneyApprovalSubmission,
+  JourneyAttemptFence,
+  JourneyCapability,
+  JourneyCoordinatorOutcome,
+  JourneyDecisionSubmission,
+  JourneyLogicalRun,
+  JourneyOutputChunk,
+  JourneyOutputReadInput,
+  JourneyOutputReadResult,
+  JourneyProjectionDelta,
+  JourneyProjectionSnapshot,
+  JourneyProposalRevisionHash,
+  JourneyRevisionBoundApproval,
+  JourneyRoleCapabilityCheck,
+  JourneyRunId,
+  JourneyRunRole,
+  JourneyStructuredResult,
+  JourneySteeringItem,
+  JourneyMutation,
+  JourneySnapshot,
+} from "./journey";
 import { AgentActivityStatus, ClaudeHookStatus } from "./claude-terminal";
 import {
   ApprovalRequestId,
@@ -30,11 +51,18 @@ export const ORCHESTRATION_WS_METHODS = {
   getSessionMetrics: "orchestration.getSessionMetrics",
   getSlashCommands: "orchestration.getSlashCommands",
   getCachedSlashCommands: "orchestration.getCachedSlashCommands",
+  getJourneyProjection: "orchestration.getJourneyProjection",
+  getJourneyDeltas: "orchestration.getJourneyDeltas",
+  getJourneyRunOutput: "orchestration.getJourneyRunOutput",
+  subscribeJourneyRunOutput: "orchestration.subscribeJourneyRunOutput",
+  unsubscribeJourneyRunOutput: "orchestration.unsubscribeJourneyRunOutput",
 } as const;
 
 export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
   approvalFastPath: "orchestration.approvalFastPath",
+  journeyProjection: "orchestration.journeyProjection",
+  journeyRunOutput: "orchestration.journeyRunOutput",
 } as const;
 
 export const ProviderKind = Schema.Literals(["codex", "claudeCode", "cursor"]);
@@ -522,6 +550,72 @@ const ThreadJourneyMutateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const JourneyDecisionSubmitCommand = Schema.Struct({
+  type: Schema.Literal("journey.decision.submit"),
+  commandId: CommandId,
+  submission: JourneyDecisionSubmission,
+});
+export type JourneyDecisionSubmitCommand = typeof JourneyDecisionSubmitCommand.Type;
+
+export const JourneyApprovalSubmitCommand = Schema.Struct({
+  type: Schema.Literal("journey.approval.submit"),
+  commandId: CommandId,
+  submission: JourneyApprovalSubmission,
+});
+export type JourneyApprovalSubmitCommand = typeof JourneyApprovalSubmitCommand.Type;
+
+export const JourneyRootStartCommand = Schema.Struct({
+  type: Schema.Literal("journey.root.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  destination: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  harness: Schema.Literals(["pi", "codexCli"]),
+  createdAt: IsoDateTime,
+});
+export type JourneyRootStartCommand = typeof JourneyRootStartCommand.Type;
+
+export const JourneySchedulerConfigureCommand = Schema.Struct({
+  type: Schema.Literal("journey.scheduler.configure"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  perJourneyResearchLimit: Schema.optional(PositiveInt),
+  globalResearchLimit: Schema.optional(PositiveInt),
+  createdAt: IsoDateTime,
+});
+export type JourneySchedulerConfigureCommand = typeof JourneySchedulerConfigureCommand.Type;
+
+export const JourneySteeringEnqueueCommand = Schema.Struct({
+  type: Schema.Literal("journey.steering.enqueue"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: JourneyRunId,
+  nodeId: TrimmedNonEmptyString,
+  itemId: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type JourneySteeringEnqueueCommand = typeof JourneySteeringEnqueueCommand.Type;
+
+export const JourneySteeringRemoveCommand = Schema.Struct({
+  type: Schema.Literal("journey.steering.remove"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: JourneyRunId,
+  itemId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type JourneySteeringRemoveCommand = typeof JourneySteeringRemoveCommand.Type;
+
+export const JourneyNodeDeleteCommand = Schema.Struct({
+  type: Schema.Literal("journey.node.delete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  nodeId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type JourneyNodeDeleteCommand = typeof JourneyNodeDeleteCommand.Type;
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -619,6 +713,13 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadJourneyUpdateCommand,
+  JourneyRootStartCommand,
+  JourneyDecisionSubmitCommand,
+  JourneyApprovalSubmitCommand,
+  JourneySchedulerConfigureCommand,
+  JourneySteeringEnqueueCommand,
+  JourneySteeringRemoveCommand,
+  JourneyNodeDeleteCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -647,6 +748,13 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadJourneyUpdateCommand,
+  JourneyRootStartCommand,
+  JourneyDecisionSubmitCommand,
+  JourneyApprovalSubmitCommand,
+  JourneySchedulerConfigureCommand,
+  JourneySteeringEnqueueCommand,
+  JourneySteeringRemoveCommand,
+  JourneyNodeDeleteCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -747,6 +855,211 @@ const ThreadTurnUsageUpdateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const JourneyRunIdentity = {
+  threadId: ThreadId,
+  runId: JourneyRunId,
+  nodeId: TrimmedNonEmptyString,
+} as const;
+
+export const JourneyRunRequestCommand = Schema.Struct({
+  type: Schema.Literal("journey.run.request"),
+  commandId: CommandId,
+  ...JourneyRunIdentity,
+  role: JourneyRunRole,
+  harness: Schema.Literals(["pi", "codexCli"]),
+  capabilities: Schema.Array(JourneyCapability),
+  parentRunId: Schema.NullOr(JourneyRunId),
+  coordinatorRunId: Schema.NullOr(JourneyRunId),
+  prompt: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+}).check(JourneyRoleCapabilityCheck);
+export type JourneyRunRequestCommand = typeof JourneyRunRequestCommand.Type;
+
+export const JourneyChildStartCommand = Schema.Struct({
+  type: Schema.Literal("journey.child.start"),
+  commandId: CommandId,
+  parentFence: JourneyAttemptFence,
+  childKind: Schema.Literals(["research", "implementation"]),
+  runId: JourneyRunId,
+  nodeId: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  instructions: TrimmedNonEmptyString,
+  harness: Schema.Literals(["pi", "codexCli"]),
+  canonicalWorkspaceIdentity: Schema.optional(TrimmedNonEmptyString),
+  proposalRevisionHash: Schema.optional(JourneyProposalRevisionHash),
+  createdAt: IsoDateTime,
+});
+export type JourneyChildStartCommand = typeof JourneyChildStartCommand.Type;
+
+export const JourneyAttemptStartRequestCommand = Schema.Struct({
+  type: Schema.Literal("journey.attempt.start.request"),
+  commandId: CommandId,
+  fence: JourneyAttemptFence,
+  capabilities: Schema.Array(JourneyCapability),
+  canonicalWorkspaceId: Schema.optional(TrimmedNonEmptyString),
+  proposalRevisionHash: Schema.optional(JourneyProposalRevisionHash),
+  createdAt: IsoDateTime,
+});
+export type JourneyAttemptStartRequestCommand = typeof JourneyAttemptStartRequestCommand.Type;
+
+const JourneyFencedCallbackFields = {
+  commandId: CommandId,
+  fence: JourneyAttemptFence,
+  adapterEventId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+} as const;
+
+export const JourneyAttemptStartedCommand = Schema.Struct({
+  type: Schema.Literal("journey.attempt.started"),
+  ...JourneyFencedCallbackFields,
+  resumableHarnessIdentity: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type JourneyAttemptStartedCommand = typeof JourneyAttemptStartedCommand.Type;
+
+export const JourneyAttemptQuiesceRequestCommand = Schema.Struct({
+  type: Schema.Literal("journey.attempt.quiesce.request"),
+  ...JourneyFencedCallbackFields,
+  outcome: JourneyCoordinatorOutcome,
+});
+export type JourneyAttemptQuiesceRequestCommand = typeof JourneyAttemptQuiesceRequestCommand.Type;
+
+export const JourneyAttemptQuiescedCommand = Schema.Struct({
+  type: Schema.Literal("journey.attempt.quiesced"),
+  ...JourneyFencedCallbackFields,
+  outcome: JourneyCoordinatorOutcome,
+});
+export type JourneyAttemptQuiescedCommand = typeof JourneyAttemptQuiescedCommand.Type;
+
+export const JourneyWaitEvaluateCommand = Schema.Struct({
+  type: Schema.Literal("journey.wait.evaluate"),
+  commandId: CommandId,
+  ...JourneyRunIdentity,
+  waitGeneration: PositiveInt,
+  triggerEventSequence: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+export type JourneyWaitEvaluateCommand = typeof JourneyWaitEvaluateCommand.Type;
+
+export const JourneyWaitWakeCommand = Schema.Struct({
+  type: Schema.Literal("journey.wait.wake"),
+  commandId: CommandId,
+  ...JourneyRunIdentity,
+  waitGeneration: PositiveInt,
+  triggerEventSequence: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+export type JourneyWaitWakeCommand = typeof JourneyWaitWakeCommand.Type;
+
+export const JourneyAttemptResultSubmitCommand = Schema.Struct({
+  type: Schema.Literal("journey.attempt.result.submit"),
+  ...JourneyFencedCallbackFields,
+  resultSequence: PositiveInt,
+  result: JourneyStructuredResult,
+});
+export type JourneyAttemptResultSubmitCommand = typeof JourneyAttemptResultSubmitCommand.Type;
+
+export const JourneyAttemptFailCommand = Schema.Struct({
+  type: Schema.Literal("journey.attempt.fail"),
+  ...JourneyFencedCallbackFields,
+  failureKind: Schema.Literals([
+    "launchRejected",
+    "spawnFailed",
+    "startAckTimeout",
+    "processExited",
+    "invalidOutcome",
+    "invalidResult",
+    "outputOverflow",
+    "quiesceTimeout",
+    "adapterError",
+  ]),
+  reason: TrimmedNonEmptyString,
+});
+export type JourneyAttemptFailCommand = typeof JourneyAttemptFailCommand.Type;
+
+export const JourneyRunCancelCommand = Schema.Struct({
+  type: Schema.Literal("journey.run.cancel"),
+  commandId: CommandId,
+  ...JourneyRunIdentity,
+  reason: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type JourneyRunCancelCommand = typeof JourneyRunCancelCommand.Type;
+
+export const JourneyRunCancelledCommand = Schema.Struct({
+  type: Schema.Literal("journey.run.cancelled"),
+  ...JourneyFencedCallbackFields,
+});
+export type JourneyRunCancelledCommand = typeof JourneyRunCancelledCommand.Type;
+
+export const JourneyRunInterruptCommand = Schema.Struct({
+  type: Schema.Literal("journey.run.interrupt"),
+  ...JourneyFencedCallbackFields,
+  reason: TrimmedNonEmptyString,
+  orphanProcessPossible: Schema.Boolean,
+});
+export type JourneyRunInterruptCommand = typeof JourneyRunInterruptCommand.Type;
+
+export const JourneyPermitCommand = Schema.Struct({
+  type: Schema.Literals(["journey.permit.claim", "journey.permit.release"]),
+  commandId: CommandId,
+  fence: JourneyAttemptFence,
+  permitId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type JourneyPermitCommand = typeof JourneyPermitCommand.Type;
+
+export const JourneyWriterLeaseCommand = Schema.Struct({
+  type: Schema.Literals(["journey.writer-lease.claim", "journey.writer-lease.release"]),
+  commandId: CommandId,
+  fence: JourneyAttemptFence,
+  leaseId: TrimmedNonEmptyString,
+  canonicalWorkspaceId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type JourneyWriterLeaseCommand = typeof JourneyWriterLeaseCommand.Type;
+
+export const JourneyApprovalInvalidateCommand = Schema.Struct({
+  type: Schema.Literal("journey.approval.invalidate"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  interactionId: TrimmedNonEmptyString,
+  proposalNodeId: TrimmedNonEmptyString,
+  previousRevisionHash: JourneyProposalRevisionHash,
+  nextRevisionHash: JourneyProposalRevisionHash,
+  reason: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type JourneyApprovalInvalidateCommand = typeof JourneyApprovalInvalidateCommand.Type;
+
+export const JourneyReconciliationObservation = Schema.Literals([
+  "reattached",
+  "processAbsent",
+  "processExited",
+  "orphanTerminated",
+  "workspaceClean",
+  "workspaceDirty",
+]);
+export type JourneyReconciliationObservation = typeof JourneyReconciliationObservation.Type;
+
+export const JourneyReconcileObserveCommand = Schema.Struct({
+  type: Schema.Literal("journey.reconcile.observe"),
+  ...JourneyFencedCallbackFields,
+  observation: JourneyReconciliationObservation,
+  detail: Schema.String,
+});
+export type JourneyReconcileObserveCommand = typeof JourneyReconcileObserveCommand.Type;
+
+export const JourneySteeringAcknowledgeCommand = Schema.Struct({
+  type: Schema.Literal("journey.steering.acknowledge"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: JourneyRunId,
+  itemId: TrimmedNonEmptyString,
+  sequence: PositiveInt,
+  createdAt: IsoDateTime,
+});
+export type JourneySteeringAcknowledgeCommand = typeof JourneySteeringAcknowledgeCommand.Type;
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -758,6 +1071,24 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnUsageUpdateCommand,
   ThreadTerminalStatusChangedCommand,
   ThreadJourneyMutateCommand,
+  JourneyChildStartCommand,
+  JourneyRunRequestCommand,
+  JourneyAttemptStartRequestCommand,
+  JourneyAttemptStartedCommand,
+  JourneyAttemptQuiesceRequestCommand,
+  JourneyAttemptQuiescedCommand,
+  JourneyWaitEvaluateCommand,
+  JourneyWaitWakeCommand,
+  JourneyAttemptResultSubmitCommand,
+  JourneyAttemptFailCommand,
+  JourneyRunCancelCommand,
+  JourneyRunCancelledCommand,
+  JourneyRunInterruptCommand,
+  JourneyPermitCommand,
+  JourneyWriterLeaseCommand,
+  JourneyApprovalInvalidateCommand,
+  JourneyReconcileObserveCommand,
+  JourneySteeringAcknowledgeCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -797,6 +1128,36 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.activity-appended",
   "thread.turn-usage-updated",
   "thread.terminal-status-changed",
+  "journey.run-requested",
+  "journey.attempt-start-requested",
+  "journey.attempt-started",
+  "journey.attempt-quiesce-requested",
+  "journey.attempt-quiesced",
+  "journey.run-waiting-for-dependencies",
+  "journey.run-waiting-for-user",
+  "journey.wait-wake-accepted",
+  "journey.attempt-result-accepted",
+  "journey.run-completed",
+  "journey.attempt-failed",
+  "journey.run-failed",
+  "journey.run-cancellation-requested",
+  "journey.run-cancelled",
+  "journey.run-interrupted",
+  "journey.decision-recorded",
+  "journey.approval-recorded",
+  "journey.approval-invalidated",
+  "journey.permit-claimed",
+  "journey.permit-released",
+  "journey.writer-lease-claimed",
+  "journey.writer-lease-released",
+  "journey.reconciled",
+  "journey.scheduler-configured",
+  "journey.scheduler-admission-recorded",
+  "journey.steering-enqueued",
+  "journey.steering-delivered",
+  "journey.steering-removed",
+  "journey.node-deletion-requested",
+  "journey.thread-deletion-requested",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1027,6 +1388,184 @@ export const ThreadTurnUsageUpdatedPayload = Schema.Struct({
 });
 export type ThreadTurnUsageUpdatedPayload = typeof ThreadTurnUsageUpdatedPayload.Type;
 
+export const JourneyRunRequestedPayload = Schema.Struct({
+  run: JourneyLogicalRun,
+  prompt: TrimmedNonEmptyString,
+});
+export type JourneyRunRequestedPayload = typeof JourneyRunRequestedPayload.Type;
+
+export const JourneyAttemptStartRequestedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  capabilities: Schema.Array(JourneyCapability),
+  canonicalWorkspaceId: Schema.optional(TrimmedNonEmptyString),
+});
+export type JourneyAttemptStartRequestedPayload = typeof JourneyAttemptStartRequestedPayload.Type;
+
+export const JourneyAttemptStartedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  resumableHarnessIdentity: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type JourneyAttemptStartedPayload = typeof JourneyAttemptStartedPayload.Type;
+
+export const JourneyAttemptQuiesceRequestedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  outcome: JourneyCoordinatorOutcome,
+  waitGeneration: Schema.optional(PositiveInt),
+});
+export type JourneyAttemptQuiesceRequestedPayload =
+  typeof JourneyAttemptQuiesceRequestedPayload.Type;
+
+export const JourneyAttemptQuiescedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  outcome: JourneyCoordinatorOutcome,
+});
+export type JourneyAttemptQuiescedPayload = typeof JourneyAttemptQuiescedPayload.Type;
+
+export const JourneyRunWaitingPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  status: Schema.Literals(["waitingForDependencies", "waitingForUser"]),
+  waitGeneration: PositiveInt,
+  acceptedWakeGeneration: Schema.NullOr(PositiveInt),
+});
+export type JourneyRunWaitingPayload = typeof JourneyRunWaitingPayload.Type;
+
+export const JourneyWaitWakeAcceptedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  waitGeneration: PositiveInt,
+  acceptedWakeGeneration: PositiveInt,
+  triggerEventSequence: NonNegativeInt,
+});
+export type JourneyWaitWakeAcceptedPayload = typeof JourneyWaitWakeAcceptedPayload.Type;
+
+export const JourneyAttemptResultAcceptedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  resultSequence: PositiveInt,
+  result: JourneyStructuredResult,
+});
+export type JourneyAttemptResultAcceptedPayload = typeof JourneyAttemptResultAcceptedPayload.Type;
+
+export const JourneyRunCompletedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  status: Schema.Literal("completed"),
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type JourneyRunCompletedPayload = typeof JourneyRunCompletedPayload.Type;
+export const JourneyRunFailedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  status: Schema.Literal("failed"),
+  reason: TrimmedNonEmptyString,
+});
+export type JourneyRunFailedPayload = typeof JourneyRunFailedPayload.Type;
+export const JourneyRunCancelledPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  status: Schema.Literal("cancelled"),
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type JourneyRunCancelledPayload = typeof JourneyRunCancelledPayload.Type;
+
+export const JourneyAttemptFailedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  status: Schema.Literal("failed"),
+  failureKind: TrimmedNonEmptyString,
+  reason: TrimmedNonEmptyString,
+});
+export type JourneyAttemptFailedPayload = typeof JourneyAttemptFailedPayload.Type;
+
+export const JourneyRunCancellationRequestedPayload = Schema.Struct({
+  ...JourneyRunIdentity,
+  reason: TrimmedNonEmptyString,
+});
+export type JourneyRunCancellationRequestedPayload =
+  typeof JourneyRunCancellationRequestedPayload.Type;
+
+export const JourneyRunInterruptedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  reason: TrimmedNonEmptyString,
+  orphanProcessPossible: Schema.Boolean,
+});
+export type JourneyRunInterruptedPayload = typeof JourneyRunInterruptedPayload.Type;
+
+export const JourneyDecisionRecordedPayload = JourneyDecisionSubmission;
+export type JourneyDecisionRecordedPayload = typeof JourneyDecisionRecordedPayload.Type;
+
+export const JourneyApprovalRecordedPayload = JourneyRevisionBoundApproval.mapFields(
+  Struct.assign({ threadId: ThreadId }),
+);
+export type JourneyApprovalRecordedPayload = typeof JourneyApprovalRecordedPayload.Type;
+
+export const JourneyApprovalInvalidatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  interactionId: TrimmedNonEmptyString,
+  proposalNodeId: TrimmedNonEmptyString,
+  previousRevisionHash: JourneyProposalRevisionHash,
+  nextRevisionHash: JourneyProposalRevisionHash,
+  reason: TrimmedNonEmptyString,
+});
+export type JourneyApprovalInvalidatedPayload = typeof JourneyApprovalInvalidatedPayload.Type;
+
+export const JourneyPermitPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  permitId: TrimmedNonEmptyString,
+});
+export type JourneyPermitPayload = typeof JourneyPermitPayload.Type;
+
+export const JourneyWriterLeasePayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  leaseId: TrimmedNonEmptyString,
+  canonicalWorkspaceId: TrimmedNonEmptyString,
+});
+export type JourneyWriterLeasePayload = typeof JourneyWriterLeasePayload.Type;
+
+export const JourneyReconciledPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  observation: JourneyReconciliationObservation,
+  detail: Schema.String,
+});
+export type JourneyReconciledPayload = typeof JourneyReconciledPayload.Type;
+
+export const JourneySchedulerConfiguredPayload = Schema.Struct({
+  threadId: ThreadId,
+  perJourneyResearchLimit: PositiveInt,
+  globalResearchLimit: PositiveInt,
+});
+export type JourneySchedulerConfiguredPayload = typeof JourneySchedulerConfiguredPayload.Type;
+
+export const JourneySchedulerAdmissionRecordedPayload = Schema.Struct({
+  fence: JourneyAttemptFence,
+  nextJourneyCursor: ThreadId,
+});
+export type JourneySchedulerAdmissionRecordedPayload =
+  typeof JourneySchedulerAdmissionRecordedPayload.Type;
+
+export const JourneySteeringEnqueuedPayload = JourneySteeringItem;
+export type JourneySteeringEnqueuedPayload = typeof JourneySteeringEnqueuedPayload.Type;
+export const JourneySteeringRemovedPayload = Schema.Struct({
+  threadId: ThreadId,
+  runId: JourneyRunId,
+  itemId: TrimmedNonEmptyString,
+  sequence: PositiveInt,
+  removedAt: IsoDateTime,
+});
+export type JourneySteeringRemovedPayload = typeof JourneySteeringRemovedPayload.Type;
+export const JourneyNodeDeletionRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  nodeId: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+export const JourneyThreadDeletionRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  requestedAt: IsoDateTime,
+});
+
+export const JourneySteeringDeliveredPayload = Schema.Struct({
+  threadId: ThreadId,
+  runId: JourneyRunId,
+  itemId: TrimmedNonEmptyString,
+  sequence: PositiveInt,
+  deliveredAt: IsoDateTime,
+});
+export type JourneySteeringDeliveredPayload = typeof JourneySteeringDeliveredPayload.Type;
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1183,6 +1722,156 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.terminal-status-changed"),
     payload: ThreadTerminalStatusChangedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-requested"),
+    payload: JourneyRunRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.attempt-start-requested"),
+    payload: JourneyAttemptStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.attempt-started"),
+    payload: JourneyAttemptStartedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.attempt-quiesce-requested"),
+    payload: JourneyAttemptQuiesceRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.attempt-quiesced"),
+    payload: JourneyAttemptQuiescedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-waiting-for-dependencies"),
+    payload: JourneyRunWaitingPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-waiting-for-user"),
+    payload: JourneyRunWaitingPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.wait-wake-accepted"),
+    payload: JourneyWaitWakeAcceptedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.attempt-result-accepted"),
+    payload: JourneyAttemptResultAcceptedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-completed"),
+    payload: JourneyRunCompletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.attempt-failed"),
+    payload: JourneyAttemptFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-failed"),
+    payload: JourneyRunFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-cancellation-requested"),
+    payload: JourneyRunCancellationRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-cancelled"),
+    payload: JourneyRunCancelledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.run-interrupted"),
+    payload: JourneyRunInterruptedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.decision-recorded"),
+    payload: JourneyDecisionRecordedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.approval-recorded"),
+    payload: JourneyApprovalRecordedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.approval-invalidated"),
+    payload: JourneyApprovalInvalidatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.permit-claimed"),
+    payload: JourneyPermitPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.permit-released"),
+    payload: JourneyPermitPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.writer-lease-claimed"),
+    payload: JourneyWriterLeasePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.writer-lease-released"),
+    payload: JourneyWriterLeasePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.reconciled"),
+    payload: JourneyReconciledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.scheduler-configured"),
+    payload: JourneySchedulerConfiguredPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.scheduler-admission-recorded"),
+    payload: JourneySchedulerAdmissionRecordedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.steering-enqueued"),
+    payload: JourneySteeringEnqueuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.steering-delivered"),
+    payload: JourneySteeringDeliveredPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.steering-removed"),
+    payload: JourneySteeringRemovedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.node-deletion-requested"),
+    payload: JourneyNodeDeletionRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("journey.thread-deletion-requested"),
+    payload: JourneyThreadDeletionRequestedPayload,
   }),
 ]);
 type WithOptionalThreadCreatedSurface<T> = T extends {
@@ -1398,6 +2087,64 @@ export type OrchestrationGetSessionMetricsInput = typeof OrchestrationGetSession
 export const OrchestrationGetSessionMetricsResult = OrchestrationSessionMetrics;
 export type OrchestrationGetSessionMetricsResult = typeof OrchestrationGetSessionMetricsResult.Type;
 
+export const OrchestrationGetJourneyProjectionInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationGetJourneyProjectionInput =
+  typeof OrchestrationGetJourneyProjectionInput.Type;
+export const OrchestrationGetJourneyProjectionResult = JourneyProjectionSnapshot;
+export type OrchestrationGetJourneyProjectionResult =
+  typeof OrchestrationGetJourneyProjectionResult.Type;
+
+export const OrchestrationGetJourneyDeltasInput = Schema.Struct({
+  threadId: ThreadId,
+  afterJourneyRevision: NonNegativeInt,
+});
+export type OrchestrationGetJourneyDeltasInput = typeof OrchestrationGetJourneyDeltasInput.Type;
+export const OrchestrationGetJourneyDeltasResult = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("deltas"),
+    deltas: Schema.Array(JourneyProjectionDelta),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("reset"),
+    snapshot: JourneyProjectionSnapshot,
+  }),
+]);
+export type OrchestrationGetJourneyDeltasResult = typeof OrchestrationGetJourneyDeltasResult.Type;
+
+export const OrchestrationGetJourneyRunOutputInput = JourneyOutputReadInput;
+export type OrchestrationGetJourneyRunOutputInput =
+  typeof OrchestrationGetJourneyRunOutputInput.Type;
+export const OrchestrationGetJourneyRunOutputResult = JourneyOutputReadResult;
+export type OrchestrationGetJourneyRunOutputResult =
+  typeof OrchestrationGetJourneyRunOutputResult.Type;
+
+export const OrchestrationSubscribeJourneyRunOutputInput = JourneyOutputReadInput;
+export type OrchestrationSubscribeJourneyRunOutputInput =
+  typeof OrchestrationSubscribeJourneyRunOutputInput.Type;
+export const OrchestrationSubscribeJourneyRunOutputResult = JourneyOutputReadResult;
+export type OrchestrationSubscribeJourneyRunOutputResult =
+  typeof OrchestrationSubscribeJourneyRunOutputResult.Type;
+
+export const OrchestrationUnsubscribeJourneyRunOutputInput = Schema.Struct({
+  fence: JourneyAttemptFence,
+});
+export type OrchestrationUnsubscribeJourneyRunOutputInput =
+  typeof OrchestrationUnsubscribeJourneyRunOutputInput.Type;
+export const OrchestrationUnsubscribeJourneyRunOutputResult = Schema.Void;
+export type OrchestrationUnsubscribeJourneyRunOutputResult =
+  typeof OrchestrationUnsubscribeJourneyRunOutputResult.Type;
+
+export const OrchestrationJourneyRunOutputPush = Schema.Union([
+  JourneyOutputChunk,
+  JourneyOutputReadResult,
+]);
+export type OrchestrationJourneyRunOutputPush = typeof OrchestrationJourneyRunOutputPush.Type;
+
+export const OrchestrationJourneyProjectionPush = JourneyProjectionDelta;
+export type OrchestrationJourneyProjectionPush = typeof OrchestrationJourneyProjectionPush.Type;
+
 export const OrchestrationGetSlashCommandsInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -1445,5 +2192,25 @@ export const OrchestrationRpcSchemas = {
   getSessionMetrics: {
     input: OrchestrationGetSessionMetricsInput,
     output: OrchestrationGetSessionMetricsResult,
+  },
+  getJourneyProjection: {
+    input: OrchestrationGetJourneyProjectionInput,
+    output: OrchestrationGetJourneyProjectionResult,
+  },
+  getJourneyDeltas: {
+    input: OrchestrationGetJourneyDeltasInput,
+    output: OrchestrationGetJourneyDeltasResult,
+  },
+  getJourneyRunOutput: {
+    input: OrchestrationGetJourneyRunOutputInput,
+    output: OrchestrationGetJourneyRunOutputResult,
+  },
+  subscribeJourneyRunOutput: {
+    input: OrchestrationSubscribeJourneyRunOutputInput,
+    output: OrchestrationSubscribeJourneyRunOutputResult,
+  },
+  unsubscribeJourneyRunOutput: {
+    input: OrchestrationUnsubscribeJourneyRunOutputInput,
+    output: OrchestrationUnsubscribeJourneyRunOutputResult,
   },
 } as const;

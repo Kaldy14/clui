@@ -108,3 +108,25 @@
 
 - [ ] Decide whether user-authored edges/nodes become part of the MVP after agent-authored mutations are stable.
 - [ ] Define the long-term conflict policy for parallel implementation nodes that touch overlapping files.
+
+## Journey MVP architecture and invariants
+
+Journey is a first-class thread surface, independent of the terminal harness. Its free-form shape is agent-authored: nodes and edges are semantic data, while XYFlow direction and coordinates are projections that may be recomputed or switched between top-to-bottom and left-to-right.
+
+- The append-only event log is authoritative. Rebuildable projections expose the graph, node details, run summaries, deltas, and selected-fence output to the UI; the browser never becomes lifecycle authority.
+- A logical run represents intent and lifecycle. Each run may have multiple physical attempts. Attempt IDs, wake generations, and fences prevent stale acknowledgements, output, cancellation, or reconciliation from mutating current state.
+- Starting a root or child is atomic: node creation, run creation, dependency/admission checks, lease/permit ownership, and the first attempt start intent commit together or not at all.
+- The server scheduler is dependency-aware and fair. It admits only ready DAG work, limits research concurrency, preserves round-robin/FIFO fairness, releases capacity selectively, and treats implementation writer leases separately from read-only research permits.
+- Pi and Codex are run adapters, not graph authorities. Read-only research runs receive capability-scoped credentials; implementation runs receive a writer capability and canonical workspace identity. Both adapters emit the same validated Journey mutations.
+- Reactor shutdown quiesces new admissions, cancels or fences active work, reconciles interrupted attempts, and resumes safely after restart. Durable output is stored by selected attempt fence and pushed as projection deltas; stale physical output is ignored.
+- Policy is adaptive rather than a fixed workflow: a simple cohesive node may auto-continue, while complex research, questions, convergence, and current-revision approval pause for explicit interaction. Human-input nodes use writer leases/HITL ownership so only one authoritative responder resolves a request.
+- Deleting a Journey cascades through nodes, dependencies, runs, attempts, leases, queued steering, artifacts, and output projections. The event remains replayable while derived records disappear or become tombstoned according to retention policy.
+
+### Lifecycle
+
+`draft → ready → running → waitingForUser | blocked → running → completed | failed | cancelled | superseded`.
+Each transition is fenced and replayable. Failures retain the last valid projection and expose a concrete retry/reconcile action; restart recovery never assumes an unacknowledged attempt completed.
+
+### MVP boundary
+
+The MVP deliberately excludes issue-tracker synchronization, fixed workflow templates, general whiteboard editing, speculative future nodes, automatic conflict resolution for overlapping implementation work, and unbounded live transcript history. It focuses on one Journey thread, agent-authored graph mutations, Pi/Codex adapters, structured forms/questions, durable runs, and projection-driven graph rendering.

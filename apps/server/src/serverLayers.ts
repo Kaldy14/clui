@@ -8,6 +8,7 @@ import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationE
 import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
+import { JourneyReactorLive } from "./orchestration/Layers/JourneyReactor";
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 
@@ -56,8 +57,10 @@ export function makeServerRuntimeServicesLayer() {
   const checkpointReactorLayer = CheckpointReactorLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
   );
+  const journeyReactorLayer = JourneyReactorLive.pipe(Layer.provideMerge(runtimeServicesLayer));
   const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
     Layer.provideMerge(checkpointReactorLayer),
+    Layer.provideMerge(journeyReactorLayer),
     Layer.provideMerge(gitCoreLayer),
     Layer.provideMerge(textGenerationLayer),
   );

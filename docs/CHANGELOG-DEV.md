@@ -4,6 +4,116 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-03 — Preserve queued Journey research and cascade node deletion
+
+**Problem:** An atomic research child start was rejected when concurrency was full or another Journey owned the next fair admission, so the work disappeared instead of waiting. Deleting a node also cancelled only runs directly attached to that node, allowing active descendants to outlive the removed branch.
+
+**Root cause:** Child creation coupled durable graph/run creation to immediate scheduler admission, and the reactor had no later queue-drain path. Node deletion and its finalization barrier selected runs by node ID without traversing parent/coordinator ownership.
+
+**Fix:** Research child creation now always persists the graph node and queued logical run, starts immediately only when admitted, and relies on a serialized reactor drain after run requests, capacity release, scheduler changes, terminal transitions, and startup. Node deletion now computes the full transitive run descendant closure, cancels it child-first with fail-closed interrupted-process reconciliation, and finalizes only when the entire closure is terminal. Added domain and reactor regressions for delayed fair admission and descendant deletion barriers.
+
+**Affected files:**
+
+- `apps/server/src/orchestration/journeyDomain.ts`
+- `apps/server/src/orchestration/journeyDomain.test.ts`
+- `apps/server/src/orchestration/Layers/JourneyReactor.ts`
+- `apps/server/src/orchestration/Layers/JourneyReactor.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+## 2026-08-03 — Remove obsolete Journey client orchestration helpers
+
+**Problem:** The Journey web graph module still contained the retired client-side agent-response parser, prompt builder, automatic node selection, snapshot settlement, and node mutation helpers after orchestration moved to the authoritative server. The node view also carried an inert todo callback, and workspace canonicalization silently fell back to a resolved path when filesystem identity could not be verified.
+
+**Root cause:** Earlier MVP orchestration utilities and component plumbing remained after the server coordinator and read-only todo presentation replaced them. Workspace identity treated filesystem lookup failure as a usable alias instead of an authorization failure.
+
+**Fix:** Deleted the unused client orchestration helpers and their obsolete tests, removed the unused todo callback path while retaining the read-only visual, trimmed unused scheduler exports, and made canonical workspace identity propagate realpath/stat failures. Added regression coverage proving a missing workspace root fails closed while preserving symlink and inode canonicalization behavior.
+
+**Affected files:**
+
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/server/src/orchestration/journeySchedulerPolicy.ts`
+- `apps/server/src/orchestration/journeySchedulerPolicy.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+## 2026-08-03 — Document Journey MVP architecture and boundaries
+
+**Problem:** Journey execution had grown across lifecycle, scheduler, adapter, authorization, reactor, output, and projection concerns without one concise architectural contract describing their authority boundaries and recovery invariants.
+
+**Root cause:** The design document focused primarily on product interaction and visual behavior while durable event authority, logical-run/physical-attempt fencing, atomic starts, scheduler fairness, capability-scoped adapters, quiescing, and deletion semantics were distributed across implementation notes.
+
+**Fix:** Added a Journey MVP architecture section covering event-log authority, rebuildable projections and deltas, run/attempt fences, atomic root and child starts, dependency/fairness scheduling, Pi/Codex read-only and writer capabilities, reactor recovery, selected-fence output, adaptive continuation and HITL leases, lifecycle transitions, cascade deletion, and explicit MVP non-goals.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `docs/CHANGELOG-DEV.md`
+
+## 2026-08-02 — Make Journey child starts atomic and capability-fenced
+
+**Problem:** Journey MCP child starts could accept caller-owned lifecycle metadata and required multiple lifecycle mutations, allowing partial graph/run state and making authorization failures difficult to prove side-effect free.
+
+**Root cause:** Research and implementation tool requests were translated into separate graph and run commands, workspace identity was accepted at the request boundary, and revoked attempt credentials remained retained in the authorizer indices.
+
+**Fix:** Added one internal `journey.child.start` command that atomically creates the draft graph node, child run, admission or writer ownership, and exactly one starting attempt. The server now derives role, capabilities, harness, lifecycle state, and canonical workspace identity from trusted state; fenced attempt acknowledgement promotes the node to running. Journey MCP operations authorize before dispatch, cancellation revokes before dispatch, and credential rotation/revocation removes obsolete hashes and empty indices. WebSocket Journey catch-up and selected-attempt output routes now use the durable engine stores, while live projection deltas broadcast on the dedicated Journey channel. Added domain, engine, endpoint, contract, and authorization regression coverage for atomicity and zero-dispatch rejection paths.
+
+**Affected files:**
+
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/journey.test.ts`
+- `apps/server/src/orchestration/journeyDomain.ts`
+- `apps/server/src/orchestration/journeyDomain.test.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`
+- `apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts`
+- `apps/server/src/terminal/journeyAttemptAuthorization.ts`
+- `apps/server/src/terminal/journeyAttemptAuthorization.test.ts`
+- `apps/server/src/terminal/journeyMcpServer.ts`
+- `apps/server/src/terminal/journeyMcpServer.test.ts`
+- `apps/server/src/wsServer.ts`
+- `docs/CHANGELOG-DEV.md`
+
+## 2026-08-02 — Add Journey scheduler safety policy
+
+**Problem:** Authoritative Journey runs still lacked deterministic dependency, capacity, approval, workspace ownership, fairness, and steering rules for safely admitting parallel research and later implementation work.
+
+**Root cause:** G003 established lifecycle authority and replay, but intentionally deferred scheduler policy; graph mutations could introduce gating cycles, queued research had no shared admission algorithm, and workspace aliases or stale proposal approvals were not normalized before write admission.
+
+**Fix:** Added an inspectable scheduler policy for `dependsOn` DAG/readiness, configurable per-Journey and global research caps, persisted round-robin/FIFO admission state, canonical realpath/filesystem workspace identity, material proposal revision hashing, revision-bound write guards and mutation invalidation, independent child-terminal wake semantics, and selective wait capacity release. Direct starts now pass through the authoritative scheduler, research permits and canonical writer leases are claimed atomically with start intent, ownership is keyed by Journey plus run and verified on release, and steering prompts use durable enqueue/deliver events with FIFO acknowledgement and replayable projection state.
+
+**Affected files:**
+
+- `apps/server/src/orchestration/journeySchedulerPolicy.ts`
+- `apps/server/src/orchestration/journeySchedulerPolicy.test.ts`
+- `apps/server/src/orchestration/journeyDomain.ts`
+- `apps/server/src/orchestration/journeyDomain.test.ts`
+- `apps/server/src/orchestration/journeyMutation.ts`
+- `apps/server/src/orchestration/journeyMutation.test.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts`
+- `packages/contracts/src/journey.ts`
+- `packages/contracts/src/orchestration.ts`
+- `docs/CHANGELOG-DEV.md`
+
+## 2026-08-02 — Add authoritative Journey run lifecycle domain
+
+**Problem:** Journey execution contracts existed without a server authority for logical runs, physical attempts, waits, approvals, permits, or writer leases, leaving new commands unhandled and server typechecking broken.
+
+**Root cause:** The existing orchestration engine projected only thread presentation state; Journey lifecycle was still browser-owned and had no event-replay reducer or fenced command decider.
+
+**Fix:** Added a focused Journey domain decider and rebuildable event projection, integrated it with the orchestration transaction/replay path, exposed read-only Journey projection RPCs, and added regression tests for stale fences, accepted-and-consumed wake generations, the cancellation transition matrix, terminal-interrupted reconciliation fencing, complete decision/approval/ownership metadata, and replay equivalence. Harness launching, scheduling policy, and durable output storage remain separate follow-up stages.
+
+**Affected files:**
+
+- `apps/server/src/orchestration/journeyDomain.ts`
+- `apps/server/src/orchestration/journeyDomain.test.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`
+- `apps/server/src/orchestration/Services/OrchestrationEngine.ts`
+- `apps/server/src/wsServer.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Remove noisy Journey composer helper copy
 
 **Problem:** Expanding the bottom Journey input added a full-width footer explaining that a busy agent would queue the prompt and repeating Enter/Shift+Enter shortcuts, creating visual noise below the primary control.

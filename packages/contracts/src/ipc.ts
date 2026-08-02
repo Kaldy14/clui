@@ -64,6 +64,17 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
   OrchestrationGetSlashCommandsInput,
+  OrchestrationGetJourneyProjectionInput,
+  OrchestrationGetJourneyProjectionResult,
+  OrchestrationGetJourneyDeltasInput,
+  OrchestrationGetJourneyDeltasResult,
+  OrchestrationGetJourneyRunOutputInput,
+  OrchestrationGetJourneyRunOutputResult,
+  OrchestrationSubscribeJourneyRunOutputInput,
+  OrchestrationSubscribeJourneyRunOutputResult,
+  OrchestrationUnsubscribeJourneyRunOutputInput,
+  OrchestrationJourneyRunOutputPush,
+  OrchestrationJourneyProjectionPush,
 } from "./orchestration";
 import type {
   McpGetStatusInput,
@@ -248,6 +259,27 @@ export interface NativeApi {
     getSessionMetrics: (
       input: OrchestrationGetSessionMetricsInput,
     ) => Promise<OrchestrationGetSessionMetricsResult>;
+    getJourneyProjection: (
+      input: OrchestrationGetJourneyProjectionInput,
+    ) => Promise<OrchestrationGetJourneyProjectionResult>;
+    getJourneyDeltas: (
+      input: OrchestrationGetJourneyDeltasInput,
+    ) => Promise<OrchestrationGetJourneyDeltasResult>;
+    getJourneyRunOutput: (
+      input: OrchestrationGetJourneyRunOutputInput,
+    ) => Promise<OrchestrationGetJourneyRunOutputResult>;
+    subscribeJourneyRunOutput: (
+      input: OrchestrationSubscribeJourneyRunOutputInput,
+    ) => Promise<OrchestrationSubscribeJourneyRunOutputResult>;
+    unsubscribeJourneyRunOutput: (
+      input: OrchestrationUnsubscribeJourneyRunOutputInput,
+    ) => Promise<void>;
+    onJourneyRunOutput: (
+      callback: (chunk: OrchestrationJourneyRunOutputPush) => void,
+    ) => () => void;
+    onJourneyProjection: (
+      callback: (delta: OrchestrationJourneyProjectionPush) => void,
+    ) => () => void;
     getSlashCommands: (
       input: OrchestrationGetSlashCommandsInput,
     ) => Promise<{ commands: ReadonlyArray<string> }>;

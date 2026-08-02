@@ -1,5 +1,7 @@
 import type { JourneyMutation, JourneySnapshot } from "@clui/contracts";
 
+import { assertAcyclicJourneyDependencies } from "./journeySchedulerPolicy.ts";
+
 export function applyJourneyMutation(
   snapshot: JourneySnapshot,
   mutation: JourneyMutation,
@@ -57,11 +59,13 @@ export function applyJourneyMutation(
     }
   }
 
-  return {
+  const nextSnapshot: JourneySnapshot = {
     ...snapshot,
     nodes: [...nodesById.values()],
     edges: [...edgesById.values()],
     activeNodeId,
     updatedAt,
   };
+  assertAcyclicJourneyDependencies(nextSnapshot);
+  return nextSnapshot;
 }

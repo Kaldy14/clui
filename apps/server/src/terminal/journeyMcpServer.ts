@@ -1,6 +1,10 @@
 export const CLUI_JOURNEY_TOOL_ENDPOINT_ENV = "CLUI_JOURNEY_TOOL_ENDPOINT";
 export const CLUI_JOURNEY_TOOL_THREAD_ID_ENV = "CLUI_JOURNEY_TOOL_THREAD_ID";
 export const CLUI_JOURNEY_TOOL_TOKEN_ENV = "CLUI_JOURNEY_TOOL_TOKEN";
+export const CLUI_JOURNEY_TOOL_RUN_ID_ENV = "CLUI_JOURNEY_RUN_ID";
+export const CLUI_JOURNEY_TOOL_NODE_ID_ENV = "CLUI_JOURNEY_NODE_ID";
+export const CLUI_JOURNEY_TOOL_ATTEMPT_ENV = "CLUI_JOURNEY_ATTEMPT";
+export const CLUI_JOURNEY_TOOL_CAPABILITIES_ENV = "CLUI_JOURNEY_CAPABILITIES";
 
 const interactionSchema = {
   anyOf: [
@@ -167,6 +171,175 @@ export const JOURNEY_GET_INPUT_SCHEMA = {
   properties: {},
 } as const;
 
+export const JOURNEY_RESEARCH_START_INPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["nodeId", "title", "question"],
+  properties: {
+    nodeId: { type: "string", minLength: 1 },
+    title: { type: "string", minLength: 1 },
+    question: { type: "string", minLength: 1 },
+  },
+} as const;
+
+export const JOURNEY_RESEARCH_GET_INPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: { researchRunId: { type: "string", minLength: 1 } },
+} as const;
+
+export const JOURNEY_RESEARCH_CANCEL_INPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["researchRunId", "reason"],
+  properties: {
+    researchRunId: { type: "string", minLength: 1 },
+    reason: { type: "string", minLength: 1 },
+  },
+} as const;
+
+export const JOURNEY_IMPLEMENTATION_START_INPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["nodeId", "title", "instructions"],
+  properties: {
+    nodeId: { type: "string", minLength: 1 },
+    title: { type: "string", minLength: 1 },
+    instructions: { type: "string", minLength: 1 },
+    proposalRevisionHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+  },
+} as const;
+
+export type JourneyLifecycleToolOperation =
+  | "research.start"
+  | "research.get"
+  | "research.cancel"
+  | "implementation.start";
+
+export interface JourneyLifecycleToolDependencies {
+  readonly authorizer: Pick<JourneyAttemptAuthorizer, "authorize" | "revokeFence">;
+  readonly readProjection: () => Promise<JourneyProjectionSnapshot>;
+  readonly dispatch: (command: OrchestrationCommand) => Promise<unknown>;
+  readonly resolveWorkspaceIdentity: () => Promise<string>;
+  readonly now?: () => string;
+  readonly randomId?: () => string;
+}
+
+const lifecycleCapability: Record<JourneyLifecycleToolOperation, JourneyCapability> = {
+  "research.start": "research.start",
+  "research.get": "research.read",
+  "research.cancel": "research.cancel",
+  "implementation.start": "implementation.start",
+};
+
+function textField(body: Readonly<Record<string, unknown>>, key: string): string {
+  return typeof body[key] === "string" ? body[key].trim() : "";
+}
+
+/** Executes one attempt-authorized lifecycle operation. Authorization and stale checks precede effects. */
+export async function executeJourneyLifecycleToolRequest(input: {
+  readonly operation: JourneyLifecycleToolOperation;
+  readonly token: string | null | undefined;
+  readonly fence: JourneyAttemptFence;
+  readonly body: Readonly<Record<string, unknown>>;
+  readonly dependencies: JourneyLifecycleToolDependencies;
+}): Promise<unknown> {
+  const { dependencies, fence, body } = input;
+  dependencies.authorizer.authorize({
+    token: input.token,
+    fence,
+    capability: lifecycleCapability[input.operation],
+  });
+  const projection = await dependencies.readProjection();
+  const parentRun = projection.runs.find((candidate) => candidate.runId === fence.runId);
+  const parentAttempt = projection.attempts.find(
+    (candidate) =>
+      candidate.fence.runId === fence.runId &&
+      candidate.fence.nodeId === fence.nodeId &&
+      candidate.fence.attempt === fence.attempt,
+  );
+  if (
+    !parentRun ||
+    parentRun.nodeId !== fence.nodeId ||
+    parentRun.attempt !== fence.attempt ||
+    parentRun.status !== "running" ||
+    parentAttempt?.status !== "running"
+  ) {
+    throw new Error("Unauthorized Journey tool request.");
+  }
+
+  if (input.operation === "research.get") {
+    const requestedRunId = textField(body, "researchRunId");
+    const runs = projection.runs.filter(
+      (run) => run.role === "researchWorker" && (!requestedRunId || run.runId === requestedRunId),
+    );
+    return {
+      runs,
+      attempts: projection.attempts.filter((candidate) =>
+        runs.some((run) => run.runId === candidate.fence.runId),
+      ),
+    };
+  }
+
+  const now = dependencies.now?.() ?? new Date().toISOString();
+  const randomId = dependencies.randomId?.() ?? crypto.randomUUID();
+  if (input.operation === "research.cancel") {
+    const runId = textField(body, "researchRunId");
+    const reason = textField(body, "reason");
+    if (!runId || !reason) throw new Error("Invalid research cancellation.");
+    const run = projection.runs.find(
+      (candidate) => candidate.runId === runId && candidate.role === "researchWorker",
+    );
+    if (!run || run.attempt <= 0) throw new Error("Research run was not found.");
+    const targetFence = { ...fence, runId, nodeId: run.nodeId, attempt: run.attempt };
+    dependencies.authorizer.revokeFence(targetFence);
+    await dependencies.dispatch({
+      type: "journey.run.cancel",
+      commandId: CommandId.makeUnsafe(`journey-tool-cancel:${randomId}`),
+      threadId: fence.threadId,
+      runId,
+      nodeId: run.nodeId,
+      reason,
+      createdAt: now,
+    });
+    return dependencies.readProjection();
+  }
+
+  const nodeId = textField(body, "nodeId");
+  const title = textField(body, "title");
+  const instructions =
+    input.operation === "research.start"
+      ? textField(body, "question")
+      : textField(body, "instructions");
+  if (!nodeId || !title || !instructions) {
+    throw new Error(
+      input.operation === "research.start"
+        ? "Invalid research start request."
+        : "Invalid implementation start request.",
+    );
+  }
+  const childKind = input.operation === "research.start" ? "research" : "implementation";
+  const runId = `${childKind}:${randomId}`;
+  const canonicalWorkspaceIdentity =
+    childKind === "implementation" ? await dependencies.resolveWorkspaceIdentity() : undefined;
+  const proposalRevisionHash = textField(body, "proposalRevisionHash") || undefined;
+  await dependencies.dispatch({
+    type: "journey.child.start",
+    commandId: CommandId.makeUnsafe(`journey-tool-start:${randomId}`),
+    parentFence: fence,
+    childKind,
+    runId,
+    nodeId,
+    title,
+    instructions,
+    harness: parentRun.harness,
+    ...(canonicalWorkspaceIdentity ? { canonicalWorkspaceIdentity } : {}),
+    ...(proposalRevisionHash ? { proposalRevisionHash } : {}),
+    createdAt: now,
+  });
+  return dependencies.readProjection();
+}
+
 export function buildJourneyMcpServerSource(): string {
   return `
 import readline from "node:readline";
@@ -174,8 +347,17 @@ import readline from "node:readline";
 const endpoint = process.env.${CLUI_JOURNEY_TOOL_ENDPOINT_ENV};
 const threadId = process.env.${CLUI_JOURNEY_TOOL_THREAD_ID_ENV};
 const token = process.env.${CLUI_JOURNEY_TOOL_TOKEN_ENV};
+const runId = process.env.${CLUI_JOURNEY_TOOL_RUN_ID_ENV};
+const nodeId = process.env.${CLUI_JOURNEY_TOOL_NODE_ID_ENV};
+const attempt = process.env.${CLUI_JOURNEY_TOOL_ATTEMPT_ENV};
+const grantedCapabilities = new Set(JSON.parse(process.env.${CLUI_JOURNEY_TOOL_CAPABILITIES_ENV} ?? "[]"));
+const attemptScoped = Boolean(runId && nodeId && attempt);
 const updateSchema = ${JSON.stringify(JOURNEY_UPDATE_INPUT_SCHEMA)};
 const getSchema = ${JSON.stringify(JOURNEY_GET_INPUT_SCHEMA)};
+const researchStartSchema = ${JSON.stringify(JOURNEY_RESEARCH_START_INPUT_SCHEMA)};
+const researchGetSchema = ${JSON.stringify(JOURNEY_RESEARCH_GET_INPUT_SCHEMA)};
+const researchCancelSchema = ${JSON.stringify(JOURNEY_RESEARCH_CANCEL_INPUT_SCHEMA)};
+const implementationStartSchema = ${JSON.stringify(JOURNEY_IMPLEMENTATION_START_INPUT_SCHEMA)};
 
 if (!endpoint || !threadId || !token) {
   process.stderr.write("Clui Journey MCP configuration is incomplete.\\n");
@@ -185,15 +367,47 @@ if (!endpoint || !threadId || !token) {
 const tools = [
   {
     name: "journey_get",
+    requiredCapability: "graph.read",
     description: "Read the latest durable Clui Journey graph before deciding the next mutation.",
     inputSchema: getSchema,
   },
   {
     name: "journey_update",
+    requiredCapability: "graph.mutate",
     description: "Immediately create, update, or remove Journey nodes and edges while real work is happening. Never create future placeholder nodes: start concrete work as running, then record its result or real blocker.",
     inputSchema: updateSchema,
   },
-];
+  {
+    name: "journey_research_start",
+    requiredCapability: "research.start",
+    description: "Start a concrete read-only research node. The node and durable starting attempt are recorded before the worker is launched.",
+    inputSchema: researchStartSchema,
+  },
+  {
+    name: "journey_research_get",
+    requiredCapability: "research.read",
+    description: "Inspect the durable state of research runs started by this Journey.",
+    inputSchema: researchGetSchema,
+  },
+  {
+    name: "journey_research_cancel",
+    requiredCapability: "research.cancel",
+    description: "Cancel a research run. Its attempt credential is revoked before cancellation is requested.",
+    inputSchema: researchCancelSchema,
+  },
+  {
+    name: "journey_implementation_start",
+    requiredCapability: "implementation.start",
+    description: "Start a concrete repository-writing implementation node after any required plan approval.",
+    inputSchema: implementationStartSchema,
+  },
+]
+  .filter((tool) =>
+    attemptScoped
+      ? grantedCapabilities.has(tool.requiredCapability)
+      : tool.name === "journey_get" || tool.name === "journey_update",
+  )
+  .map(({ requiredCapability: _requiredCapability, ...tool }) => tool);
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\\n");
@@ -204,6 +418,11 @@ async function request(path, init = {}) {
     ...init,
     headers: {
       Authorization: "Bearer " + token,
+      ...(runId && nodeId && attempt ? {
+        "X-Clui-Journey-Run-Id": runId,
+        "X-Clui-Journey-Node-Id": nodeId,
+        "X-Clui-Journey-Attempt": attempt,
+      } : {}),
       ...(init.body ? { "Content-Type": "application/json" } : {}),
     },
   });
@@ -216,6 +435,18 @@ async function callTool(name, args) {
   if (name === "journey_get") return request("/snapshot");
   if (name === "journey_update") {
     return request("/update", { method: "POST", body: JSON.stringify(args ?? {}) });
+  }
+  if (name === "journey_research_start") {
+    return request("/research/start", { method: "POST", body: JSON.stringify(args ?? {}) });
+  }
+  if (name === "journey_research_get") {
+    return request("/research/get", { method: "POST", body: JSON.stringify(args ?? {}) });
+  }
+  if (name === "journey_research_cancel") {
+    return request("/research/cancel", { method: "POST", body: JSON.stringify(args ?? {}) });
+  }
+  if (name === "journey_implementation_start") {
+    return request("/implementation/start", { method: "POST", body: JSON.stringify(args ?? {}) });
   }
   throw new Error("Unknown Journey tool: " + name);
 }
@@ -275,3 +506,14 @@ for await (const line of input) {
 }
 `.trimStart();
 }
+import crypto from "node:crypto";
+
+import {
+  CommandId,
+  type JourneyAttemptFence,
+  type JourneyCapability,
+  type JourneyProjectionSnapshot,
+  type OrchestrationCommand,
+} from "@clui/contracts";
+
+import type { JourneyAttemptAuthorizer } from "./journeyAttemptAuthorization";

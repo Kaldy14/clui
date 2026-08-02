@@ -221,9 +221,11 @@ describe("wsNativeApi", () => {
     const api = createWsNativeApi();
     const onTerminalEvent = vi.fn();
     const onDomainEvent = vi.fn();
+    const onJourneyProjection = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
     api.orchestration.onDomainEvent(onDomainEvent);
+    api.orchestration.onJourneyProjection(onJourneyProjection);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -257,12 +259,57 @@ describe("wsNativeApi", () => {
       },
     } as const;
     emitPush(ORCHESTRATION_WS_CHANNELS.domainEvent, orchestrationEvent);
+    const journeyDelta = {
+      threadId: "thread-1",
+      fromRevision: 0,
+      toRevision: 1,
+      globalEventWatermark: 2,
+      changedEntities: {},
+    } as const;
+    emitPush(ORCHESTRATION_WS_CHANNELS.journeyProjection, journeyDelta);
 
     expect(onTerminalEvent).toHaveBeenCalledTimes(1);
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
     expect(onDomainEvent).toHaveBeenCalledTimes(1);
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
+    expect(onJourneyProjection).toHaveBeenCalledWith(journeyDelta);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("forwards Journey projection, delta, and selected-run output RPCs", async () => {
+    requestMock.mockResolvedValue({});
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const inputThreadId = ThreadId.makeUnsafe("journey-rpc-thread");
+    const fence = { threadId: inputThreadId, runId: "run", nodeId: "node", attempt: 1 } as const;
+
+    await api.orchestration.getJourneyProjection({ threadId: inputThreadId });
+    await api.orchestration.getJourneyDeltas({ threadId: inputThreadId, afterJourneyRevision: 4 });
+    await api.orchestration.getJourneyRunOutput({ fence, afterCursor: 9 });
+    await api.orchestration.subscribeJourneyRunOutput({ fence, afterCursor: 9 });
+    await api.orchestration.unsubscribeJourneyRunOutput({ fence });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, ORCHESTRATION_WS_METHODS.getJourneyProjection, {
+      threadId: inputThreadId,
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(2, ORCHESTRATION_WS_METHODS.getJourneyDeltas, {
+      threadId: inputThreadId,
+      afterJourneyRevision: 4,
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(3, ORCHESTRATION_WS_METHODS.getJourneyRunOutput, {
+      fence,
+      afterCursor: 9,
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(
+      4,
+      ORCHESTRATION_WS_METHODS.subscribeJourneyRunOutput,
+      { fence, afterCursor: 9 },
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(
+      5,
+      ORCHESTRATION_WS_METHODS.unsubscribeJourneyRunOutput,
+      { fence },
+    );
   });
 
   it("drops malformed terminal and orchestration push payloads", async () => {

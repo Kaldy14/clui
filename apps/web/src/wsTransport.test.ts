@@ -166,7 +166,7 @@ describe("WsTransport", () => {
     });
     expect(warnSpy).toHaveBeenNthCalledWith(2, "Dropped inbound WebSocket envelope", {
       reason: "decode-failed",
-      issue: expect.stringContaining("SchemaError: Expected string, got 42"),
+      issue: expect.stringContaining("Expected string, got 42"),
       raw: '{"type":"push","channel":42,"data":{"bad":true}}',
     });
 

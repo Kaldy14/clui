@@ -1,4 +1,6 @@
 import type {
+  JourneyProjectionDelta,
+  JourneyProjectionSnapshot,
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
@@ -18,6 +20,13 @@ import {
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
+import {
+  createEmptyJourneyDomainState,
+  getJourneyProjectionSnapshot,
+  projectJourneyEvent,
+} from "../journeyDomain.ts";
+import { JourneyOutputStoreLive, JourneyOutputStoreService } from "../journeyOutputStore.ts";
+import { JourneyProjectionDeltaStore } from "../journeyProjectionDeltas.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import {
   OrchestrationEngineService,
@@ -27,6 +36,37 @@ import {
 interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
+}
+
+function journeyRevision(
+  state: ReturnType<typeof createEmptyJourneyDomainState>,
+  threadId: ThreadId,
+) {
+  return state.threads.find((thread) => thread.threadId === threadId)?.journeyRevision ?? 0;
+}
+
+export function getJourneyProjectionDeltaCandidate(input: {
+  previousState: ReturnType<typeof createEmptyJourneyDomainState>;
+  nextState: ReturnType<typeof createEmptyJourneyDomainState>;
+  nextReadModel: OrchestrationReadModel;
+  event: OrchestrationEvent;
+}): { previousRevision: number; snapshot: JourneyProjectionSnapshot } | null {
+  if (input.event.aggregateKind !== "thread") return null;
+  if (!input.event.type.startsWith("journey.") && input.event.type !== "thread.journey-updated") {
+    return null;
+  }
+  const threadId = input.event.aggregateId as ThreadId;
+  const previousRevision = journeyRevision(input.previousState, threadId);
+  const nextRevision = journeyRevision(input.nextState, threadId);
+  if (nextRevision !== previousRevision + 1) return null;
+  return {
+    previousRevision,
+    snapshot: getJourneyProjectionSnapshot({
+      state: input.nextState,
+      readModel: input.nextReadModel,
+      threadId,
+    }),
+  };
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
@@ -42,9 +82,23 @@ function commandToAggregateRef(command: OrchestrationCommand): {
         aggregateId: command.projectId,
       };
     default:
+      if (
+        command.type === "journey.decision.submit" ||
+        command.type === "journey.approval.submit"
+      ) {
+        return {
+          aggregateKind: "thread",
+          aggregateId: command.submission.threadId,
+        };
+      }
       return {
         aggregateKind: "thread",
-        aggregateId: command.threadId,
+        aggregateId:
+          "threadId" in command
+            ? command.threadId
+            : "parentFence" in command
+              ? command.parentFence.threadId
+              : command.fence.threadId,
       };
   }
 }
@@ -61,11 +115,17 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const eventStore = yield* OrchestrationEventStore;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
+  const journeyOutputStore = yield* JourneyOutputStoreService;
 
   let readModel = createEmptyReadModel(new Date().toISOString());
+  let journeyDomainState = createEmptyJourneyDomainState();
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+  const journeyDeltaPubSub = yield* PubSub.unbounded<JourneyProjectionDelta>();
+  const journeyOutputPubSub =
+    yield* PubSub.unbounded<import("@clui/contracts").JourneyOutputChunk>();
+  const journeyDeltaStore = new JourneyProjectionDeltaStore();
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     const dispatchStartSequence = readModel.snapshotSequence;
@@ -78,13 +138,32 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
 
       let nextReadModel = readModel;
+      let nextJourneyDomainState = journeyDomainState;
+      const recoveredJourneySnapshots: Array<{
+        previousRevision: number;
+        snapshot: JourneyProjectionSnapshot;
+      }> = [];
       for (const persistedEvent of persistedEvents) {
+        const previousState = nextJourneyDomainState;
         nextReadModel = yield* projectEvent(nextReadModel, persistedEvent);
+        nextJourneyDomainState = projectJourneyEvent(nextJourneyDomainState, persistedEvent);
+        const changed = getJourneyProjectionDeltaCandidate({
+          previousState,
+          nextState: nextJourneyDomainState,
+          nextReadModel,
+          event: persistedEvent,
+        });
+        if (changed) recoveredJourneySnapshots.push(changed);
       }
       readModel = nextReadModel;
+      journeyDomainState = nextJourneyDomainState;
 
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
+      }
+      for (const changed of recoveredJourneySnapshots) {
+        const delta = journeyDeltaStore.record(changed.previousRevision, changed.snapshot);
+        yield* PubSub.publish(journeyDeltaPubSub, delta);
       }
     });
 
@@ -112,17 +191,32 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       const eventBase = yield* decideOrchestrationCommand({
         command: envelope.command,
         readModel,
+        journeyDomainState,
       });
       const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
       const committedCommand = yield* sql
         .withTransaction(
           Effect.gen(function* () {
             const committedEvents: OrchestrationEvent[] = [];
+            const journeySnapshots: Array<{
+              previousRevision: number;
+              snapshot: JourneyProjectionSnapshot;
+            }> = [];
             let nextReadModel = readModel;
+            let nextJourneyDomainState = journeyDomainState;
 
             for (const nextEvent of eventBases) {
               const savedEvent = yield* eventStore.append(nextEvent);
+              const previousState = nextJourneyDomainState;
               nextReadModel = yield* projectEvent(nextReadModel, savedEvent);
+              nextJourneyDomainState = projectJourneyEvent(nextJourneyDomainState, savedEvent);
+              const changed = getJourneyProjectionDeltaCandidate({
+                previousState,
+                nextState: nextJourneyDomainState,
+                nextReadModel,
+                event: savedEvent,
+              });
+              if (changed) journeySnapshots.push(changed);
               yield* projectionPipeline.projectEvent(savedEvent);
               committedEvents.push(savedEvent);
             }
@@ -149,6 +243,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               committedEvents,
               lastSequence: lastSavedEvent.sequence,
               nextReadModel,
+              nextJourneyDomainState,
+              journeySnapshots,
             } as const;
           }),
         )
@@ -161,8 +257,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         );
 
       readModel = committedCommand.nextReadModel;
+      journeyDomainState = committedCommand.nextJourneyDomainState;
       for (const event of committedCommand.committedEvents) {
         yield* PubSub.publish(eventPubSub, event);
+      }
+      for (const changed of committedCommand.journeySnapshots) {
+        const delta = journeyDeltaStore.record(changed.previousRevision, changed.snapshot);
+        yield* PubSub.publish(journeyDeltaPubSub, delta);
       }
       yield* Deferred.succeed(envelope.result, { sequence: committedCommand.lastSequence });
     }).pipe(
@@ -207,6 +308,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* Stream.runForEach(eventStore.readAll(), (event) =>
     Effect.gen(function* () {
       readModel = yield* projectEvent(readModel, event);
+      journeyDomainState = projectJourneyEvent(journeyDomainState, event);
     }),
   );
 
@@ -218,6 +320,61 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const getReadModel: OrchestrationEngineShape["getReadModel"] = () =>
     Effect.sync((): OrchestrationReadModel => readModel);
+
+  const getJourneyProjection: OrchestrationEngineShape["getJourneyProjection"] = (threadId) =>
+    Effect.try({
+      try: () => getJourneyProjectionSnapshot({ state: journeyDomainState, readModel, threadId }),
+      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+    });
+
+  const getJourneyDeltas: OrchestrationEngineShape["getJourneyDeltas"] = (
+    threadId,
+    afterJourneyRevision,
+  ) =>
+    getJourneyProjection(threadId).pipe(
+      Effect.map((snapshot) => journeyDeltaStore.catchUp(threadId, afterJourneyRevision, snapshot)),
+    );
+
+  const beginJourneyRunOutput: OrchestrationEngineShape["beginJourneyRunOutput"] = (fence) =>
+    Effect.gen(function* () {
+      const projection = journeyDomainState.threads.find(
+        (candidate) => candidate.threadId === fence.threadId,
+      );
+      const run = projection?.runs.find((candidate) => candidate.runId === fence.runId);
+      const attempt = projection?.attempts.find(
+        (candidate) =>
+          candidate.fence.runId === fence.runId && candidate.fence.attempt === fence.attempt,
+      );
+      if (
+        !run ||
+        !attempt ||
+        run.nodeId !== fence.nodeId ||
+        run.attempt !== fence.attempt ||
+        attempt.fence.nodeId !== fence.nodeId ||
+        !["starting", "running"].includes(run.status) ||
+        !["starting", "running"].includes(attempt.status)
+      ) {
+        return yield* Effect.fail(
+          new Error(`Journey output fence '${fence.runId}:${fence.attempt}' is not authoritative.`),
+        );
+      }
+      yield* journeyOutputStore.beginAttempt(fence);
+    });
+
+  const appendJourneyRunOutput: OrchestrationEngineShape["appendJourneyRunOutput"] = (
+    fence,
+    data,
+  ) =>
+    journeyOutputStore.append(fence, data).pipe(
+      Effect.tap(({ firstCursor, nextCursor }) =>
+        PubSub.publish(journeyOutputPubSub, {
+          fence,
+          startCursor: firstCursor,
+          endCursor: nextCursor,
+          data,
+        }),
+      ),
+    );
 
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive) =>
     eventStore.readFromSequence(fromSequenceExclusive);
@@ -231,16 +388,28 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const streamDomainEvents: OrchestrationEngineShape["streamDomainEvents"] =
     Stream.fromPubSub(eventPubSub);
+  const streamJourneyProjectionDeltas: OrchestrationEngineShape["streamJourneyProjectionDeltas"] =
+    Stream.fromPubSub(journeyDeltaPubSub);
+  const streamJourneyRunOutput: OrchestrationEngineShape["streamJourneyRunOutput"] =
+    Stream.fromPubSub(journeyOutputPubSub);
 
   return {
     getReadModel,
+    getJourneyProjection,
+    getJourneyDeltas,
+    beginJourneyRunOutput,
+    appendJourneyRunOutput,
+    getJourneyRunOutput: journeyOutputStore.read,
+    deactivateJourneyRunOutput: journeyOutputStore.deactivate,
     readEvents,
     dispatch,
     streamDomainEvents,
+    streamJourneyProjectionDeltas,
+    streamJourneyRunOutput,
   } satisfies OrchestrationEngineShape;
 });
 
 export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
   makeOrchestrationEngine,
-);
+).pipe(Layer.provide(JourneyOutputStoreLive));

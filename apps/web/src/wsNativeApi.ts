@@ -3,6 +3,8 @@ import {
   PiSessionEvent,
   MCP_WS_METHODS,
   OrchestrationEvent,
+  OrchestrationJourneyProjectionPush,
+  OrchestrationJourneyRunOutputPush,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   type ContextMenuItem,
@@ -235,6 +237,26 @@ export function createWsNativeApi(): NativeApi {
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       getSessionMetrics: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getSessionMetrics, input),
+      getJourneyProjection: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.getJourneyProjection, input),
+      getJourneyDeltas: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.getJourneyDeltas, input),
+      getJourneyRunOutput: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.getJourneyRunOutput, input),
+      subscribeJourneyRunOutput: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.subscribeJourneyRunOutput, input),
+      unsubscribeJourneyRunOutput: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.unsubscribeJourneyRunOutput, input),
+      onJourneyRunOutput: (callback) =>
+        transport.subscribe(ORCHESTRATION_WS_CHANNELS.journeyRunOutput, (data) => {
+          const payload = decodeAndWarnOnFailure(OrchestrationJourneyRunOutputPush, data);
+          if (payload) callback(payload);
+        }),
+      onJourneyProjection: (callback) =>
+        transport.subscribe(ORCHESTRATION_WS_CHANNELS.journeyProjection, (data) => {
+          const payload = decodeAndWarnOnFailure(OrchestrationJourneyProjectionPush, data);
+          if (payload) callback(payload);
+        }),
       getSlashCommands: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getSlashCommands, input),
       // @ts-expect-error getCachedSlashCommands not yet added to NativeApi interface

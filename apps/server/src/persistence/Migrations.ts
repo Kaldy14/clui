@@ -46,6 +46,7 @@ import Migration0031 from "./Migrations/031_ProjectionThreadsSettled.ts";
 import Migration0032 from "./Migrations/032_ProjectionThreadsSnoozed.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsJourney.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsLifecycleCollisionRepair.ts";
+import Migration0035 from "./Migrations/035_JourneyAttemptOutput.ts";
 import { Effect } from "effect";
 
 /**
@@ -93,6 +94,7 @@ const loader = Migrator.fromRecord({
   "32_ProjectionThreadsSnoozed": Migration0032,
   "33_ProjectionThreadsJourney": Migration0033,
   "34_ProjectionThreadsLifecycleCollisionRepair": Migration0034,
+  "35_JourneyAttemptOutput": Migration0035,
 });
 
 /**

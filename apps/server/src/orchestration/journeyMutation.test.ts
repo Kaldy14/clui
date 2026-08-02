@@ -153,4 +153,45 @@ describe("applyJourneyMutation", () => {
       ).toThrow(`cannot use status '${status}'`);
     }
   });
+
+  it("rejects dependsOn cycles but permits provenance and presentation cycles", () => {
+    const withResearch = applyJourneyMutation(
+      initialJourney(),
+      {
+        nodes: [
+          {
+            ...initialJourney().nodes[0]!,
+            id: "research",
+            type: "research",
+            title: "Research",
+          },
+        ],
+      },
+      updatedAt,
+    );
+    expect(() =>
+      applyJourneyMutation(
+        withResearch,
+        {
+          edges: [
+            { id: "a", source: "goal", target: "research", relation: "dependsOn" },
+            { id: "b", source: "research", target: "goal", relation: "dependsOn" },
+          ],
+        },
+        updatedAt,
+      ),
+    ).toThrow("dependsOn edges contain a cycle");
+    expect(() =>
+      applyJourneyMutation(
+        withResearch,
+        {
+          edges: [
+            { id: "a", source: "goal", target: "research", relation: "spawns" },
+            { id: "b", source: "research", target: "goal", relation: "relatesTo" },
+          ],
+        },
+        updatedAt,
+      ),
+    ).not.toThrow();
+  });
 });

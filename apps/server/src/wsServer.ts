@@ -16,6 +16,8 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   JourneyMutation,
+  type JourneyAttemptFence,
+  type JourneyCapability,
   type ClientOrchestrationCommand,
   type ClaudeSessionEvent,
   type PiSessionEvent,
@@ -103,6 +105,12 @@ import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { MacosSleepPreventer } from "./macosSleepPreventer";
 import { AUTO_ARCHIVE_SWEEP_INTERVAL_MS, findAutoArchivableThreads } from "./autoArchiveThreads";
 import { readPiTranscriptFile } from "./piTranscript";
+import { journeyAttemptAuthorizer } from "./terminal/journeyAttemptAuthorization";
+import {
+  executeJourneyLifecycleToolRequest,
+  type JourneyLifecycleToolOperation,
+} from "./terminal/journeyMcpServer";
+import { canonicalJourneyWorkspaceIdentity } from "./orchestration/journeySchedulerPolicy";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -130,6 +138,10 @@ export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServ
 
 const MAX_WEBSOCKET_BUFFERED_BYTES = 4 * 1024 * 1024;
 
+function journeyAttemptFenceKey(fence: JourneyAttemptFence): string {
+  return JSON.stringify([fence.threadId, fence.runId, fence.nodeId, fence.attempt]);
+}
+
 const isServerNotRunningError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;
   const maybeCode = (error as NodeJS.ErrnoException).code;
@@ -151,6 +163,42 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function journeyToolBearer(req: http.IncomingMessage): string | null {
+  const authorization = req.headers.authorization;
+  return authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : null;
+}
+
+function journeyToolFence(req: http.IncomingMessage, threadId: string): JourneyAttemptFence | null {
+  const runId = req.headers["x-clui-journey-run-id"];
+  const nodeId = req.headers["x-clui-journey-node-id"];
+  const rawAttempt = req.headers["x-clui-journey-attempt"];
+  if (typeof runId !== "string" || typeof nodeId !== "string" || typeof rawAttempt !== "string") {
+    return null;
+  }
+  const attempt = Number(rawAttempt);
+  if (!Number.isSafeInteger(attempt) || attempt <= 0) return null;
+  return {
+    threadId: ThreadId.makeUnsafe(threadId),
+    runId,
+    nodeId,
+    attempt,
+  };
+}
+
+function requiredJourneyToolCapability(
+  method: string | undefined,
+  pathname: string,
+): JourneyCapability | null {
+  if (method === "GET" && pathname === "/journey-tools/snapshot") return "graph.read";
+  if (method === "POST" && pathname === "/journey-tools/update") return "graph.mutate";
+  if (method === "POST" && pathname === "/journey-tools/research/start") return "research.start";
+  if (method === "POST" && pathname === "/journey-tools/research/get") return "research.read";
+  if (method === "POST" && pathname === "/journey-tools/research/cancel") return "research.cancel";
+  if (method === "POST" && pathname === "/journey-tools/implementation/start")
+    return "implementation.start";
+  return null;
 }
 
 function latestCacheHitRateFromPiTranscriptBuffer(buffer: Buffer): number | undefined {
@@ -429,7 +477,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const clients = yield* Ref.make(new Set<WebSocket>());
   const clientOutputSubscriptions = new WeakMap<
     WebSocket,
-    { claudeThreadIds: Set<string>; piThreadIds: Set<string> }
+    { claudeThreadIds: Set<string>; piThreadIds: Set<string>; journeyAttemptFences: Set<string> }
   >();
   const logger = createLogger("ws");
   const journeyToolTokens = new Map<string, string>();
@@ -480,7 +528,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const getClientOutputSubscriptions = (client: WebSocket) => {
     let subscriptions = clientOutputSubscriptions.get(client);
     if (!subscriptions) {
-      subscriptions = { claudeThreadIds: new Set(), piThreadIds: new Set() };
+      subscriptions = {
+        claudeThreadIds: new Set(),
+        piThreadIds: new Set(),
+        journeyAttemptFences: new Set(),
+      };
       clientOutputSubscriptions.set(client, subscriptions);
     }
     return subscriptions;
@@ -811,8 +863,27 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (rawUrl.startsWith("/journey-tools/")) {
       const toolUrl = new URL(rawUrl, `http://localhost:${port}`);
       const threadId = toolUrl.searchParams.get("thread");
-      const expectedToken = threadId ? journeyToolTokens.get(threadId) : undefined;
-      if (!threadId || !expectedToken || req.headers.authorization !== `Bearer ${expectedToken}`) {
+      const requiredCapability = requiredJourneyToolCapability(req.method, toolUrl.pathname);
+      const bearer = journeyToolBearer(req);
+      const expectedLegacyToken = threadId ? journeyToolTokens.get(threadId) : undefined;
+      const legacyAuthorized =
+        Boolean(threadId && bearer && expectedLegacyToken === bearer) &&
+        requiredCapability === "graph.read";
+      const attemptFence = threadId ? journeyToolFence(req, threadId) : null;
+      let attemptAuthorized = false;
+      if (threadId && bearer && attemptFence && requiredCapability) {
+        try {
+          journeyAttemptAuthorizer.authorize({
+            token: bearer,
+            fence: attemptFence,
+            capability: requiredCapability,
+          });
+          attemptAuthorized = true;
+        } catch {
+          attemptAuthorized = false;
+        }
+      }
+      if (!threadId || !requiredCapability || (!legacyAuthorized && !attemptAuthorized)) {
         respond(401, { "Content-Type": "text/plain", "Cache-Control": "no-store" }, "Unauthorized");
         return;
       }
@@ -827,6 +898,82 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             }
             return thread.journey;
           };
+
+          const readProjection = async () =>
+            Effect.runPromise(
+              orchestrationEngine.getJourneyProjection(ThreadId.makeUnsafe(threadId)),
+            );
+
+          const resolveJourneyWorkspaceIdentity = async () => {
+            const readModel = await Effect.runPromise(orchestrationEngine.getReadModel());
+            const thread = readModel.threads.find((candidate) => candidate.id === threadId);
+            if (!thread) throw new Error("Journey thread is missing.");
+            const project = readModel.projects.find(
+              (candidate) => candidate.id === thread.projectId,
+            );
+            const workspaceRoot = thread.worktreePath ?? project?.workspaceRoot;
+            if (!workspaceRoot) throw new Error("Journey workspace is missing.");
+            return canonicalJourneyWorkspaceIdentity(workspaceRoot);
+          };
+
+          const lifecycleOperationByPath: Readonly<Record<string, JourneyLifecycleToolOperation>> =
+            {
+              "/journey-tools/research/start": "research.start",
+              "/journey-tools/research/get": "research.get",
+              "/journey-tools/research/cancel": "research.cancel",
+              "/journey-tools/implementation/start": "implementation.start",
+            };
+          const lifecycleOperation = lifecycleOperationByPath[toolUrl.pathname];
+          if (req.method === "POST" && lifecycleOperation && attemptFence) {
+            const body = JSON.parse(await readRequestBody(req)) as Record<string, unknown>;
+            const result = await executeJourneyLifecycleToolRequest({
+              operation: lifecycleOperation,
+              token: bearer,
+              fence: attemptFence,
+              body,
+              dependencies: {
+                authorizer: journeyAttemptAuthorizer,
+                readProjection,
+                dispatch: (command) => Effect.runPromise(orchestrationEngine.dispatch(command)),
+                resolveWorkspaceIdentity: resolveJourneyWorkspaceIdentity,
+              },
+            });
+            respond(
+              200,
+              { "Content-Type": "application/json", "Cache-Control": "no-store" },
+              JSON.stringify({ snapshot: result }),
+            );
+            return;
+          }
+
+          if (attemptAuthorized && attemptFence) {
+            const projection = await readProjection();
+            const run = projection.runs.find((candidate) => candidate.runId === attemptFence.runId);
+            const attempt = projection.attempts.find(
+              (candidate) =>
+                candidate.fence.runId === attemptFence.runId &&
+                candidate.fence.nodeId === attemptFence.nodeId &&
+                candidate.fence.attempt === attemptFence.attempt,
+            );
+            const liveRunStatuses = new Set([
+              "starting",
+              "running",
+              "quiescing",
+              "waitingForDependencies",
+              "waitingForUser",
+            ]);
+            const liveAttemptStatuses = new Set(["starting", "running"]);
+            if (
+              !run ||
+              run.nodeId !== attemptFence.nodeId ||
+              run.attempt !== attemptFence.attempt ||
+              !liveRunStatuses.has(run.status) ||
+              !attempt ||
+              !liveAttemptStatuses.has(attempt.status)
+            ) {
+              throw new Error("Unauthorized Journey tool request.");
+            }
+          }
 
           let journey;
           if (req.method === "GET" && toolUrl.pathname === "/journey-tools/snapshot") {
@@ -1375,6 +1522,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
+  yield* Stream.runForEach(orchestrationEngine.streamJourneyProjectionDeltas, (delta) =>
+    broadcastPush({
+      type: "push",
+      channel: ORCHESTRATION_WS_CHANNELS.journeyProjection,
+      data: delta,
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
+  yield* Stream.runForEach(orchestrationEngine.streamJourneyRunOutput, (chunk) =>
+    broadcastPush(
+      {
+        type: "push",
+        channel: ORCHESTRATION_WS_CHANNELS.journeyRunOutput,
+        data: chunk,
+      },
+      (client) =>
+        getClientOutputSubscriptions(client).journeyAttemptFences.has(
+          journeyAttemptFenceKey(chunk.fence),
+        ),
+    ),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
   yield* Stream.runForEach(keybindingsManager.changes, (event) =>
     broadcastPush({
       type: "push",
@@ -1732,6 +1901,37 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const { threadId } = request.body;
         return yield* projectionReadModelQuery.getSessionMetrics(threadId);
       }
+
+      case ORCHESTRATION_WS_METHODS.getJourneyProjection:
+        return yield* orchestrationEngine.getJourneyProjection(request.body.threadId);
+
+      case ORCHESTRATION_WS_METHODS.getJourneyDeltas:
+        return yield* orchestrationEngine.getJourneyDeltas(
+          request.body.threadId,
+          request.body.afterJourneyRevision,
+        );
+
+      case ORCHESTRATION_WS_METHODS.getJourneyRunOutput:
+        return yield* orchestrationEngine.getJourneyRunOutput(
+          request.body.fence,
+          request.body.afterCursor,
+        );
+
+      case ORCHESTRATION_WS_METHODS.subscribeJourneyRunOutput: {
+        getClientOutputSubscriptions(ws).journeyAttemptFences.add(
+          journeyAttemptFenceKey(request.body.fence),
+        );
+        return yield* orchestrationEngine.getJourneyRunOutput(
+          request.body.fence,
+          request.body.afterCursor,
+        );
+      }
+
+      case ORCHESTRATION_WS_METHODS.unsubscribeJourneyRunOutput:
+        getClientOutputSubscriptions(ws).journeyAttemptFences.delete(
+          journeyAttemptFenceKey(request.body.fence),
+        );
+        return;
 
       case WS_METHODS.projectsSearchEntries: {
         const body = stripRequestTag(request.body);
@@ -2333,7 +2533,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
-    clientOutputSubscriptions.set(ws, { claudeThreadIds: new Set(), piThreadIds: new Set() });
+    clientOutputSubscriptions.set(ws, {
+      claudeThreadIds: new Set(),
+      piThreadIds: new Set(),
+      journeyAttemptFences: new Set(),
+    });
     void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
 
     const segments = cwd.split(/[/\\]/).filter(Boolean);

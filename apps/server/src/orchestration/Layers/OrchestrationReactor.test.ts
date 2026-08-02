@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
+import { JourneyReactor } from "../Services/JourneyReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 
 describe("OrchestrationReactor", () => {
@@ -15,7 +16,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts checkpoint reactor", async () => {
+  it("starts checkpoint and Journey reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
@@ -29,6 +30,13 @@ describe("OrchestrationReactor", () => {
             captureTerminalTurnCheckpoint: () => Effect.void,
           }),
         ),
+        Layer.provideMerge(
+          Layer.succeed(JourneyReactor, {
+            start: Effect.sync(() => {
+              started.push("journey-reactor");
+            }),
+          }),
+        ),
       ),
     );
 
@@ -36,7 +44,7 @@ describe("OrchestrationReactor", () => {
     const scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
 
-    expect(started).toEqual(["checkpoint-reactor"]);
+    expect(started).toEqual(["checkpoint-reactor", "journey-reactor"]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));
   });

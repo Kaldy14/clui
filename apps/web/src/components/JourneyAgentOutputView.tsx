@@ -1,4 +1,4 @@
-import type { CodingHarness, ThreadId } from "@clui/contracts";
+import type { CodingHarness, JourneyAttemptFence, ThreadId } from "@clui/contracts";
 import {
   BotIcon,
   BrainCircuitIcon,
@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm";
 
 import { codexExecOutputEntries, type CodexExecOutputEntry } from "../lib/codexExecJsonl";
 import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscriptions";
+import { subscribeJourneyRunOutput } from "../lib/journeyRunOutputSubscription";
 import { cn } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import PiHtmlThreadView from "./PiHtmlThreadView";
@@ -186,13 +187,98 @@ function CodexJourneyAgentOutput({ threadId }: { threadId: ThreadId }) {
   );
 }
 
+function SelectedJourneyRunOutput({
+  fence,
+  harness,
+}: {
+  fence: JourneyAttemptFence;
+  harness: Extract<CodingHarness, "pi" | "codexCli">;
+}) {
+  const [output, setOutput] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) {
+      setError("Clui is not connected to the server.");
+      return;
+    }
+    setOutput("");
+    setError(null);
+    const subscription = subscribeJourneyRunOutput({
+      api,
+      fence,
+      onOutput: (state) => setOutput(state.data),
+      onError: (cause) => setError(cause.message),
+    });
+    return subscription.dispose;
+  }, [fence]);
+
+  const entries = useMemo(
+    () =>
+      harness === "codexCli" ? codexExecOutputEntries(output).slice(-MAX_CODEX_OUTPUT_ENTRIES) : [],
+    [harness, output],
+  );
+
+  useLayoutEffect(() => {
+    if (!atBottomRef.current) return;
+    const element = scrollRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [entries, output]);
+
+  return (
+    <div
+      ref={scrollRef}
+      role="log"
+      aria-live="polite"
+      className="h-full overflow-y-auto bg-background"
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        atBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+      }}
+    >
+      {harness === "codexCli" ? (
+        entries.map((entry) => <CodexOutputEntry key={entry.id} entry={entry} />)
+      ) : output ? (
+        <pre className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs leading-5 text-foreground">
+          {output}
+        </pre>
+      ) : null}
+      {!output && !error && (
+        <p className="px-4 py-3 text-xs text-muted-foreground">Waiting for agent output…</p>
+      )}
+      {error && (
+        <p className="m-3 rounded-md border border-red-500/35 bg-red-500/8 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function JourneyAgentOutputView({
   threadId,
   harness,
+  fence,
+  legacy = false,
 }: {
   threadId: ThreadId;
   harness: Extract<CodingHarness, "pi" | "codexCli">;
+  /** Selected physical attempt for authoritative Journey v2 output. */
+  fence?: JourneyAttemptFence | null;
+  /** Explicit opt-in for pre-projection Journey v1 sessions. */
+  legacy?: boolean;
 }) {
+  if (fence) return <SelectedJourneyRunOutput fence={fence} harness={harness} />;
+  if (!legacy) {
+    return (
+      <div role="status" className="px-4 py-3 text-xs text-muted-foreground">
+        No output yet.
+      </div>
+    );
+  }
   return harness === "pi" ? (
     <PiHtmlThreadView threadId={threadId} />
   ) : (

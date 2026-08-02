@@ -14,6 +14,14 @@ import {
   OrchestrationGetSessionMetricsInput,
   OrchestrationGetSlashCommandsInput,
   OrchestrationGetCachedSlashCommandsInput,
+  OrchestrationGetJourneyDeltasInput,
+  OrchestrationGetJourneyProjectionInput,
+  OrchestrationGetJourneyRunOutputInput,
+  OrchestrationSubscribeJourneyRunOutputInput,
+  OrchestrationUnsubscribeJourneyRunOutputInput,
+  OrchestrationJourneyProjectionPush,
+  OrchestrationJourneyRunOutputPush,
+  ORCHESTRATION_WS_CHANNELS,
 } from "./orchestration";
 import {
   GitCheckoutInput,
@@ -186,6 +194,23 @@ const WebSocketRequestBody = Schema.Union([
     ORCHESTRATION_WS_METHODS.getCachedSlashCommands,
     OrchestrationGetCachedSlashCommandsInput,
   ),
+  tagRequestBody(
+    ORCHESTRATION_WS_METHODS.getJourneyProjection,
+    OrchestrationGetJourneyProjectionInput,
+  ),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getJourneyDeltas, OrchestrationGetJourneyDeltasInput),
+  tagRequestBody(
+    ORCHESTRATION_WS_METHODS.getJourneyRunOutput,
+    OrchestrationGetJourneyRunOutputInput,
+  ),
+  tagRequestBody(
+    ORCHESTRATION_WS_METHODS.subscribeJourneyRunOutput,
+    OrchestrationSubscribeJourneyRunOutputInput,
+  ),
+  tagRequestBody(
+    ORCHESTRATION_WS_METHODS.unsubscribeJourneyRunOutput,
+    OrchestrationUnsubscribeJourneyRunOutputInput,
+  ),
 
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
@@ -273,11 +298,37 @@ export const WebSocketResponse = Schema.Struct({
 });
 export type WebSocketResponse = typeof WebSocketResponse.Type;
 
-export const WsPush = Schema.Struct({
+export const JourneyWsPush = Schema.Struct({
   type: Schema.Literal("push"),
-  channel: TrimmedNonEmptyString,
+  channel: Schema.Literal(ORCHESTRATION_WS_CHANNELS.journeyProjection),
+  data: OrchestrationJourneyProjectionPush,
+});
+export type JourneyWsPush = typeof JourneyWsPush.Type;
+
+export const JourneyRunOutputWsPush = Schema.Struct({
+  type: Schema.Literal("push"),
+  channel: Schema.Literal(ORCHESTRATION_WS_CHANNELS.journeyRunOutput),
+  data: OrchestrationJourneyRunOutputPush,
+});
+export type JourneyRunOutputWsPush = typeof JourneyRunOutputWsPush.Type;
+
+const NonJourneyPushChannel = TrimmedNonEmptyString.check(
+  Schema.makeFilter(
+    (channel) =>
+      channel !== ORCHESTRATION_WS_CHANNELS.journeyProjection &&
+      channel !== ORCHESTRATION_WS_CHANNELS.journeyRunOutput,
+    { identifier: "NonJourneyPushChannel" },
+  ),
+);
+
+export const GenericWsPush = Schema.Struct({
+  type: Schema.Literal("push"),
+  channel: NonJourneyPushChannel,
   data: Schema.Unknown,
 });
+export type GenericWsPush = typeof GenericWsPush.Type;
+
+export const WsPush = Schema.Union([JourneyWsPush, JourneyRunOutputWsPush, GenericWsPush]);
 export type WsPush = typeof WsPush.Type;
 
 // ── Union of all server → client messages ─────────────────────────────

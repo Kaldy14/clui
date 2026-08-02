@@ -7,6 +7,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
+  type JourneySnapshot,
 } from "@clui/contracts";
 import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
@@ -14,12 +15,18 @@ import { describe, expect, it } from "vitest";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
-import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
+import {
+  getJourneyProjectionDeltaCandidate,
+  OrchestrationEngineLive,
+} from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -28,6 +35,8 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { createEmptyJourneyDomainState, projectJourneyEvent } from "../journeyDomain.ts";
+import { createEmptyReadModel } from "../projector.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
@@ -52,11 +61,237 @@ async function createOrchestrationSystem() {
   };
 }
 
+async function createPersistentOrchestrationSystem(databasePath: string) {
+  const stateDir = path.dirname(databasePath);
+  const persistence = makeSqlitePersistenceLive(databasePath).pipe(
+    Layer.provide(NodeServices.layer),
+  );
+  const orchestrationLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(persistence),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  const runtime = ManagedRuntime.make(orchestrationLayer);
+  const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+  return {
+    engine,
+    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    dispose: () => runtime.dispose(),
+  };
+}
+
 function now() {
   return new Date().toISOString();
 }
 
+function journeySnapshot(
+  nodeId: string,
+  dependencies: JourneySnapshot["edges"] = [],
+): JourneySnapshot {
+  const createdAt = now();
+  const node = (id: string): JourneySnapshot["nodes"][number] => ({
+    id,
+    type: "research",
+    status: "ready",
+    title: id,
+    summary: "",
+    detailMarkdown: "",
+    todos: [],
+    interaction: null,
+    activity: [],
+    createdAt,
+    updatedAt: createdAt,
+  });
+  const nodeIds = new Set([nodeId, ...dependencies.flatMap((edge) => [edge.source, edge.target])]);
+  return {
+    version: 1,
+    destination: "Journey",
+    layoutDirection: "TB",
+    activeNodeId: nodeId,
+    nodes: [...nodeIds].map(node),
+    edges: [...dependencies],
+    updatedAt: createdAt,
+  };
+}
+
 describe("OrchestrationEngine", () => {
+  it("surfaces projection generation failures instead of dropping Journey deltas", () => {
+    const createdAt = now();
+    const threadId = ThreadId.makeUnsafe("missing-journey-projection");
+    const event = {
+      sequence: 1,
+      eventId: "missing-projection-event",
+      aggregateKind: "thread",
+      aggregateId: threadId,
+      occurredAt: createdAt,
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "thread.journey-updated",
+      payload: { threadId, journey: journeySnapshot("goal"), updatedAt: createdAt },
+    } as unknown as OrchestrationEvent;
+    const previousState = createEmptyJourneyDomainState();
+    const nextState = projectJourneyEvent(previousState, event);
+    expect(() =>
+      getJourneyProjectionDeltaCandidate({
+        previousState,
+        nextState,
+        nextReadModel: createEmptyReadModel(createdAt),
+        event,
+      }),
+    ).toThrow(/not initialized/u);
+  });
+
+  it("commits a composite Journey child start as one all-or-nothing dispatch", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const projectId = asProjectId("project-composite-child");
+    const journeyThreadId = ThreadId.makeUnsafe("thread-composite-child");
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("create-project-composite-child"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/tmp/project-composite-child",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("create-thread-composite-child"),
+        threadId: journeyThreadId,
+        projectId,
+        title: "Journey",
+        model: "gpt-5-codex",
+        harness: "codexCli",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        surface: "journey",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    const graph = journeySnapshot("goal");
+    await system.run(
+      engine.dispatch({
+        type: "thread.journey.update",
+        commandId: CommandId.makeUnsafe("graph-composite-child"),
+        threadId: journeyThreadId,
+        journey: {
+          ...graph,
+          nodes: [
+            {
+              ...graph.nodes[0]!,
+              type: "goal" as const,
+              status: "running" as const,
+            },
+          ],
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "journey.run.request",
+        commandId: CommandId.makeUnsafe("parent-run-composite-child"),
+        threadId: journeyThreadId,
+        runId: "coordinator",
+        nodeId: "goal",
+        role: "coordinator",
+        harness: "codexCli",
+        capabilities: ["graph.read", "research.start"],
+        parentRunId: null,
+        coordinatorRunId: null,
+        prompt: "Coordinate",
+        createdAt,
+      }),
+    );
+    const parentFence = {
+      threadId: journeyThreadId,
+      runId: "coordinator",
+      nodeId: "goal",
+      attempt: 1,
+    } as const;
+    await system.run(
+      engine.dispatch({
+        type: "journey.attempt.start.request",
+        commandId: CommandId.makeUnsafe("parent-attempt-composite-child"),
+        fence: parentFence,
+        capabilities: ["graph.read", "research.start"],
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "journey.attempt.started",
+        commandId: CommandId.makeUnsafe("parent-started-composite-child"),
+        fence: parentFence,
+        adapterEventId: "parent-started-composite-child",
+        resumableHarnessIdentity: null,
+        createdAt,
+      }),
+    );
+    const before = (await system.run(engine.getReadModel())).snapshotSequence;
+    const result = await system.run(
+      engine.dispatch({
+        type: "journey.child.start",
+        commandId: CommandId.makeUnsafe("composite-child-start"),
+        parentFence,
+        childKind: "research",
+        runId: "research-child",
+        nodeId: "research-node",
+        title: "Research",
+        instructions: "Inspect the boundary.",
+        harness: "codexCli",
+        createdAt,
+      }),
+    );
+    expect(result.sequence - before).toBe(5);
+    const projectionAfter = await system.run(engine.getJourneyProjection(journeyThreadId));
+    expect(projectionAfter.runs.find((run) => run.runId === "research-child")).toMatchObject({
+      status: "starting",
+      attempt: 1,
+    });
+    expect(
+      projectionAfter.attempts.filter((attempt) => attempt.fence.runId === "research-child"),
+    ).toHaveLength(1);
+    expect(
+      (await system.run(engine.getReadModel())).threads
+        .find((thread) => thread.id === journeyThreadId)
+        ?.journey?.nodes.find((node) => node.id === "research-node")?.status,
+    ).toBe("draft");
+
+    const sequenceBeforeRejected = (await system.run(engine.getReadModel())).snapshotSequence;
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "journey.child.start",
+          commandId: CommandId.makeUnsafe("composite-child-start-rejected"),
+          parentFence,
+          childKind: "research",
+          runId: "research-child-duplicate",
+          nodeId: "research-node",
+          title: "Duplicate",
+          instructions: "Must reject atomically.",
+          harness: "codexCli",
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("already exists");
+    expect((await system.run(engine.getReadModel())).snapshotSequence).toBe(sequenceBeforeRejected);
+    expect((await system.run(engine.getJourneyProjection(journeyThreadId))).runs).toHaveLength(2);
+    await system.dispose();
+  });
+
   it("returns deterministic read models for repeated reads", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();
@@ -631,6 +866,442 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("authoritatively admits research fairly and persists steering FIFO", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const projectId = asProjectId("project-journey-authority");
+    const threadA = ThreadId.makeUnsafe("journey-a");
+    const threadB = ThreadId.makeUnsafe("journey-b");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("journey-project-create"),
+        projectId,
+        title: "Journey Authority",
+        workspaceRoot: "/tmp/journey-authority",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    for (const threadId of [threadA, threadB]) {
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe(`create-${threadId}`),
+          threadId,
+          projectId,
+          title: threadId,
+          model: "gpt-5-codex",
+          harness: "codexCli",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          surface: "journey",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "thread.journey.update",
+          commandId: CommandId.makeUnsafe(`snapshot-${threadId}`),
+          threadId,
+          journey: journeySnapshot("research"),
+          createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "journey.run.request",
+          commandId: CommandId.makeUnsafe(`request-${threadId}`),
+          threadId,
+          runId: "research-run",
+          nodeId: "research",
+          role: "researchWorker",
+          harness: "codexCli",
+          capabilities: ["graph.read"],
+          parentRunId: null,
+          coordinatorRunId: null,
+          prompt: "research",
+          createdAt,
+        }),
+      );
+    }
+    await system.run(
+      engine.dispatch({
+        type: "journey.scheduler.configure",
+        commandId: CommandId.makeUnsafe("configure-research-caps"),
+        threadId: threadA,
+        perJourneyResearchLimit: 1,
+        globalResearchLimit: 2,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "journey.run.request",
+        commandId: CommandId.makeUnsafe("request-a-second"),
+        threadId: threadA,
+        runId: "research-run-2",
+        nodeId: "research",
+        role: "researchWorker",
+        harness: "codexCli",
+        capabilities: ["graph.read"],
+        parentRunId: null,
+        coordinatorRunId: null,
+        prompt: "more research",
+        createdAt,
+      }),
+    );
+
+    const start = (threadId: ThreadId, suffix: string) =>
+      engine.dispatch({
+        type: "journey.attempt.start.request",
+        commandId: CommandId.makeUnsafe(`start-${suffix}`),
+        fence: { threadId, runId: "research-run", nodeId: "research", attempt: 1 },
+        capabilities: ["graph.read"],
+        createdAt,
+      });
+    await expect(system.run(start(threadB, "b-too-early"))).rejects.toThrow(
+      "next fair scheduler admission",
+    );
+    await system.run(start(threadA, "a"));
+    await system.run(start(threadB, "b"));
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "journey.attempt.start.request",
+          commandId: CommandId.makeUnsafe("start-a-second-over-cap"),
+          fence: { threadId: threadA, runId: "research-run-2", nodeId: "research", attempt: 1 },
+          capabilities: ["graph.read"],
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("scheduler admission");
+
+    const beforeSteering = await system.run(engine.getJourneyProjection(threadA));
+    await system.run(
+      engine.dispatch({
+        type: "journey.steering.enqueue",
+        commandId: CommandId.makeUnsafe("steer-one"),
+        threadId: threadA,
+        runId: "research-run",
+        nodeId: "research",
+        itemId: "steer-1",
+        prompt: "First",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "journey.steering.enqueue",
+        commandId: CommandId.makeUnsafe("steer-two"),
+        threadId: threadA,
+        runId: "research-run",
+        nodeId: "research",
+        itemId: "steer-2",
+        prompt: "Second",
+        createdAt,
+      }),
+    );
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "journey.steering.acknowledge",
+          commandId: CommandId.makeUnsafe("ack-two-early"),
+          threadId: threadA,
+          runId: "research-run",
+          itemId: "steer-2",
+          sequence: 2,
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("FIFO head");
+    await system.run(
+      engine.dispatch({
+        type: "journey.steering.acknowledge",
+        commandId: CommandId.makeUnsafe("ack-one"),
+        threadId: threadA,
+        runId: "research-run",
+        itemId: "steer-1",
+        sequence: 1,
+        createdAt,
+      }),
+    );
+    const snapshot = await system.run(engine.getJourneyProjection(threadA));
+    expect(snapshot.steering.map((item) => [item.id, item.status])).toEqual([
+      ["steer-1", "delivered"],
+      ["steer-2", "queued"],
+    ]);
+    const steeringCatchUp = await system.run(
+      engine.getJourneyDeltas(threadA, beforeSteering.journeyRevision),
+    );
+    expect(steeringCatchUp.kind).toBe("deltas");
+    if (steeringCatchUp.kind === "deltas") {
+      expect(steeringCatchUp.deltas.map((delta) => [delta.fromRevision, delta.toRevision])).toEqual(
+        [
+          [beforeSteering.journeyRevision, beforeSteering.journeyRevision + 1],
+          [beforeSteering.journeyRevision + 1, beforeSteering.journeyRevision + 2],
+          [beforeSteering.journeyRevision + 2, beforeSteering.journeyRevision + 3],
+        ],
+      );
+      expect(steeringCatchUp.deltas.at(-1)?.changedEntities.steering).toEqual(snapshot.steering);
+    }
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toContain("journey.scheduler-admission-recorded");
+    expect(events.map((event) => event.type)).toContain("journey.steering-delivered");
+    await system.dispose();
+  });
+
+  it("rejects cyclic legacy Journey snapshots", async () => {
+    const system = await createOrchestrationSystem();
+    const createdAt = now();
+    const projectId = asProjectId("project-journey-cycle");
+    const threadId = ThreadId.makeUnsafe("journey-cycle");
+    await system.run(
+      system.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cycle-project"),
+        projectId,
+        title: "Cycle",
+        workspaceRoot: "/tmp/journey-cycle",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cycle-thread"),
+        threadId,
+        projectId,
+        title: "Cycle",
+        model: "gpt-5-codex",
+        harness: "codexCli",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        surface: "journey",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await expect(
+      system.run(
+        system.engine.dispatch({
+          type: "thread.journey.update",
+          commandId: CommandId.makeUnsafe("cycle-snapshot"),
+          threadId,
+          journey: journeySnapshot("a", [
+            { id: "a-b", source: "a", target: "b", relation: "dependsOn", label: "" },
+            { id: "b-a", source: "b", target: "a", relation: "dependsOn", label: "" },
+          ]),
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("contain a cycle");
+    await system.dispose();
+  });
+
+  it("serves fenced output and contiguous Journey-only projection catch-up", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const projectId = asProjectId("project-journey-delivery");
+    const threadId = ThreadId.makeUnsafe("journey-delivery");
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("delivery-project"),
+        projectId,
+        title: "Delivery",
+        workspaceRoot: "/tmp/journey-delivery",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("delivery-thread"),
+        threadId,
+        projectId,
+        title: "Delivery",
+        model: "gpt-5-codex",
+        harness: "codexCli",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        surface: "journey",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.journey.update",
+        commandId: CommandId.makeUnsafe("delivery-snapshot"),
+        threadId,
+        journey: journeySnapshot("research"),
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "journey.run.request",
+        commandId: CommandId.makeUnsafe("delivery-run"),
+        threadId,
+        runId: "delivery-run",
+        nodeId: "research",
+        role: "researchWorker",
+        harness: "codexCli",
+        capabilities: ["graph.read"],
+        parentRunId: null,
+        coordinatorRunId: null,
+        prompt: "inspect",
+        createdAt,
+      }),
+    );
+    const fence = { threadId, runId: "delivery-run", nodeId: "research", attempt: 1 } as const;
+    await system.run(
+      engine.dispatch({
+        type: "journey.attempt.start.request",
+        commandId: CommandId.makeUnsafe("delivery-attempt"),
+        fence,
+        capabilities: ["graph.read"],
+        createdAt,
+      }),
+    );
+
+    const projection = await system.run(engine.getJourneyProjection(threadId));
+    const catchUp = await system.run(engine.getJourneyDeltas(threadId, 0));
+    expect(catchUp.kind).toBe("deltas");
+    if (catchUp.kind === "deltas") {
+      expect(catchUp.deltas.map((delta) => [delta.fromRevision, delta.toRevision])).toEqual([
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+      ]);
+      expect(catchUp.deltas.at(-1)?.globalEventWatermark).toBe(projection.globalEventWatermark);
+    }
+
+    await system.run(engine.beginJourneyRunOutput(fence));
+    await system.run(engine.beginJourneyRunOutput(fence));
+    await expect(
+      system.run(engine.beginJourneyRunOutput({ ...fence, nodeId: "wrong-node" })),
+    ).rejects.toThrow(/not authoritative/u);
+    await expect(
+      system.run(engine.beginJourneyRunOutput({ ...fence, attempt: 2 })),
+    ).rejects.toThrow(/not authoritative/u);
+    await system.run(engine.appendJourneyRunOutput(fence, "live output"));
+    expect(await system.run(engine.getJourneyRunOutput(fence, 0))).toMatchObject({
+      fence,
+      reset: false,
+      nextCursor: 11,
+      data: "live output",
+    });
+    await system.dispose();
+  });
+
+  it("restores Journey attempt output after engine recreation", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clui-journey-engine-output-"));
+    const databasePath = path.join(tempDir, "state.sqlite");
+    const createdAt = now();
+    const projectId = asProjectId("project-journey-output-restart");
+    const threadId = ThreadId.makeUnsafe("journey-output-restart");
+    const fence = { threadId, runId: "restart-run", nodeId: "research", attempt: 1 } as const;
+    const first = await createPersistentOrchestrationSystem(databasePath);
+    await first.run(
+      first.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("restart-output-project"),
+        projectId,
+        title: "Restart output",
+        workspaceRoot: tempDir,
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await first.run(
+      first.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("restart-output-thread"),
+        threadId,
+        projectId,
+        title: "Restart output",
+        model: "gpt-5-codex",
+        harness: "codexCli",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        surface: "journey",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await first.run(
+      first.engine.dispatch({
+        type: "thread.journey.update",
+        commandId: CommandId.makeUnsafe("restart-output-snapshot"),
+        threadId,
+        journey: journeySnapshot("research"),
+        createdAt,
+      }),
+    );
+    await first.run(
+      first.engine.dispatch({
+        type: "journey.run.request",
+        commandId: CommandId.makeUnsafe("restart-output-run"),
+        threadId,
+        runId: fence.runId,
+        nodeId: fence.nodeId,
+        role: "researchWorker",
+        harness: "codexCli",
+        capabilities: ["graph.read"],
+        parentRunId: null,
+        coordinatorRunId: null,
+        prompt: "inspect",
+        createdAt,
+      }),
+    );
+    await first.run(
+      first.engine.dispatch({
+        type: "journey.attempt.start.request",
+        commandId: CommandId.makeUnsafe("restart-output-attempt"),
+        fence,
+        capabilities: ["graph.read"],
+        createdAt,
+      }),
+    );
+    await first.run(first.engine.beginJourneyRunOutput(fence));
+    await first.run(first.engine.appendJourneyRunOutput(fence, "persistent output"));
+    await first.dispose();
+
+    const second = await createPersistentOrchestrationSystem(databasePath);
+    expect(await second.run(second.engine.getJourneyRunOutput(fence, 0))).toMatchObject({
+      fence,
+      nextCursor: 17,
+      data: "persistent output",
+    });
+    expect((await second.run(second.engine.getJourneyProjection(threadId))).journeyRevision).toBe(
+      5,
+    );
+    expect(await second.run(second.engine.getJourneyDeltas(threadId, 0))).toMatchObject({
+      kind: "reset",
+      snapshot: { threadId, journeyRevision: 5 },
+    });
+    await second.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
   it("rejects duplicate thread creation", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
@@ -687,3 +1358,6 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 });
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";

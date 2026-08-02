@@ -1,5 +1,6 @@
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import {
   DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_THREAD_SURFACE,
@@ -12,6 +13,15 @@ import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import { applyJourneyMutation } from "./journeyMutation.ts";
+import {
+  createEmptyJourneyDomainState,
+  decideJourneyCommand,
+  type JourneyDomainState,
+} from "./journeyDomain.ts";
+import {
+  assertAcyclicJourneyDependencies,
+  journeyProposalRevisionHash,
+} from "./journeySchedulerPolicy.ts";
 import {
   listThreadsByProjectId,
   requireProject,
@@ -131,13 +141,69 @@ function lifecycleThreadError(
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  journeyDomainState = createEmptyJourneyDomainState(),
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  readonly journeyDomainState?: JourneyDomainState;
 }): Effect.fn.Return<
   Omit<OrchestrationEvent, "sequence"> | ReadonlyArray<Omit<OrchestrationEvent, "sequence">>,
   OrchestrationCommandInvariantError
 > {
+  if (command.type.startsWith("journey.")) {
+    const journeyEvents = yield* Effect.try({
+      try: () => decideJourneyCommand({ command, readModel, state: journeyDomainState }) ?? [],
+      catch: (error) =>
+        error instanceof OrchestrationCommandInvariantError
+          ? error
+          : new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: error instanceof Error ? error.message : "Invalid Journey command.",
+            }),
+    });
+    if (journeyEvents.length === 0) {
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail: "Journey command produced no events.",
+      });
+    }
+    const threadId =
+      "threadId" in command
+        ? command.threadId
+        : "submission" in command
+          ? command.submission.threadId
+          : "parentFence" in command
+            ? command.parentFence.threadId
+            : "fence" in command
+              ? command.fence.threadId
+              : null;
+    if (threadId === null) {
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail: "Journey command has no thread identity.",
+      });
+    }
+    const occurredAt =
+      "createdAt" in command
+        ? command.createdAt
+        : "submission" in command
+          ? "timestamp" in command.submission
+            ? command.submission.timestamp
+            : command.submission.submittedAt
+          : nowIso();
+    return journeyEvents.map((event) =>
+      Object.assign(
+        withEventBase({
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        { type: event.type, payload: event.payload },
+      ),
+    ) as ReadonlyArray<Omit<OrchestrationEvent, "sequence">>;
+  }
+
   switch (command.type) {
     case "project.create": {
       yield* requireProjectAbsent({
@@ -277,12 +343,57 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
+      if (thread.surface === "journey") {
+        const projection = journeyDomainState.threads.find(
+          (candidate) => candidate.threadId === command.threadId,
+        );
+        const liveRuns =
+          projection?.runs.filter(
+            (run) => !["completed", "failed", "cancelled"].includes(run.status),
+          ) ?? [];
+        if (liveRuns.length > 0) {
+          const base = withEventBase({
+            aggregateKind: "thread" as const,
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          });
+          return [
+            {
+              ...base,
+              type: "journey.thread-deletion-requested" as const,
+              payload: { threadId: command.threadId, requestedAt: occurredAt },
+            },
+            ...liveRuns
+              .filter((run) => run.status !== "interrupted" && run.status !== "cancelling")
+              .map((run) =>
+                Object.assign(
+                  withEventBase({
+                    aggregateKind: "thread" as const,
+                    aggregateId: command.threadId,
+                    occurredAt,
+                    commandId: command.commandId,
+                  }),
+                  {
+                    type: "journey.run-cancellation-requested" as const,
+                    payload: {
+                      threadId: command.threadId,
+                      runId: run.runId,
+                      nodeId: run.nodeId,
+                      reason: "Journey thread deletion requested.",
+                    },
+                  },
+                ),
+              ),
+          ];
+        }
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -578,20 +689,64 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: "Journey snapshots can only be updated on journey threads.",
         });
       }
-      return {
+      try {
+        assertAcyclicJourneyDependencies(command.journey);
+      } catch (error) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: error instanceof Error ? error.message : "Invalid Journey dependency graph.",
+        });
+      }
+      const journeyUpdatedEvent = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
         }),
-        type: "thread.journey-updated",
+        type: "thread.journey-updated" as const,
         payload: {
           threadId: command.threadId,
           journey: command.journey,
           updatedAt: command.createdAt,
         },
       };
+      const approvals =
+        journeyDomainState.threads.find((projection) => projection.threadId === command.threadId)
+          ?.approvals ?? [];
+      const invalidations = approvals.flatMap((approval) => {
+        let nextRevisionHash: string;
+        try {
+          nextRevisionHash = journeyProposalRevisionHash(command.journey, approval.proposalNodeId);
+        } catch {
+          nextRevisionHash = createHash("sha256")
+            .update(`removed:${approval.proposalNodeId}`, "utf8")
+            .digest("hex");
+        }
+        if (nextRevisionHash === approval.proposalRevisionHash) return [];
+        return [
+          {
+            ...withEventBase({
+              aggregateKind: "thread" as const,
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            }),
+            type: "journey.approval-invalidated" as const,
+            payload: {
+              threadId: command.threadId,
+              interactionId: approval.interactionId,
+              proposalNodeId: approval.proposalNodeId,
+              previousRevisionHash: approval.proposalRevisionHash,
+              nextRevisionHash,
+              reason: "Proposal material revision changed.",
+            },
+          },
+        ];
+      });
+      return invalidations.length === 0
+        ? journeyUpdatedEvent
+        : [journeyUpdatedEvent, ...invalidations];
     }
 
     case "thread.journey.mutate": {
@@ -617,20 +772,56 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
 
-      return {
+      const journeyUpdatedEvent = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
         }),
-        type: "thread.journey-updated",
+        type: "thread.journey-updated" as const,
         payload: {
           threadId: command.threadId,
           journey,
           updatedAt: command.createdAt,
         },
       };
+      const approvals =
+        journeyDomainState.threads.find((projection) => projection.threadId === command.threadId)
+          ?.approvals ?? [];
+      const invalidations = approvals.flatMap((approval) => {
+        let nextRevisionHash: string;
+        try {
+          nextRevisionHash = journeyProposalRevisionHash(journey, approval.proposalNodeId);
+        } catch {
+          nextRevisionHash = createHash("sha256")
+            .update(`removed:${approval.proposalNodeId}`, "utf8")
+            .digest("hex");
+        }
+        if (nextRevisionHash === approval.proposalRevisionHash) return [];
+        return [
+          {
+            ...withEventBase({
+              aggregateKind: "thread" as const,
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            }),
+            type: "journey.approval-invalidated" as const,
+            payload: {
+              threadId: command.threadId,
+              interactionId: approval.interactionId,
+              proposalNodeId: approval.proposalNodeId,
+              previousRevisionHash: approval.proposalRevisionHash,
+              nextRevisionHash,
+              reason: "Proposal material revision changed.",
+            },
+          },
+        ];
+      });
+      return invalidations.length === 0
+        ? journeyUpdatedEvent
+        : [journeyUpdatedEvent, ...invalidations];
     }
 
     case "thread.turn.start": {
@@ -1110,6 +1301,39 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
     }
+
+    // Journey commands are handled by the authoritative Journey domain above.
+    case "journey.decision.submit":
+    case "journey.approval.submit":
+    case "journey.root.start":
+    case "journey.run.request":
+    case "journey.attempt.start.request":
+    case "journey.attempt.started":
+    case "journey.attempt.quiesce.request":
+    case "journey.attempt.quiesced":
+    case "journey.child.start":
+    case "journey.wait.evaluate":
+    case "journey.wait.wake":
+    case "journey.attempt.result.submit":
+    case "journey.attempt.fail":
+    case "journey.run.cancel":
+    case "journey.run.cancelled":
+    case "journey.run.interrupt":
+    case "journey.permit.claim":
+    case "journey.permit.release":
+    case "journey.writer-lease.claim":
+    case "journey.writer-lease.release":
+    case "journey.approval.invalidate":
+    case "journey.reconcile.observe":
+    case "journey.scheduler.configure":
+    case "journey.steering.enqueue":
+    case "journey.steering.remove":
+    case "journey.node.delete":
+    case "journey.steering.acknowledge":
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail: "Journey command routing failed.",
+      });
 
     default: {
       command satisfies never;

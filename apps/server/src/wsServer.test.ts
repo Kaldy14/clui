@@ -22,6 +22,7 @@ import {
   DEFAULT_TITLE_GENERATION_PROVIDER,
   EDITORS,
   ORCHESTRATION_WS_METHODS,
+  ThreadId,
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
@@ -30,6 +31,7 @@ import {
   type ClaudeSessionEvent,
   type ClaudeCodeProxyStatus,
   type KeybindingsConfig,
+  type JourneySnapshot,
   type OrchestrationReadModel,
   type PiSessionEvent,
   type ResolvedKeybindingsConfig,
@@ -65,6 +67,11 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery";
+import {
+  JourneyReactor,
+  type JourneyReactorShape,
+} from "./orchestration/Services/JourneyReactor.ts";
+import { journeyAttemptAuthorizer } from "./terminal/journeyAttemptAuthorization.ts";
 
 interface PendingMessages {
   queue: unknown[];
@@ -535,6 +542,7 @@ describe("WebSocket Server", () => {
       piSessionManager?: PiSessionManagerShape;
       macosSleepPreventer?: MacosSleepPreventerShape;
       projectionSnapshotQuery?: ProjectionSnapshotQueryShape;
+      journeyReactor?: JourneyReactorShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -572,6 +580,7 @@ describe("WebSocket Server", () => {
       options.projectionSnapshotQuery
         ? Layer.succeed(ProjectionSnapshotQuery, options.projectionSnapshotQuery)
         : Layer.empty,
+      options.journeyReactor ? Layer.succeed(JourneyReactor, options.journeyReactor) : Layer.empty,
       Layer.succeed(
         ClaudeSessionManager,
         options.claudeSessionManager ?? defaultClaudeSessionManager,
@@ -2222,6 +2231,7 @@ describe("WebSocket Server", () => {
       harness?: "claudeCode" | "codexCli" | "pi";
       claudeCodeBackend?: "anthropic" | "codex";
       model?: string;
+      surface?: "terminal" | "journey";
     },
   ): Promise<void> {
     const createdAt = new Date().toISOString();
@@ -2249,6 +2259,7 @@ describe("WebSocket Server", () => {
       interactionMode: "default",
       branch: null,
       worktreePath: input.worktreePath,
+      surface: input.surface ?? "terminal",
       createdAt,
     });
     expect(createThreadResponse.error).toBeUndefined();
@@ -2563,6 +2574,111 @@ describe("WebSocket Server", () => {
           },
         ],
       });
+    });
+
+    it("keeps legacy Journey tokens read-only and accepts only a current fenced mutation", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      const workspaceRoot = makeTempDir("clui-ws-journey-auth-");
+      server = await createTestServer({
+        cwd: workspaceRoot,
+        claudeSessionManager: shape,
+        journeyReactor: { start: Effect.void },
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws);
+
+      const authThreadId = "thread-journey-auth";
+      const rootCommandId = "root-journey-auth";
+      await createProjectedThread(ws, {
+        projectId: "project-journey-auth",
+        threadId: authThreadId,
+        workspaceRoot,
+        worktreePath: null,
+        harness: "codexCli",
+        model: "gpt-5.6-sol",
+        surface: "journey",
+      });
+      const rootResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+        type: "journey.root.start",
+        commandId: rootCommandId,
+        threadId: authThreadId,
+        destination: "Verify fenced mutations",
+        prompt: "Create the initial graph.",
+        harness: "codexCli",
+        createdAt: new Date().toISOString(),
+      });
+      expect(rootResponse.error).toBeUndefined();
+
+      const startResponse = await sendRequest(ws, WS_METHODS.claudeStart, {
+        threadId: authThreadId,
+        cwd: workspaceRoot,
+        cols: 100,
+        rows: 30,
+      });
+      expect(startResponse.error).toBeUndefined();
+      const startInput = calls[0]!.args[0] as { journeyTools?: { token: string } };
+      const legacyToken = startInput.journeyTools?.token;
+      expect(legacyToken).toBeTruthy();
+
+      const projectionResponse = await sendRequest(
+        ws,
+        ORCHESTRATION_WS_METHODS.getJourneyProjection,
+        { threadId: authThreadId },
+      );
+      const projection = projectionResponse.result as { journey: JourneySnapshot };
+      const rootNode = projection.journey.nodes[0]!;
+      const updatedNode = Object.assign({}, rootNode, {
+        status: "running" as const,
+        title: "Fenced mutation accepted",
+      });
+      const mutationUrl = `http://127.0.0.1:${port}/journey-tools/update?thread=${authThreadId}`;
+      const beforeLegacy = (await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot))
+        .result as OrchestrationReadModel;
+      const legacyMutation = await fetch(mutationUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${legacyToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ nodes: [updatedNode] }),
+      });
+      expect(legacyMutation.status).toBe(401);
+      const afterLegacy = (await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot))
+        .result as OrchestrationReadModel;
+      expect(afterLegacy.snapshotSequence).toBe(beforeLegacy.snapshotSequence);
+
+      const currentFence = {
+        threadId: ThreadId.makeUnsafe(authThreadId),
+        runId: `coordinator:${rootCommandId}`,
+        nodeId: `goal:${rootCommandId}`,
+        attempt: 1,
+      } as const;
+      const grant = journeyAttemptAuthorizer.issue({
+        fence: currentFence,
+        role: "coordinator",
+        capabilities: ["graph.mutate"],
+      });
+      try {
+        const fencedMutation = await fetch(mutationUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${grant.token}`,
+            "Content-Type": "application/json",
+            "x-clui-journey-run-id": currentFence.runId,
+            "x-clui-journey-node-id": currentFence.nodeId,
+            "x-clui-journey-attempt": String(currentFence.attempt),
+          },
+          body: JSON.stringify({ nodes: [updatedNode] }),
+        });
+        expect(fencedMutation.status).toBe(200);
+        const body = (await fencedMutation.json()) as { snapshot: JourneySnapshot };
+        expect(body.snapshot.nodes[0]?.title).toBe("Fenced mutation accepted");
+      } finally {
+        journeyAttemptAuthorizer.revokeFence(currentFence);
+      }
     });
 
     it("routes managed Codex proxy login and logout", async () => {

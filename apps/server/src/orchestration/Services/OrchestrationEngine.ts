@@ -11,6 +11,12 @@
  * @module OrchestrationEngineService
  */
 import type {
+  JourneyAttemptFence,
+  JourneyOutputReadResult,
+  JourneyOutputChunk,
+  JourneyProjectionDelta,
+  JourneyProjectionSnapshot,
+  OrchestrationGetJourneyDeltasResult,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
@@ -31,6 +37,34 @@ export interface OrchestrationEngineShape {
    * @returns Effect containing the latest read model.
    */
   readonly getReadModel: () => Effect.Effect<OrchestrationReadModel, never, never>;
+
+  /** Read the rebuildable Journey run/attempt/approval projection for a thread. */
+  readonly getJourneyProjection: (
+    threadId: import("@clui/contracts").ThreadId,
+  ) => Effect.Effect<JourneyProjectionSnapshot, Error, never>;
+
+  /** Catch up a Journey projection without treating unrelated global events as gaps. */
+  readonly getJourneyDeltas: (
+    threadId: import("@clui/contracts").ThreadId,
+    afterJourneyRevision: number,
+  ) => Effect.Effect<OrchestrationGetJourneyDeltasResult, Error, never>;
+
+  /** Initialize the bounded output stream for a newly active physical attempt. */
+  readonly beginJourneyRunOutput: (fence: JourneyAttemptFence) => Effect.Effect<void, Error>;
+
+  /** Append process output. Full-fence validation rejects late/stale attempts. */
+  readonly appendJourneyRunOutput: (
+    fence: JourneyAttemptFence,
+    data: string,
+  ) => Effect.Effect<{ firstCursor: number; nextCursor: number }, Error>;
+
+  /** Read only one selected physical attempt's retained output. */
+  readonly getJourneyRunOutput: (
+    fence: JourneyAttemptFence,
+    afterCursor: number,
+  ) => Effect.Effect<JourneyOutputReadResult, Error>;
+
+  readonly deactivateJourneyRunOutput: (fence: JourneyAttemptFence) => Effect.Effect<void, Error>;
 
   /**
    * Replay persisted orchestration events from an exclusive sequence cursor.
@@ -61,6 +95,12 @@ export interface OrchestrationEngineShape {
    * This is a hot runtime stream (new events only), not a historical replay.
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
+
+  /** Hot, lightweight projection updates; never launches or resumes work. */
+  readonly streamJourneyProjectionDeltas: Stream.Stream<JourneyProjectionDelta>;
+
+  /** Hot output chunks for active physical attempts. Transport filters by full fence. */
+  readonly streamJourneyRunOutput: Stream.Stream<JourneyOutputChunk>;
 }
 
 /**
