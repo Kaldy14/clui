@@ -100,6 +100,7 @@ type JourneyNodeData = {
   expanded: boolean;
   focused: boolean;
   agentWorking: boolean;
+  agentOutputOpen: boolean;
   onToggleExpanded: (nodeId: string) => void;
   onToggleFocus: (nodeId: string) => void;
   onToggleTodo: (nodeId: string, todoId: string, completed: boolean) => void;
@@ -534,6 +535,22 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
           </span>
         </button>
         <div className="nodrag flex shrink-0 items-center gap-0.5">
+          {!data.expanded && hasAgentOutput && (
+            <button
+              type="button"
+              className={cn(
+                "rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                data.agentOutputOpen &&
+                  "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+              )}
+              title={data.agentWorking ? "View live agent output" : "View agent output"}
+              aria-label={`${data.agentWorking ? "View live agent output" : "View agent output"}: ${node.title}`}
+              aria-pressed={data.agentOutputOpen}
+              onClick={() => data.onOpenAgentOutput(node.id)}
+            >
+              <BotIcon className="size-3" aria-hidden="true" />
+            </button>
+          )}
           <button
             type="button"
             className={cn(
@@ -1596,6 +1613,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
             agentRunNodeId !== null &&
             journey.activeNodeId === node.id &&
             node.status === "running",
+          agentOutputOpen: agentOutputNodeId === node.id,
           onToggleExpanded: handleToggleNodeExpanded,
           onToggleFocus: handleToggleNodeFocus,
           onToggleTodo: handleToggleTodo,
@@ -1613,6 +1631,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     });
   }, [
     agentRunNodeId,
+    agentOutputNodeId,
     expandedNodeId,
     focusedNodeId,
     handleSubmitInteraction,

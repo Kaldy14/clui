@@ -4,6 +4,20 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Expose agent output from collapsed Journey nodes
+
+**Problem:** Agent output could only be opened after expanding a Journey node, adding an unnecessary interaction when scanning the compact graph.
+
+**Root cause:** The existing node-linked output action was rendered only inside the expanded details region even though the output inspector is independent of node expansion.
+
+**Fix:** Added a compact bot icon to collapsed nodes whenever real agent output exists. It opens the existing live/history inspector without expanding or moving the node, includes a node-specific accessible label, and shows an active treatment while that node's inspector is open. Expanded nodes retain the labelled output action.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Remove speculative Journey nodes and generic continuation
 
 **Problem:** Journey agents could pre-create future `ready` proposal/task/research nodes that did not represent work in progress or an actual result. Expanded non-HITL nodes then showed a generic `Continue with agent` button, even though autonomous work should not require a user click and the action could appear to do nothing while another run was active.
