@@ -35,6 +35,7 @@ import {
   CircleAlertIcon,
   CircleDashedIcon,
   CircleDotIcon,
+  CornerDownRightIcon,
   FileCode2Icon,
   FlagIcon,
   FlaskConicalIcon,
@@ -80,7 +81,11 @@ import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscript
 import { cn, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { updateThread, useStore } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import {
+  selectThreadTerminalState,
+  useTerminalStateStore,
+  type JourneyPromptQueueItem,
+} from "../terminalStateStore";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
@@ -108,6 +113,8 @@ type JourneyNodeData = {
 
 type JourneyFlowNode = Node<JourneyNodeData, "journey">;
 type JourneyHarness = Extract<CodingHarness, "pi" | "codexCli">;
+
+const EMPTY_JOURNEY_PROMPT_QUEUE: readonly JourneyPromptQueueItem[] = [];
 
 const JOURNEY_MINIMAP_NODE_COLORS: Record<JourneyNodeStatus, string> = {
   draft: "#64748b",
@@ -783,40 +790,57 @@ function JourneyViewportFocus({
   return null;
 }
 
-function JourneyCanvasControls({
+function JourneyHeaderControls({
+  direction,
   focusedNodeId,
   onClearFocus,
   onDirectionChange,
 }: {
+  direction: "TB" | "LR";
   focusedNodeId: string | null;
   onClearFocus: () => void;
   onDirectionChange: (direction: "TB" | "LR") => void;
 }) {
   const { fitView } = useReactFlow<JourneyFlowNode>();
+  const controlClassName = (active: boolean) =>
+    cn(
+      "rounded-md p-1.5 transition-colors hover:bg-muted hover:text-foreground",
+      active ? "bg-muted text-foreground" : "text-muted-foreground",
+    );
+  const changeDirection = (nextDirection: "TB" | "LR") => {
+    onDirectionChange(nextDirection);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        void fitView({ padding: 0.18, maxZoom: 1.05, duration: 250 });
+      });
+    });
+  };
   return (
-    <div className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-lg border border-border/60 bg-background/90 p-1 shadow-sm backdrop-blur">
+    <div className="flex shrink-0 items-center gap-0.5" aria-label="Journey graph layout controls">
       <button
         type="button"
-        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        className={controlClassName(direction === "TB")}
         title="Top to bottom"
         aria-label="Arrange top to bottom"
-        onClick={() => onDirectionChange("TB")}
+        aria-pressed={direction === "TB"}
+        onClick={() => changeDirection("TB")}
       >
         <ArrowDownIcon className="size-3.5" />
       </button>
       <button
         type="button"
-        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        className={controlClassName(direction === "LR")}
         title="Left to right"
         aria-label="Arrange left to right"
-        onClick={() => onDirectionChange("LR")}
+        aria-pressed={direction === "LR"}
+        onClick={() => changeDirection("LR")}
       >
         <ArrowRightIcon className="size-3.5" />
       </button>
       <span className="mx-0.5 h-4 w-px bg-border" />
       <button
         type="button"
-        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        className={controlClassName(false)}
         title="Fit graph"
         aria-label="Fit graph"
         onClick={() => {
@@ -826,6 +850,131 @@ function JourneyCanvasControls({
       >
         <Maximize2Icon className="size-3.5" />
       </button>
+    </div>
+  );
+}
+
+function JourneyPromptComposer({
+  message,
+  queue,
+  agentBusy,
+  expanded,
+  onMessageChange,
+  onExpandedChange,
+  onRemoveQueuedPrompt,
+  onSubmit,
+}: {
+  message: string;
+  queue: readonly JourneyPromptQueueItem[];
+  agentBusy: boolean;
+  expanded: boolean;
+  onMessageChange: (message: string) => void;
+  onExpandedChange: (expanded: boolean) => void;
+  onRemoveQueuedPrompt: (promptId: string) => void;
+  onSubmit: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || !expanded) return;
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 80), 176)}px`;
+  }, [expanded, message]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="pointer-events-auto w-full max-w-3xl overflow-hidden rounded-xl border border-border/70 bg-background/96 shadow-xl backdrop-blur-md"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget;
+        const focusRemainsInside =
+          nextTarget instanceof Node && containerRef.current?.contains(nextTarget);
+        if (message.trim().length === 0 && !focusRemainsInside) {
+          onExpandedChange(false);
+        }
+      }}
+    >
+      {queue.length > 0 && (
+        <div
+          className="max-h-48 divide-y divide-border/50 overflow-y-auto border-b border-border/60"
+          aria-live="polite"
+        >
+          {queue.map((item, index) => (
+            <div key={item.id} className="flex h-9 items-center gap-2 px-3 text-xs">
+              <CornerDownRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-foreground">{item.message}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {index === 0 ? "Next" : `Queued ${index + 1}`}
+              </span>
+              <button
+                type="button"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label={`Remove queued prompt: ${item.message}`}
+                title="Remove from queue"
+                onClick={() => onRemoveQueuedPrompt(item.id)}
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <form
+        className={cn(
+          "flex items-end gap-2 transition-[padding]",
+          expanded ? "p-2.5" : "p-1.5 pl-3",
+        )}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+      >
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={message}
+          aria-label="Prompt the Journey agent"
+          placeholder={agentBusy ? "Add a prompt to the agent queue…" : "Prompt the Journey agent…"}
+          className={cn(
+            "min-w-0 flex-1 resize-none bg-transparent px-0 py-1.5 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground/60",
+            expanded ? "min-h-20" : "h-8 overflow-hidden whitespace-nowrap",
+          )}
+          onFocus={() => onExpandedChange(true)}
+          onClick={() => onExpandedChange(true)}
+          onChange={(event) => onMessageChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && message.trim().length === 0) {
+              onExpandedChange(false);
+              event.currentTarget.blur();
+              return;
+            }
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+        <Button
+          type="submit"
+          size="icon-sm"
+          className="mb-0.5 shrink-0"
+          disabled={!message.trim()}
+          aria-label={agentBusy ? "Queue prompt" : "Send prompt"}
+          title={agentBusy ? "Queue prompt" : "Send prompt"}
+        >
+          <SendIcon className="size-3.5" />
+        </Button>
+      </form>
+      {expanded && (
+        <div className="flex items-center justify-between border-t border-border/50 px-3 py-1.5 text-[10px] text-muted-foreground">
+          <span>
+            {agentBusy ? "The agent is working · this prompt will be queued" : "Agent ready"}
+          </span>
+          <span>Enter to send · Shift+Enter for newline</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -858,6 +1007,13 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const clearNewThreadPromptDraft = useTerminalStateStore(
     (state) => state.clearNewThreadPromptDraft,
   );
+  const journeyPromptQueue = useTerminalStateStore(
+    (state) =>
+      selectThreadTerminalState(state.terminalStateByThreadId, threadId).journeyPromptQueue ??
+      EMPTY_JOURNEY_PROMPT_QUEUE,
+  );
+  const enqueueJourneyPrompt = useTerminalStateStore((state) => state.enqueueJourneyPrompt);
+  const removeJourneyPrompt = useTerminalStateStore((state) => state.removeJourneyPrompt);
   const dangerouslySkipPermissions = useTerminalStateStore(
     (state) => selectThreadTerminalState(state.terminalStateByThreadId, threadId).yoloMode,
   );
@@ -866,6 +1022,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [agentMessage, setAgentMessage] = useState("");
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const [agentOutputNodeId, setAgentOutputNodeId] = useState<string | null>(null);
   const [nodeMeasurements, setNodeMeasurements] = useState<
     Record<string, { height: number; expanded: boolean; focused: boolean }>
@@ -879,6 +1036,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     baselineAssistantId: string | null;
     baselineAssistantText: string | null;
   } | null>(null);
+  const queueLaunchRef = useRef<string | null>(null);
   const journey = thread?.journey ?? null;
   const journeyHarness = journeyHarnessForThread(thread?.harness);
 
@@ -1095,9 +1253,9 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
 
   const runAgent = useCallback(
     async (snapshot: JourneySnapshot, nodeId: string, message = "") => {
-      if (!thread || !project || pendingRunRef.current) return;
+      if (!thread || !project || pendingRunRef.current) return false;
       const api = readNativeApi();
-      if (!api) return;
+      if (!api) return false;
       const cwd = thread.worktreePath ?? project.cwd;
       const now = new Date().toISOString();
       const runningSnapshot = {
@@ -1146,7 +1304,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
             ...(thread.claudeSessionId ? { resumeSessionId: thread.claudeSessionId } : {}),
             ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
           });
-          return;
+          return true;
         }
 
         const baselineTranscript = await api.pi.getTranscript({ threadId });
@@ -1168,8 +1326,10 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
             ...(thread.piSessionFile ? { resumeSessionFile: thread.piSessionFile } : {}),
           });
         }
+        return true;
       } catch (error) {
         await failPendingRun(error);
+        return true;
       }
     },
     [
@@ -1182,6 +1342,61 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       threadId,
     ],
   );
+
+  const queueAgentPrompt = useCallback(
+    (nodeId: string, message?: string) => {
+      const normalizedMessage = message?.trim() || "Continue working from this node.";
+      enqueueJourneyPrompt(threadId, {
+        id: `journey-prompt-${crypto.randomUUID()}`,
+        message: normalizedMessage,
+        nodeId,
+        createdAt: new Date().toISOString(),
+      });
+    },
+    [enqueueJourneyPrompt, threadId],
+  );
+
+  useEffect(() => {
+    const nextPrompt = journeyPromptQueue[0];
+    if (
+      !journey ||
+      !nextPrompt ||
+      queueLaunchRef.current ||
+      pendingRunRef.current ||
+      agentRunNodeId !== null ||
+      journey.nodes.some((node) => node.status === "running")
+    ) {
+      return;
+    }
+
+    const nodeId = journey.nodes.some((node) => node.id === nextPrompt.nodeId)
+      ? nextPrompt.nodeId
+      : (journey.activeNodeId ?? journey.nodes[0]?.id);
+    if (!nodeId) {
+      removeJourneyPrompt(threadId, nextPrompt.id);
+      return;
+    }
+
+    queueLaunchRef.current = nextPrompt.id;
+    const launch = runAgent(journey, nodeId, nextPrompt.message);
+    void launch
+      .then((consumed) => {
+        if (consumed) removeJourneyPrompt(threadId, nextPrompt.id);
+      })
+      .finally(() => {
+        queueLaunchRef.current = null;
+      });
+  }, [agentRunNodeId, journey, journeyPromptQueue, removeJourneyPrompt, runAgent, threadId]);
+
+  const handleSubmitAgentMessage = useCallback(() => {
+    const message = agentMessage.trim();
+    if (!message || !journey) return;
+    const target = journey.activeNodeId ?? journey.nodes[0]?.id;
+    if (!target) return;
+    queueAgentPrompt(target, message);
+    setAgentMessage("");
+    setComposerExpanded(false);
+  }, [agentMessage, journey, queueAgentPrompt]);
 
   const handleStartJourney = useCallback(async () => {
     if (!destination.trim() || starting) return;
@@ -1249,10 +1464,10 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         updatedAt: now,
       }));
       void persistJourney(updated).then(() =>
-        runAgent(updated, nodeId, `The user answered: ${JSON.stringify(answers)}`),
+        queueAgentPrompt(nodeId, `The user answered: ${JSON.stringify(answers)}`),
       );
     },
-    [journey, persistJourney, runAgent],
+    [journey, persistJourney, queueAgentPrompt],
   );
 
   const handleDirectionChange = useCallback(
@@ -1366,7 +1581,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
           onToggleFocus: handleToggleNodeFocus,
           onToggleTodo: handleToggleTodo,
           onSubmitInteraction: handleSubmitInteraction,
-          onRunAgent: (nodeId, message) => void runAgent(journey, nodeId, message),
+          onRunAgent: queueAgentPrompt,
           onOpenAgentOutput: setAgentOutputNodeId,
           onHeightChange: handleNodeHeightChange,
         },
@@ -1388,7 +1603,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     handleNodeHeightChange,
     journey,
     layouts,
-    runAgent,
+    queueAgentPrompt,
   ]);
 
   const flowEdges = useMemo<Edge[]>(() => {
@@ -1467,62 +1682,33 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-border/60 px-4 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          <span className="rounded-lg bg-primary/10 p-1.5 text-primary">
-            <NetworkIcon className="size-4" />
+    <ReactFlowProvider>
+      <div className="flex h-full min-h-0 flex-col bg-background">
+        <header className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+          <span className="rounded-md bg-primary/10 p-1 text-primary">
+            <NetworkIcon className="size-3.5" />
           </span>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">{journey.destination}</p>
-            <p className="text-[10px] text-muted-foreground">
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <p className="min-w-0 truncate text-xs font-semibold text-foreground">
+              {journey.destination}
+            </p>
+            <p className="hidden shrink-0 text-[10px] text-muted-foreground sm:block">
               {journey.nodes.length} nodes ·{" "}
-              {journey.nodes.filter((node) => node.status === "waitingForUser").length} waiting for
-              you · {journeyHarness === "pi" ? "Pi" : "Codex"}
+              {journey.nodes.filter((node) => node.status === "waitingForUser").length} waiting ·{" "}
+              {journeyHarness === "pi" ? "Pi" : "Codex"}
+              {journeyPromptQueue.length > 0 ? ` · ${journeyPromptQueue.length} queued` : ""}
             </p>
           </div>
-        </div>
-        <div className="flex min-w-[min(100%,28rem)] flex-1 items-center gap-1.5 sm:max-w-xl">
-          <Input
-            className="h-8 text-xs"
-            value={agentMessage}
-            placeholder="Ask the agent to adjust or advance the journey…"
-            disabled={agentRunNodeId !== null}
-            onChange={(event) => setAgentMessage(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || !agentMessage.trim()) return;
-              const target = journey.activeNodeId ?? journey.nodes[0]?.id;
-              if (!target) return;
-              const message = agentMessage;
-              setAgentMessage("");
-              void runAgent(journey, target, message);
-            }}
+          <JourneyHeaderControls
+            direction={journey.layoutDirection}
+            focusedNodeId={focusedNodeId}
+            onClearFocus={() => setFocusedNodeId(null)}
+            onDirectionChange={handleDirectionChange}
           />
-          <Button
-            type="button"
-            size="sm"
-            aria-label="Send to journey agent"
-            disabled={!agentMessage.trim() || agentRunNodeId !== null}
-            onClick={() => {
-              const target = journey.activeNodeId ?? journey.nodes[0]?.id;
-              if (!target) return;
-              const message = agentMessage;
-              setAgentMessage("");
-              void runAgent(journey, target, message);
-            }}
-          >
-            {agentRunNodeId ? (
-              <LoaderCircleIcon className="size-3.5 animate-spin" />
-            ) : (
-              <SendIcon className="size-3.5" />
-            )}
-          </Button>
-        </div>
-      </header>
+        </header>
 
-      <div className="relative flex min-h-0 flex-1">
-        <div className="relative min-w-0 flex-1">
-          <ReactFlowProvider>
+        <div className="relative flex min-h-0 flex-1">
+          <div className="relative min-w-0 flex-1">
             <ReactFlow<JourneyFlowNode>
               nodes={flowNodes}
               edges={flowEdges}
@@ -1561,24 +1747,33 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
                 nodeStrokeWidth={2}
               />
               <Controls showInteractive={false} position="bottom-left" />
-              <JourneyCanvasControls
-                focusedNodeId={focusedNodeId}
-                onClearFocus={() => setFocusedNodeId(null)}
-                onDirectionChange={handleDirectionChange}
-              />
             </ReactFlow>
-          </ReactFlowProvider>
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3 sm:px-5">
+              <JourneyPromptComposer
+                message={agentMessage}
+                queue={journeyPromptQueue}
+                agentBusy={
+                  agentRunNodeId !== null || journey.nodes.some((node) => node.status === "running")
+                }
+                expanded={composerExpanded}
+                onMessageChange={setAgentMessage}
+                onExpandedChange={setComposerExpanded}
+                onRemoveQueuedPrompt={(promptId) => removeJourneyPrompt(threadId, promptId)}
+                onSubmit={handleSubmitAgentMessage}
+              />
+            </div>
+          </div>
+          {agentOutputNodeId && (
+            <JourneyAgentOutputPanel
+              threadId={threadId}
+              harness={journeyHarness}
+              node={agentOutputNode}
+              running={agentOutputRunning}
+              onClose={() => setAgentOutputNodeId(null)}
+            />
+          )}
         </div>
-        {agentOutputNodeId && (
-          <JourneyAgentOutputPanel
-            threadId={threadId}
-            harness={journeyHarness}
-            node={agentOutputNode}
-            running={agentOutputRunning}
-            onClose={() => setAgentOutputNodeId(null)}
-          />
-        )}
       </div>
-    </div>
+    </ReactFlowProvider>
   );
 }

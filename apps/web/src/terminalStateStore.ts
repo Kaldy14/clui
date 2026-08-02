@@ -18,6 +18,13 @@ import {
 
 export type PiRenderMode = "terminal" | "html";
 
+export interface JourneyPromptQueueItem {
+  id: string;
+  message: string;
+  nodeId: string;
+  createdAt: string;
+}
+
 interface ThreadTerminalState {
   terminalOpen: boolean;
   terminalHeight: number;
@@ -34,9 +41,31 @@ interface ThreadTerminalState {
   piRenderMode: PiRenderMode;
   /** Draft text for the new-thread first prompt. */
   newThreadPromptDraft: string;
+  /** FIFO steering prompts waiting for the Journey harness to become available. */
+  journeyPromptQueue: JourneyPromptQueueItem[];
 }
 
 const TERMINAL_STATE_STORAGE_KEY = "clui:terminal-state:v1";
+const MAX_JOURNEY_PROMPT_QUEUE_SIZE = 50;
+
+function normalizeJourneyPromptQueue(
+  queue: readonly JourneyPromptQueueItem[] | undefined,
+): JourneyPromptQueueItem[] {
+  if (!queue) return [];
+  const seenIds = new Set<string>();
+  const normalized: JourneyPromptQueueItem[] = [];
+  for (const item of queue) {
+    const id = item?.id?.trim();
+    const message = item?.message?.trim();
+    const nodeId = item?.nodeId?.trim();
+    const createdAt = item?.createdAt?.trim();
+    if (!id || !message || !nodeId || !createdAt || seenIds.has(id)) continue;
+    seenIds.add(id);
+    normalized.push({ id, message, nodeId, createdAt });
+    if (normalized.length >= MAX_JOURNEY_PROMPT_QUEUE_SIZE) break;
+  }
+  return normalized;
+}
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))].slice(
@@ -152,6 +181,27 @@ function terminalGroupsEqual(left: ThreadTerminalGroup[], right: ThreadTerminalG
   return true;
 }
 
+function journeyPromptQueuesEqual(
+  left: readonly JourneyPromptQueueItem[] | undefined,
+  right: readonly JourneyPromptQueueItem[],
+): boolean {
+  if (!left || left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftItem = left[index];
+    const rightItem = right[index];
+    if (!leftItem || !rightItem) return false;
+    if (
+      leftItem.id !== rightItem.id ||
+      leftItem.message !== rightItem.message ||
+      leftItem.nodeId !== rightItem.nodeId ||
+      leftItem.createdAt !== rightItem.createdAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTerminalState): boolean {
   return (
     left.terminalOpen === right.terminalOpen &&
@@ -162,6 +212,7 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
     left.piFastMode === right.piFastMode &&
     left.piRenderMode === right.piRenderMode &&
     left.newThreadPromptDraft === right.newThreadPromptDraft &&
+    journeyPromptQueuesEqual(left.journeyPromptQueue, right.journeyPromptQueue) &&
     arraysEqual(left.terminalIds, right.terminalIds) &&
     arraysEqual(left.runningTerminalIds, right.runningTerminalIds) &&
     terminalGroupsEqual(left.terminalGroups, right.terminalGroups)
@@ -191,6 +242,7 @@ const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   piFastMode: DEFAULT_PI_FAST_MODE,
   piRenderMode: DEFAULT_PI_RENDER_MODE,
   newThreadPromptDraft: "",
+  journeyPromptQueue: [],
 });
 
 function createDefaultThreadTerminalState(): ThreadTerminalState {
@@ -203,6 +255,7 @@ function createDefaultThreadTerminalState(): ThreadTerminalState {
     piFastMode: DEFAULT_PI_FAST_MODE,
     piRenderMode: DEFAULT_PI_RENDER_MODE,
     newThreadPromptDraft: "",
+    journeyPromptQueue: [],
   };
 }
 
@@ -245,6 +298,7 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
     piFastMode: state.piFastMode ?? DEFAULT_PI_FAST_MODE,
     piRenderMode: state.piRenderMode === "html" ? "html" : DEFAULT_PI_RENDER_MODE,
     newThreadPromptDraft: state.newThreadPromptDraft ?? "",
+    journeyPromptQueue: normalizeJourneyPromptQueue(state.journeyPromptQueue),
   };
   return threadTerminalStateEqual(state, normalized) ? state : normalized;
 }
@@ -438,6 +492,7 @@ function closeThreadTerminal(state: ThreadTerminalState, terminalId: string): Th
     piFastMode: normalized.piFastMode,
     piRenderMode: normalized.piRenderMode,
     newThreadPromptDraft: normalized.newThreadPromptDraft,
+    journeyPromptQueue: normalized.journeyPromptQueue,
   });
 }
 
@@ -523,6 +578,8 @@ interface TerminalStateStoreState {
   setPiRenderMode: (threadId: ThreadId, renderMode: PiRenderMode) => void;
   setNewThreadPromptDraft: (threadId: ThreadId, draft: string) => void;
   clearNewThreadPromptDraft: (threadId: ThreadId) => void;
+  enqueueJourneyPrompt: (threadId: ThreadId, item: JourneyPromptQueueItem) => void;
+  removeJourneyPrompt: (threadId: ThreadId, promptId: string) => void;
   clearTerminalState: (threadId: ThreadId) => void;
   removeOrphanedTerminalStates: (activeThreadIds: Set<ThreadId>) => void;
 }
@@ -653,6 +710,35 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
             const normalized = normalizeThreadTerminalState(state);
             if (normalized.newThreadPromptDraft.length === 0) return normalized;
             return { ...normalized, newThreadPromptDraft: "" };
+          }),
+        enqueueJourneyPrompt: (threadId, item) =>
+          updateTerminal(threadId, (state) => {
+            const normalized = normalizeThreadTerminalState(state);
+            if (normalized.journeyPromptQueue.length >= MAX_JOURNEY_PROMPT_QUEUE_SIZE) {
+              return normalized;
+            }
+            const normalizedItem = normalizeJourneyPromptQueue([item])[0];
+            if (
+              !normalizedItem ||
+              normalized.journeyPromptQueue.some((queued) => queued.id === normalizedItem.id)
+            ) {
+              return normalized;
+            }
+            return {
+              ...normalized,
+              journeyPromptQueue: [...normalized.journeyPromptQueue, normalizedItem],
+            };
+          }),
+        removeJourneyPrompt: (threadId, promptId) =>
+          updateTerminal(threadId, (state) => {
+            const normalized = normalizeThreadTerminalState(state);
+            const journeyPromptQueue = normalized.journeyPromptQueue.filter(
+              (item) => item.id !== promptId,
+            );
+            if (journeyPromptQueue.length === normalized.journeyPromptQueue.length) {
+              return normalized;
+            }
+            return { ...normalized, journeyPromptQueue };
           }),
         clearTerminalState: (threadId) =>
           set((state) => {

@@ -5,7 +5,7 @@
 - Status: Active
 - Last refreshed: 2026-08-02
 - Primary product surfaces: Project/thread sidebar, terminal threads, journey graph threads, settings, git/diff tools
-- Evidence reviewed: `README.md`, `PLAN.md`, `AGENTS.md`, `apps/web/src/index.css`, `apps/web/src/routes/_chat.$threadId.tsx`, `apps/web/src/components/ThreadTerminalView.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/`, `packages/contracts/src/orchestration.ts`
+- Evidence reviewed: `README.md`, `PLAN.md`, `AGENTS.md`, `apps/web/src/index.css`, `apps/web/src/routes/_chat.$threadId.tsx`, `apps/web/src/components/ThreadTerminalView.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/`, `packages/contracts/src/orchestration.ts`, the current Journey header screenshot, and the Codex queued-composer interaction reference supplied on 2026-08-02
 
 ## Brand
 
@@ -28,8 +28,8 @@
 ## Information architecture
 
 - Primary navigation: Existing project/thread sidebar remains the entry point. The standard new-thread composer switches between a terminal session and a journey; Journey mode exposes an agent selector limited to Pi and Codex. The sidebar has one creation action for both.
-- Core routes/screens: Existing thread route branches to terminal or journey content. The journey surface consists of a graph toolbar, pannable graph, expandable nodes, and an optional activity/interaction area within expanded nodes.
-- Content hierarchy: Journey destination and controls; actionable/current nodes; dependencies and spawned relationships; expanded node details; node-linked live agent output inspector; completed history.
+- Core routes/screens: Existing thread route branches to terminal or journey content. The journey surface consists of thin persistent header chrome, a pannable graph, expandable nodes, a bottom steering composer, and an optional activity/interaction area within expanded nodes.
+- Content hierarchy: Journey destination and compact graph controls; actionable/current nodes; dependencies and spawned relationships; expanded node details; queued user steering and composer; node-linked live agent output inspector; completed history.
 
 ## Design principles
 
@@ -39,6 +39,7 @@
 - Expansion owns the foreground: An expanded node renders above every collapsed sibling, and a focused node renders above the expanded layer. Expanded content uses its intrinsic height; the graph canvas pans around it rather than adding an internal vertical scrollbar.
 - Reversible focus: Node focus is distinct from expansion. It enlarges the chosen expanded node and fits it prominently into the canvas without changing durable graph data; Escape, the node control, or Fit graph restores the overview.
 - Keep work observable in context: A running node exposes its live agent transcript without replacing or obscuring the graph on desktop; the output inspector keeps the originating node visible as context.
+- Steering is durable and asynchronous: The bottom composer accepts new prompts even while the agent is working. Prompts remain visible in FIFO order, can be removed before execution, survive thread switching, and automatically become the next agent turn when the harness is available.
 - Graph progress is live state, not a final-report visualization: Agents create a running node before concrete research or implementation, mutate it at meaningful transitions, and record the real outcome when the work finishes. The final assistant message summarizes the run; it is not the primary graph transport.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
 - Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts. Pi and Codex must produce the same graph contract so changing the harness does not change how the Journey behaves.
@@ -57,7 +58,7 @@
 ## Components
 
 - Existing components to reuse: Buttons, badges, inputs, textareas, radio groups, checkboxes, collapsibles, scroll areas, tooltips, sheets, and app toolbar/sidebar patterns under `apps/web/src/components/ui/`.
-- New/changed components: Journey surface, graph toolbar, status-aware interactive minimap, journey node with separate expand and focus controls, compact single-signal type metadata, intrinsic-height expanded details, flat interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
+- New/changed components: Journey surface, thin graph header with layout/fit controls, expandable bottom steering composer with a flat queued-prompt list, status-aware interactive minimap, journey node with separate expand and focus controls, compact single-signal type metadata, intrinsic-height expanded details, flat interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
 - Variants and states: Node types include goal, question, proposal, task, todo group, research, implementation, review, and note. Statuses include draft, ready, running, waiting for user, blocked, completed, failed, cancelled, and superseded.
 - Token/component ownership: Journey-specific accent mappings live with the journey UI; shared theme primitives remain in `apps/web/src/index.css` and existing UI components.
 
@@ -72,13 +73,14 @@
 ## Responsive behavior
 
 - Supported breakpoints/devices: Desktop and tablet are primary; narrow browser windows remain usable.
-- Layout adaptations: Graph toolbar wraps; expanded nodes cap width but not height; focused nodes receive a wider reading layout and are fitted to the available canvas; controls keep minimum touch targets; viewport can fit selected/all nodes. Long expanded content remains one intrinsic-height surface navigated with the graph viewport. The live output inspector shares horizontal space on desktop and overlays the canvas at narrow widths so it remains readable without permanently collapsing the graph.
+- Layout adaptations: The header keeps one compact row and hides secondary journey metadata before controls wrap. The composer is centered over the bottom canvas edge, expands upward, and leaves the graph visible around it. Expanded nodes cap width but not height; focused nodes receive a wider reading layout and are fitted to the available canvas; controls keep minimum touch targets; viewport can fit selected/all nodes. Long expanded content remains one intrinsic-height surface navigated with the graph viewport. The live output inspector shares horizontal space on desktop and overlays the canvas at narrow widths so it remains readable without permanently collapsing the graph.
 - Touch/hover differences: Essential controls remain visible or focusable and never depend solely on hover.
 
 ## Interaction states
 
 - Loading: Keep graph chrome visible with a centered lightweight spinner or skeleton nodes.
 - Agent output: Opening live output is non-destructive and preserves graph position. The inspector renders the selected harness's native live event stream, distinguishes a running stream from completed history, and can be closed without stopping the agent.
+- Steering composer: The resting control is a compact single-line prompt. Focus or click expands it into a multiline composer. Enter queues/sends and Shift+Enter adds a newline. Busy submissions are labelled `Queued`; each waiting item can be removed. Finishing a run automatically starts the oldest queued prompt.
 - Empty: Prompt for a destination and offer to create the first node.
 - Error: Preserve the last valid graph, identify the failed action/run, and provide retry or dismiss controls.
 - Success: Completed nodes remain visible with concise outcome summaries; journey completion is explicit, not inferred only from an empty frontier.
@@ -96,7 +98,7 @@
 - Framework/styling system: React 19, Tailwind CSS v4, Base UI primitives, Zustand, TanStack Router/Query, Effect Schema contracts, WebSocket RPC, and SQLite projections.
 - Design-token constraints: Reuse existing semantic tokens and dark-mode behavior; add no competing design-system layer.
 - Performance constraints: Avoid continuous force simulation; update only changed graph elements; cap rendered live activity; keep layout asynchronous or bounded for larger graphs.
-- Compatibility constraints: Existing terminal threads and persisted orchestration events must decode unchanged. Journey graph data is separate from terminal scrollback and PTY lifecycle. Pi uses registered extension tools and its structured transcript; Codex uses a thread-scoped stdio MCP server, non-interactive JSONL events, and resumable session IDs. Both harnesses mutate the same validated server-side Journey contract.
+- Compatibility constraints: Existing terminal threads and persisted orchestration events must decode unchanged. Journey graph data is separate from terminal scrollback and PTY lifecycle. Journey steering queues are per-thread UI state and normalize older persisted records that do not contain a queue. Pi uses registered extension tools and its structured transcript; Codex uses a thread-scoped stdio MCP server, non-interactive JSONL events, and resumable session IDs. Both harnesses mutate the same validated server-side Journey contract.
 - Test/screenshot expectations: Unit-test graph reducers, layout direction, interaction validation, and thread-surface branching; run browser/component coverage where practical; require `bun lint` and `bun typecheck`.
 
 ## Open questions

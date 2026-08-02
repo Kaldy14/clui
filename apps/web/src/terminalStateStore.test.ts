@@ -36,6 +36,7 @@ describe("terminalStateStore actions", () => {
       piFastMode: false,
       piRenderMode: "terminal",
       newThreadPromptDraft: "",
+      journeyPromptQueue: [],
     });
   });
 
@@ -119,6 +120,74 @@ describe("terminalStateStore actions", () => {
       selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
         .newThreadPromptDraft,
     ).toBe("");
+  });
+
+  it("queues journey prompts in FIFO order and removes them independently", () => {
+    const store = useTerminalStateStore.getState();
+    store.enqueueJourneyPrompt(THREAD_ID, {
+      id: "prompt-1",
+      message: "Inspect the current behavior",
+      nodeId: "node-a",
+      createdAt: "2026-08-02T10:00:00.000Z",
+    });
+    store.enqueueJourneyPrompt(THREAD_ID, {
+      id: "prompt-2",
+      message: "Then propose a fix",
+      nodeId: "node-b",
+      createdAt: "2026-08-02T10:01:00.000Z",
+    });
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .journeyPromptQueue,
+    ).toEqual([
+      {
+        id: "prompt-1",
+        message: "Inspect the current behavior",
+        nodeId: "node-a",
+        createdAt: "2026-08-02T10:00:00.000Z",
+      },
+      {
+        id: "prompt-2",
+        message: "Then propose a fix",
+        nodeId: "node-b",
+        createdAt: "2026-08-02T10:01:00.000Z",
+      },
+    ]);
+
+    store.removeJourneyPrompt(THREAD_ID, "prompt-1");
+
+    expect(
+      selectThreadTerminalState(
+        useTerminalStateStore.getState().terminalStateByThreadId,
+        THREAD_ID,
+      ).journeyPromptQueue.map((item) => item.id),
+    ).toEqual(["prompt-2"]);
+  });
+
+  it("treats persisted terminal state without a Journey queue as an empty queue", () => {
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {
+        [THREAD_ID]: {
+          ...selectThreadTerminalState({}, THREAD_ID),
+          journeyPromptQueue: undefined,
+        } as never,
+      },
+    });
+
+    useTerminalStateStore.getState().enqueueJourneyPrompt(THREAD_ID, {
+      id: "prompt-after-upgrade",
+      message: "Continue after upgrading",
+      nodeId: "node-a",
+      createdAt: "2026-08-02T10:02:00.000Z",
+    });
+
+    expect(
+      selectThreadTerminalState(
+        useTerminalStateStore.getState().terminalStateByThreadId,
+        THREAD_ID,
+      ).journeyPromptQueue.map((item) => item.id),
+    ).toEqual(["prompt-after-upgrade"]);
   });
 
   it("tracks and clears terminal subprocess activity", () => {

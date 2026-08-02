@@ -4,6 +4,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Move Journey steering into a queued bottom composer
+
+**Problem:** The Journey prompt occupied most of the header, disappeared behind a disabled state while the agent worked, and gave no way to line up additional instructions for the next agent turn. Graph direction and fit controls also floated over the canvas instead of living in the persistent chrome.
+
+**Root cause:** Steering was implemented as a one-shot header input that called the harness directly and rejected submissions whenever a run was active. Prompt state was not represented as per-thread durable UI data, so there was no FIFO lifecycle to display or resume.
+
+**Fix:** Replaced the header input with a compact bottom composer that expands upward on focus, supports multiline prompts, and collapses after submission. Every steering prompt and questionnaire continuation now enters a persisted per-thread FIFO queue; queued items remain visible and removable, and the oldest prompt starts automatically after the current Journey run settles. Reduced the header to one row, moved top-to-bottom, left-to-right, and Fit graph controls into it, and re-fit the graph after direction changes. Added queue normalization for older stored state, FIFO/removal regression coverage, and visual browser verification of collapsed, expanded, queued, and layout-switch states.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/terminalStateStore.ts`
+- `apps/web/src/terminalStateStore.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Make the Journey minimap show the graph
 
 **Problem:** The Journey minimap showed its frame and viewport mask but could appear empty instead of displaying a miniature overview of the graph nodes.
