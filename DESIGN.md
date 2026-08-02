@@ -29,12 +29,13 @@
 
 - Primary navigation: Existing project/thread sidebar remains the entry point. The standard new-thread composer switches between a terminal session and a journey; the sidebar has one creation action for both.
 - Core routes/screens: Existing thread route branches to terminal or journey content. The journey surface consists of a graph toolbar, pannable graph, expandable nodes, and an optional activity/interaction area within expanded nodes.
-- Content hierarchy: Journey destination and controls; actionable/current nodes; dependencies and spawned relationships; expanded node details; run/activity detail; completed history.
+- Content hierarchy: Journey destination and controls; actionable/current nodes; dependencies and spawned relationships; expanded node details; node-linked live agent output inspector; completed history.
 
 ## Design principles
 
 - Semantic graph first: Agents create and update meaningful nodes and edges; layout coordinates are a presentation concern.
 - Progressive disclosure: Nodes remain scannable when collapsed and reveal forms, questionnaires, todos, artifacts, and activity when expanded.
+- Keep work observable in context: A running node exposes its live agent transcript without replacing or obscuring the graph on desktop; the output inspector keeps the originating node visible as context.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
 - Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts.
 - Preserve user orientation: Layout changes are deliberate, animation is restrained, and expanded/selected state remains stable across graph updates.
@@ -52,7 +53,7 @@
 ## Components
 
 - Existing components to reuse: Buttons, badges, inputs, textareas, radio groups, checkboxes, collapsibles, scroll areas, tooltips, sheets, and app toolbar/sidebar patterns under `apps/web/src/components/ui/`.
-- New/changed components: Journey surface, graph toolbar, journey node, node status indicator, interaction form renderer, todo list, activity feed, empty journey state, and thread-surface selector.
+- New/changed components: Journey surface, graph toolbar, journey node, node status indicator, interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, and thread-surface selector.
 - Variants and states: Node types include goal, question, proposal, task, todo group, research, implementation, review, and note. Statuses include draft, ready, running, waiting for user, blocked, completed, failed, cancelled, and superseded.
 - Token/component ownership: Journey-specific accent mappings live with the journey UI; shared theme primitives remain in `apps/web/src/index.css` and existing UI components.
 
@@ -67,12 +68,13 @@
 ## Responsive behavior
 
 - Supported breakpoints/devices: Desktop and tablet are primary; narrow browser windows remain usable.
-- Layout adaptations: Graph toolbar wraps; expanded nodes cap width; controls keep minimum touch targets; viewport can fit selected/all nodes.
+- Layout adaptations: Graph toolbar wraps; expanded nodes cap width; controls keep minimum touch targets; viewport can fit selected/all nodes. The live output inspector shares horizontal space on desktop and overlays the canvas at narrow widths so it remains readable without permanently collapsing the graph.
 - Touch/hover differences: Essential controls remain visible or focusable and never depend solely on hover.
 
 ## Interaction states
 
 - Loading: Keep graph chrome visible with a centered lightweight spinner or skeleton nodes.
+- Agent output: Opening live output is non-destructive and preserves graph position. The inspector follows the current Pi transcript, distinguishes a running stream from completed history, and can be closed without stopping the agent.
 - Empty: Prompt for a destination and offer to create the first node.
 - Error: Preserve the last valid graph, identify the failed action/run, and provide retry or dismiss controls.
 - Success: Completed nodes remain visible with concise outcome summaries; journey completion is explicit, not inferred only from an empty frontier.

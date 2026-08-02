@@ -4,6 +4,26 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Show live Journey agent output
+
+**Problem:** Journey nodes only exposed high-level activity entries, so users could not inspect the agent's real-time transcript, tool calls, or latest completed output while work was running. Existing development databases created before the latest `main` rebase could also fail to start because the original Journey migration had already claimed migration ID 31.
+
+**Root cause:** The hidden Pi session that drives a Journey was consumed only to update the graph, and the output subscription registry assumed a single consumer per thread. Separately, rebased migration ID 31 now creates thread lifecycle columns, while some local databases recorded the earlier Journey migration under that same ID and therefore skipped those columns.
+
+**Fix:** Added a node-level agent-output action that opens a responsive right-side inspector using the existing live Pi HTML transcript renderer, with explicit live/latest-run state and a close action. Made harness output subscriptions reference-counted so the graph and inspector can safely observe the same thread. Added an idempotent repair migration and regression coverage for the migration-ID collision.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/harnessOutputSubscriptions.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
+- `apps/server/src/persistence/Migrations.ts`
+- `apps/server/src/persistence/Migrations.test.ts`
+- `apps/server/src/persistence/MigrationsJourneyCollision.test.ts`
+- `apps/server/src/persistence/Migrations/034_ProjectionThreadsLifecycleCollisionRepair.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Move Journey selection into the new-thread composer
 
 **Problem:** Journey had a separate project-sidebar creation button instead of being selectable from the normal new-thread screen, and its empty state included unnecessary explanatory copy.

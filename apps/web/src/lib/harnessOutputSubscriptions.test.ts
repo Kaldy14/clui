@@ -113,6 +113,37 @@ describe("harness output subscriptions", () => {
     registration.unsubscribe();
   });
 
+  it("keeps a thread subscribed until every mounted consumer releases it", async () => {
+    installDocumentStub();
+    const { registerHarnessOutputSubscription } = await import("./harnessOutputSubscriptions");
+    const api = {
+      server: {
+        setHarnessOutputSubscriptions: vi.fn(() => Promise.resolve()),
+      },
+    } as unknown as NativeApi;
+
+    const graphRegistration = registerHarnessOutputSubscription(api, "pi", "thread-1");
+    await graphRegistration.ready;
+    const outputRegistration = registerHarnessOutputSubscription(api, "pi", "thread-1");
+    await outputRegistration.ready;
+
+    outputRegistration.unsubscribe();
+    await Promise.resolve();
+
+    expect(api.server.setHarnessOutputSubscriptions).toHaveBeenLastCalledWith({
+      claudeThreadIds: [],
+      piThreadIds: ["thread-1"],
+    });
+
+    graphRegistration.unsubscribe();
+    await Promise.resolve();
+
+    expect(api.server.setHarnessOutputSubscriptions).toHaveBeenLastCalledWith({
+      claudeThreadIds: [],
+      piThreadIds: [],
+    });
+  });
+
   it("routes Codex CLI output through the shared non-pi terminal subscription", async () => {
     installDocumentStub();
     const { registerHarnessOutputSubscription } = await import("./harnessOutputSubscriptions");

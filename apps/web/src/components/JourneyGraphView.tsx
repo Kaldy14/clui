@@ -42,6 +42,7 @@ import {
   Maximize2Icon,
   MessageSquareTextIcon,
   NetworkIcon,
+  PanelRightOpenIcon,
   StickyNoteIcon,
   PlayIcon,
   RotateCcwIcon,
@@ -49,6 +50,7 @@ import {
   ShieldCheckIcon,
   SparklesIcon,
   SquareCheckBigIcon,
+  XIcon,
   XCircleIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -74,6 +76,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
+import PiHtmlThreadView from "./PiHtmlThreadView";
 import { Textarea } from "./ui/textarea";
 import { toastManager } from "./ui/toast";
 
@@ -89,6 +92,7 @@ type JourneyNodeData = {
     answers: Record<string, JourneyQuestionnaireAnswer>,
   ) => void;
   onRunAgent: (nodeId: string, message?: string) => void;
+  onOpenAgentOutput: (nodeId: string) => void;
 };
 
 type JourneyFlowNode = Node<JourneyNodeData, "journey">;
@@ -379,6 +383,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
   const targetPosition = data.direction === "TB" ? Position.Top : Position.Left;
   const sourcePosition = data.direction === "TB" ? Position.Bottom : Position.Right;
   const completedTodos = node.todos.filter((todo) => todo.completed).length;
+  const hasAgentOutput = data.agentWorking || node.activity.some((entry) => entry.kind === "agent");
 
   return (
     <article
@@ -445,6 +450,26 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
 
       {data.expanded && (
         <div className="nodrag nowheel max-h-[560px] space-y-3 overflow-y-auto border-t border-border/50 p-3">
+          {hasAgentOutput && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(
+                "w-full justify-between",
+                data.agentWorking &&
+                  "border-sky-500/40 bg-sky-500/8 text-sky-700 hover:bg-sky-500/12 dark:text-sky-300",
+              )}
+              onClick={() => data.onOpenAgentOutput(node.id)}
+            >
+              <span className="flex items-center gap-2">
+                <BotIcon className="size-3.5" />
+                {data.agentWorking ? "View live agent output" : "View agent output"}
+              </span>
+              <PanelRightOpenIcon className="size-3.5" />
+            </Button>
+          )}
+
           {node.detailMarkdown && (
             <div className="journey-markdown prose prose-sm max-w-none text-xs leading-5 text-foreground dark:prose-invert">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{node.detailMarkdown}</ReactMarkdown>
@@ -541,6 +566,65 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
 
 const NODE_TYPES = { journey: JourneyNodeCard };
 
+function JourneyAgentOutputPanel({
+  threadId,
+  node,
+  running,
+  onClose,
+}: {
+  threadId: ThreadId;
+  node: JourneyNode | null;
+  running: boolean;
+  onClose: () => void;
+}) {
+  const type = node ? NODE_TYPE_PRESENTATION[node.type] : null;
+  const TypeIcon = type?.icon ?? BotIcon;
+
+  return (
+    <aside
+      aria-label="Journey agent output"
+      className="absolute inset-y-0 right-0 z-20 flex w-[min(100%,42rem)] min-w-0 flex-col border-l border-border/70 bg-background shadow-[-16px_0_32px_-24px_rgb(0_0_0/0.45)] lg:relative lg:z-auto lg:w-[min(42vw,42rem)] lg:min-w-96 lg:shadow-none"
+    >
+      <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border/60 px-4 py-2">
+        <span className={cn("rounded-lg p-2", type?.className ?? "bg-sky-500/12 text-sky-500")}>
+          <TypeIcon className="size-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold text-foreground">Agent output</p>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 text-[10px] font-medium",
+                running ? "text-sky-600 dark:text-sky-300" : "text-muted-foreground",
+              )}
+            >
+              {running && (
+                <span className="size-1.5 animate-pulse rounded-full bg-sky-500 motion-reduce:animate-none" />
+              )}
+              {running ? "Live" : "Latest run"}
+            </span>
+          </div>
+          <p className="truncate text-[11px] text-muted-foreground">
+            {node?.title ?? "Journey agent"}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Close agent output"
+          onClick={onClose}
+        >
+          <XIcon className="size-4" />
+        </Button>
+      </header>
+      <div className="min-h-0 flex-1">
+        <PiHtmlThreadView threadId={threadId} />
+      </div>
+    </aside>
+  );
+}
+
 function JourneyCanvasControls({
   onDirectionChange,
 }: {
@@ -609,6 +693,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const [destination, setDestination] = useState(initialDestination);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [agentMessage, setAgentMessage] = useState("");
+  const [agentOutputNodeId, setAgentOutputNodeId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [agentRunNodeId, setAgentRunNodeId] = useState<string | null>(null);
   const pendingRunRef = useRef<{
@@ -959,6 +1044,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
           onToggleTodo: handleToggleTodo,
           onSubmitInteraction: handleSubmitInteraction,
           onRunAgent: (nodeId, message) => void runAgent(journey, nodeId, message),
+          onOpenAgentOutput: setAgentOutputNodeId,
         },
         draggable: true,
         selectable: true,
@@ -998,6 +1084,14 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       labelBgStyle: { fill: "var(--background)", fillOpacity: 0.92 },
     }));
   }, [journey]);
+
+  const agentOutputNode = agentOutputNodeId
+    ? (journey?.nodes.find((node) => node.id === agentOutputNodeId) ?? null)
+    : null;
+  const agentOutputRunning =
+    agentOutputNode !== null &&
+    journey?.activeNodeId === agentOutputNode.id &&
+    (agentRunNodeId === agentOutputNode.id || agentOutputNode.status === "running");
 
   if (!thread || !project) return null;
 
@@ -1096,38 +1190,53 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         </div>
       </header>
 
-      <div className="relative min-h-0 flex-1">
-        <ReactFlowProvider>
-          <ReactFlow<JourneyFlowNode>
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={NODE_TYPES}
-            fitView
-            fitViewOptions={{ padding: 0.18, maxZoom: 1.05 }}
-            minZoom={0.18}
-            maxZoom={1.6}
-            nodesConnectable={false}
-            elementsSelectable
-            proOptions={{ hideAttribution: false }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--border)" />
-            <MiniMap
-              pannable
-              zoomable
-              className="!border !border-border/60 !bg-background/90"
-              nodeColor={(node) => {
-                const status = (node.data as JourneyNodeData).journeyNode.status;
-                if (status === "waitingForUser") return "#f59e0b";
-                if (status === "running") return "#0ea5e9";
-                if (status === "completed") return "#10b981";
-                if (status === "failed") return "#ef4444";
-                return "#64748b";
-              }}
-            />
-            <Controls showInteractive={false} position="bottom-left" />
-            <JourneyCanvasControls onDirectionChange={handleDirectionChange} />
-          </ReactFlow>
-        </ReactFlowProvider>
+      <div className="relative flex min-h-0 flex-1">
+        <div className="relative min-w-0 flex-1">
+          <ReactFlowProvider>
+            <ReactFlow<JourneyFlowNode>
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={NODE_TYPES}
+              fitView
+              fitViewOptions={{ padding: 0.18, maxZoom: 1.05 }}
+              minZoom={0.18}
+              maxZoom={1.6}
+              nodesConnectable={false}
+              elementsSelectable
+              proOptions={{ hideAttribution: false }}
+            >
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={24}
+                size={1}
+                color="var(--border)"
+              />
+              <MiniMap
+                pannable
+                zoomable
+                className="!border !border-border/60 !bg-background/90"
+                nodeColor={(node) => {
+                  const status = (node.data as JourneyNodeData).journeyNode.status;
+                  if (status === "waitingForUser") return "#f59e0b";
+                  if (status === "running") return "#0ea5e9";
+                  if (status === "completed") return "#10b981";
+                  if (status === "failed") return "#ef4444";
+                  return "#64748b";
+                }}
+              />
+              <Controls showInteractive={false} position="bottom-left" />
+              <JourneyCanvasControls onDirectionChange={handleDirectionChange} />
+            </ReactFlow>
+          </ReactFlowProvider>
+        </div>
+        {agentOutputNodeId && (
+          <JourneyAgentOutputPanel
+            threadId={threadId}
+            node={agentOutputNode}
+            running={agentOutputRunning}
+            onClose={() => setAgentOutputNodeId(null)}
+          />
+        )}
       </div>
     </div>
   );

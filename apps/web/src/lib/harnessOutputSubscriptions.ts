@@ -4,8 +4,8 @@ import { onServerWelcome } from "../wsNativeApi";
 
 type HarnessKind = "claudeCode" | "pi" | "codexCli";
 
-const claudeThreadIds = new Set<string>();
-const piThreadIds = new Set<string>();
+const claudeThreadSubscriptions = new Map<string, number>();
+const piThreadSubscriptions = new Map<string, number>();
 
 let apiRef: NativeApi | null = null;
 let initialized = false;
@@ -14,9 +14,24 @@ let lastSentSignature: string | null = null;
 
 function subscriptionPayload() {
   return {
-    claudeThreadIds: [...claudeThreadIds].map((threadId) => ThreadId.makeUnsafe(threadId)),
-    piThreadIds: [...piThreadIds].map((threadId) => ThreadId.makeUnsafe(threadId)),
+    claudeThreadIds: [...claudeThreadSubscriptions.keys()].map((threadId) =>
+      ThreadId.makeUnsafe(threadId),
+    ),
+    piThreadIds: [...piThreadSubscriptions.keys()].map((threadId) => ThreadId.makeUnsafe(threadId)),
   };
+}
+
+function addSubscription(subscriptions: Map<string, number>, threadId: string): void {
+  subscriptions.set(threadId, (subscriptions.get(threadId) ?? 0) + 1);
+}
+
+function removeSubscription(subscriptions: Map<string, number>, threadId: string): void {
+  const count = subscriptions.get(threadId) ?? 0;
+  if (count <= 1) {
+    subscriptions.delete(threadId);
+    return;
+  }
+  subscriptions.set(threadId, count - 1);
 }
 
 function payloadSignature(payload: { claudeThreadIds: string[]; piThreadIds: string[] }): string {
@@ -81,8 +96,8 @@ export function registerHarnessOutputSubscription(
   apiRef = api;
   ensureInitialized();
 
-  const target = harness === "pi" ? piThreadIds : claudeThreadIds;
-  target.add(threadId);
+  const target = harness === "pi" ? piThreadSubscriptions : claudeThreadSubscriptions;
+  addSubscription(target, threadId);
   // The terminal view must not ask for catch-up scrollback until the server has
   // acknowledged this subscription. Otherwise a status/hook event can prompt
   // navigation, getScrollback can snapshot just before the corresponding PTY
@@ -90,11 +105,14 @@ export function registerHarnessOutputSubscription(
   // not reached the server yet. A later PTY resize then makes the missing TUI
   // frame appear, which looks like a render bug.
   const ready = syncNowWithRetry();
+  let unsubscribed = false;
 
   return {
     ready,
     unsubscribe: () => {
-      target.delete(threadId);
+      if (unsubscribed) return;
+      unsubscribed = true;
+      removeSubscription(target, threadId);
       scheduleSync();
     },
   };

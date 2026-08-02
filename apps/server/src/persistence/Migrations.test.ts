@@ -77,6 +77,22 @@ layer("Migrations", (it) => {
         columns.some((column) => column.name === "journey_json"),
         true,
       );
+      assert.equal(
+        columns.some((column) => column.name === "settled_override"),
+        true,
+      );
+      assert.equal(
+        columns.some((column) => column.name === "settled_at"),
+        true,
+      );
+      assert.equal(
+        columns.some((column) => column.name === "snoozed_until"),
+        true,
+      );
+      assert.equal(
+        columns.some((column) => column.name === "snoozed_at"),
+        true,
+      );
 
       const threads = yield* sql<{
         readonly scrollback_snapshot: string | null;
@@ -108,6 +124,11 @@ layer("Migrations", (it) => {
         SELECT name FROM effect_sql_migrations WHERE migration_id = 33
       `;
       assert.equal(journeyMigrationRows[0]?.name, "ProjectionThreadsJourney");
+
+      const lifecycleRepairRows = yield* sql<{ readonly name: string }>`
+        SELECT name FROM effect_sql_migrations WHERE migration_id = 34
+      `;
+      assert.equal(lifecycleRepairRows[0]?.name, "ProjectionThreadsLifecycleCollisionRepair");
     }),
   );
 });
