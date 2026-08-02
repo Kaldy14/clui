@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Remove the Journey minimap
+
+**Problem:** The bottom-right minimap occupied useful graph space, could overlap the steering composer, and did not add enough value alongside the existing Fit graph and pan/zoom controls.
+
+**Root cause:** The minimap remained part of the Journey canvas after overview navigation had moved into the compact header and React Flow controls.
+
+**Fix:** Removed the minimap component, status-color mapping, and Journey-specific minimap CSS. The graph retains header Fit graph, focus transitions, panning, and zoom controls without persistent bottom-right chrome.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/index.css`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Keep Journey agent output in the node toolbar
 
 **Problem:** The agent-output icon disappeared when a Journey node was expanded and was replaced by a second labelled action inside the node content.

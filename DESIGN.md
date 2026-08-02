@@ -45,7 +45,7 @@
 - Graph progress is live state, not a final-report visualization: Agents create a running node before concrete research or implementation, mutate it at meaningful transitions, and record the real outcome when the work finishes. The final assistant message summarizes the run; it is not the primary graph transport.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
 - Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts. Pi and Codex must produce the same graph contract so changing the harness does not change how the Journey behaves.
-- Preserve user orientation: Layout changes are deliberate, animation is restrained, and expanded/selected state remains stable across graph updates. Layer spacing follows rendered node dimensions plus a compact edge gutter; speculative height estimates must not leave large empty bands in the graph. The minimap shows status-colored node silhouettes and a restrained viewport mask so it remains a useful overview at every pan position.
+- Preserve user orientation: Layout changes are deliberate, animation is restrained, and expanded/selected state remains stable across graph updates. Layer spacing follows rendered node dimensions plus a compact edge gutter; speculative height estimates must not leave large empty bands in the graph. The header Fit graph action and canvas pan/zoom controls provide overview navigation without a persistent minimap covering the workspace.
 - Tradeoffs: Prefer clear durable state and predictable layout over maximal autonomous agent freedom or visually dense live logs.
 
 ## Visual language
@@ -60,7 +60,7 @@
 ## Components
 
 - Existing components to reuse: Buttons, badges, inputs, textareas, radio groups, checkboxes, collapsibles, scroll areas, tooltips, sheets, and app toolbar/sidebar patterns under `apps/web/src/components/ui/`.
-- New/changed components: Journey surface, thin graph header with layout/fit controls, expandable bottom steering composer with a flat queued-prompt list, status-aware interactive minimap, journey node with separate expand and focus controls, compact single-signal type metadata, intrinsic-height expanded details, flat interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
+- New/changed components: Journey surface, thin graph header with layout/fit controls, expandable bottom steering composer with a flat queued-prompt list, journey node with separate expand and focus controls, compact single-signal type metadata, intrinsic-height expanded details, flat interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
 - Variants and states: Node types include goal, question, proposal, task, todo group, research, implementation, review, and note. Statuses include draft, ready, running, waiting for user, blocked, completed, failed, cancelled, and superseded.
 - Token/component ownership: Journey-specific accent mappings live with the journey UI; shared theme primitives remain in `apps/web/src/index.css` and existing UI components.
 

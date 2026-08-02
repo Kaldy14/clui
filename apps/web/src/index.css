@@ -955,13 +955,6 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted) !important;
 }
 
-.journey-minimap {
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--foreground));
-  border-radius: 0.5rem;
-  box-shadow: var(--shadow-sm);
-}
-
 /* Diff panel review animations */
 @keyframes viewedPop {
   0% {
