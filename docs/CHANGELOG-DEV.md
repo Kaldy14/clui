@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Make the Journey minimap show the graph
+
+**Problem:** The Journey minimap showed its frame and viewport mask but could appear empty instead of displaying a miniature overview of the graph nodes.
+
+**Root cause:** Clui styled the minimap mask through a global class with the same specificity as React Flow's stylesheet. Because the Journey component lazy-loads React Flow's CSS later, the library's pale default mask won the cascade and could wash out the small status-colored node silhouettes.
+
+**Fix:** The minimap now sets its background, mask, viewport outline, node fill, and node outline through React Flow's supported component properties, which become inline CSS variables and are independent of stylesheet load order. Every Journey status has an explicit minimap color, nodes receive a high-contrast outline, and the minimap remains pannable and zoomable with an accessible overview label.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/index.css`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Allow Journey agents to run in selected projects during development
 
 **Problem:** In development mode, a Journey started for any repository other than Clui's `apps/server` failed with `cwd must be within workspace root`, so the agent could not work in the project selected for the thread.

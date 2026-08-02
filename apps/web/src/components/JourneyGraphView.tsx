@@ -109,6 +109,22 @@ type JourneyNodeData = {
 type JourneyFlowNode = Node<JourneyNodeData, "journey">;
 type JourneyHarness = Extract<CodingHarness, "pi" | "codexCli">;
 
+const JOURNEY_MINIMAP_NODE_COLORS: Record<JourneyNodeStatus, string> = {
+  draft: "#64748b",
+  ready: "#8b5cf6",
+  running: "#0ea5e9",
+  waitingForUser: "#f59e0b",
+  blocked: "#94a3b8",
+  completed: "#10b981",
+  failed: "#ef4444",
+  cancelled: "#64748b",
+  superseded: "#64748b",
+};
+
+function journeyMiniMapNodeColor(node: JourneyFlowNode): string {
+  return JOURNEY_MINIMAP_NODE_COLORS[node.data.journeyNode.status];
+}
+
 const NODE_TYPE_PRESENTATION: Record<
   JourneyNodeType,
   { label: string; className: string; textClassName: string; icon: typeof FlagIcon }
@@ -1530,18 +1546,19 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
                 size={1}
                 color="var(--border)"
               />
-              <MiniMap
+              <MiniMap<JourneyFlowNode>
                 pannable
                 zoomable
-                className="!border !border-border/60 !bg-background/90"
-                nodeColor={(node) => {
-                  const status = (node.data as JourneyNodeData).journeyNode.status;
-                  if (status === "waitingForUser") return "#f59e0b";
-                  if (status === "running") return "#0ea5e9";
-                  if (status === "completed") return "#10b981";
-                  if (status === "failed") return "#ef4444";
-                  return "#64748b";
-                }}
+                ariaLabel="Journey graph overview"
+                className="journey-minimap"
+                bgColor="color-mix(in srgb, var(--background) 96%, var(--foreground))"
+                maskColor="color-mix(in srgb, var(--background) 38%, transparent)"
+                maskStrokeColor="color-mix(in srgb, var(--foreground) 36%, transparent)"
+                maskStrokeWidth={1.5}
+                nodeBorderRadius={10}
+                nodeColor={journeyMiniMapNodeColor}
+                nodeStrokeColor={journeyMiniMapNodeColor}
+                nodeStrokeWidth={2}
               />
               <Controls showInteractive={false} position="bottom-left" />
               <JourneyCanvasControls

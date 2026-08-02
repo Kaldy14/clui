@@ -955,15 +955,11 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted) !important;
 }
 
-.react-flow__minimap {
+.journey-minimap {
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--foreground));
   border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--background) 92%, transparent) !important;
-}
-
-.react-flow__minimap-mask {
-  fill: color-mix(in srgb, var(--muted) 68%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Diff panel review animations */
