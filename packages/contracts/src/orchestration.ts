@@ -1,6 +1,6 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
-import { JourneySnapshot } from "./journey";
+import { JourneyMutation, JourneySnapshot } from "./journey";
 import { AgentActivityStatus, ClaudeHookStatus } from "./claude-terminal";
 import {
   ApprovalRequestId,
@@ -514,6 +514,14 @@ const ThreadJourneyUpdateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadJourneyMutateCommand = Schema.Struct({
+  type: Schema.Literal("thread.journey.mutate"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  mutation: JourneyMutation,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -749,6 +757,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadRevertCompleteCommand,
   ThreadTurnUsageUpdateCommand,
   ThreadTerminalStatusChangedCommand,
+  ThreadJourneyMutateCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 

@@ -52,6 +52,13 @@ import {
   removeSessionProcessRegistryEntry,
   writeSessionProcessRegistryEntry,
 } from "../sessionProcessRegistry";
+import {
+  CLUI_JOURNEY_TOOL_ENDPOINT_ENV,
+  CLUI_JOURNEY_TOOL_THREAD_ID_ENV,
+  CLUI_JOURNEY_TOOL_TOKEN_ENV,
+  JOURNEY_GET_INPUT_SCHEMA,
+  JOURNEY_UPDATE_INPUT_SCHEMA,
+} from "../journeyMcpServer";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -200,6 +207,8 @@ const syncDir = process.env.${CLUI_PI_SESSION_SYNC_DIR_ENV};
 const threadId = process.env.${CLUI_PI_THREAD_ID_ENV};
 const sessionSyncNonce = process.env.${CLUI_PI_SESSION_SYNC_NONCE_ENV};
 const fastModeEnabled = process.env.${CLUI_PI_FAST_MODE_ENV} === "1";
+const journeyToolEndpoint = process.env.${CLUI_JOURNEY_TOOL_ENDPOINT_ENV};
+const journeyToolToken = process.env.${CLUI_JOURNEY_TOOL_TOKEN_ENV};
 const processRegistryDir = process.env.${CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV};
 const processRegistryOwnerPid = Number(process.env.${CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV} ?? 0);
 const userInputToolNames = new Set(${JSON.stringify(USER_INPUT_TOOL_NAMES)});
@@ -381,6 +390,59 @@ function protectedSessionKillReason(command) {
 }
 
 export default function (pi) {
+  if (journeyToolEndpoint && journeyToolToken && threadId) {
+    const requestJourney = async (path, init = {}) => {
+      const response = await fetch(
+        journeyToolEndpoint + path + "?thread=" + encodeURIComponent(threadId),
+        {
+          ...init,
+          headers: {
+            Authorization: "Bearer " + journeyToolToken,
+            ...(init.body ? { "Content-Type": "application/json" } : {}),
+          },
+        },
+      );
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(text || "Clui Journey request failed with status " + response.status);
+      }
+      return text ? JSON.parse(text) : {};
+    };
+
+    pi.registerTool({
+      name: "journey_get",
+      label: "Read Journey",
+      description: "Read the latest durable Clui Journey graph before deciding the next mutation.",
+      promptSnippet: "Read the current Clui Journey graph",
+      promptGuidelines: [
+        "Use journey_get when the current Journey graph may have changed since the prompt was created.",
+      ],
+      parameters: ${JSON.stringify(JOURNEY_GET_INPUT_SCHEMA)},
+      async execute() {
+        const result = await requestJourney("/snapshot");
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    });
+
+    pi.registerTool({
+      name: "journey_update",
+      label: "Update Journey",
+      description: "Immediately create, update, or remove Journey nodes and edges while work is happening. Call before concrete work to expose a running node, and again after the work to record its real result.",
+      promptSnippet: "Update the visible Clui Journey graph while work progresses",
+      promptGuidelines: [
+        "Use journey_update before starting concrete work so the corresponding running node appears immediately, and call it again as soon as that work completes or becomes blocked.",
+      ],
+      parameters: ${JSON.stringify(JOURNEY_UPDATE_INPUT_SCHEMA)},
+      async execute(_toolCallId, params) {
+        const result = await requestJourney("/update", {
+          method: "POST",
+          body: JSON.stringify(params),
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    });
+  }
+
   pi.on("session_start", async (event, ctx) => {
     pendingUserInputToolCallIds.clear();
     lastHookStatus = undefined;
@@ -602,6 +664,7 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
     initialPrompt?: string;
     fastMode?: boolean;
     htmlMode?: boolean;
+    journeyTools?: { endpoint: string; token: string };
   }): Promise<void> {
     const sessionStart = await this.runWithThreadLock(
       input.threadId,
@@ -688,6 +751,11 @@ export class PiSessionManagerRuntime extends EventEmitter<PiSessionManagerEvents
           spawnEnv[CLUI_PI_SESSION_SYNC_NONCE_ENV] = sessionSyncNonce;
           if (input.fastMode === true) {
             spawnEnv[CLUI_PI_FAST_MODE_ENV] = "1";
+          }
+          if (input.journeyTools) {
+            spawnEnv[CLUI_JOURNEY_TOOL_ENDPOINT_ENV] = input.journeyTools.endpoint;
+            spawnEnv[CLUI_JOURNEY_TOOL_THREAD_ID_ENV] = input.threadId;
+            spawnEnv[CLUI_JOURNEY_TOOL_TOKEN_ENV] = input.journeyTools.token;
           }
           spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_DIR_ENV] = this.processRegistryDir;
           spawnEnv[CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV] = String(process.pid);

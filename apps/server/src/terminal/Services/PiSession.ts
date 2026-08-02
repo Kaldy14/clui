@@ -38,6 +38,7 @@ export interface PiSessionManagerShape {
     initialPrompt?: string;
     fastMode?: boolean;
     htmlMode?: boolean;
+    journeyTools?: { endpoint: string; token: string };
   }) => Effect.Effect<void, PiSessionError>;
   readonly hibernateSession: (threadId: string) => Effect.Effect<void, PiSessionError>;
   readonly getScrollback: (

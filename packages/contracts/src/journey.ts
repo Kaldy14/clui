@@ -152,3 +152,19 @@ export const JourneySnapshot = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type JourneySnapshot = typeof JourneySnapshot.Type;
+
+/**
+ * Atomic graph changes emitted by a running Journey agent.
+ *
+ * Fields are optional so one tool call can update only the part of the graph
+ * that changed. The server applies the mutation against its current snapshot
+ * and emits the resulting durable Journey snapshot.
+ */
+export const JourneyMutation = Schema.Struct({
+  nodes: Schema.optional(Schema.Array(JourneyNode)),
+  removeNodeIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  edges: Schema.optional(Schema.Array(JourneyEdge)),
+  removeEdgeIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  activeNodeId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type JourneyMutation = typeof JourneyMutation.Type;

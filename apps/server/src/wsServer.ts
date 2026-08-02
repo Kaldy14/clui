@@ -15,6 +15,7 @@ import {
   DEFAULT_CODING_HARNESS,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  JourneyMutation,
   type ClientOrchestrationCommand,
   type ClaudeSessionEvent,
   type PiSessionEvent,
@@ -429,6 +430,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     { claudeThreadIds: Set<string>; piThreadIds: Set<string> }
   >();
   const logger = createLogger("ws");
+  const journeyToolTokens = new Map<string, string>();
+  const journeyToolEndpoint = `http://127.0.0.1:${port}/journey-tools`;
+
+  const getJourneyToolAccess = (threadId: string) => {
+    let token = journeyToolTokens.get(threadId);
+    if (!token) {
+      token = crypto.randomUUID();
+      journeyToolTokens.set(threadId, token);
+    }
+    return { endpoint: journeyToolEndpoint, token };
+  };
 
   const sendToClient = (client: WebSocket, message: string): boolean => {
     if (client.readyState !== client.OPEN) return false;
@@ -794,6 +806,68 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
     // Handle hook callbacks outside Effect pipeline for minimal overhead
     const rawUrl = req.url ?? "/";
+    if (rawUrl.startsWith("/journey-tools/")) {
+      const toolUrl = new URL(rawUrl, `http://localhost:${port}`);
+      const threadId = toolUrl.searchParams.get("thread");
+      const expectedToken = threadId ? journeyToolTokens.get(threadId) : undefined;
+      if (!threadId || !expectedToken || req.headers.authorization !== `Bearer ${expectedToken}`) {
+        respond(401, { "Content-Type": "text/plain", "Cache-Control": "no-store" }, "Unauthorized");
+        return;
+      }
+
+      void (async () => {
+        try {
+          const readJourney = async () => {
+            const readModel = await Effect.runPromise(orchestrationEngine.getReadModel());
+            const thread = readModel.threads.find((entry) => entry.id === threadId);
+            if (!thread || thread.surface !== "journey" || !thread.journey) {
+              throw new Error("Journey thread is missing or has not been initialized.");
+            }
+            return thread.journey;
+          };
+
+          let journey;
+          if (req.method === "GET" && toolUrl.pathname === "/journey-tools/snapshot") {
+            journey = await readJourney();
+          } else if (req.method === "POST" && toolUrl.pathname === "/journey-tools/update") {
+            const body = await readRequestBody(req);
+            const mutation = Schema.decodeUnknownSync(JourneyMutation)(JSON.parse(body));
+            const createdAt = new Date().toISOString();
+            await Effect.runPromise(
+              orchestrationEngine.dispatch({
+                type: "thread.journey.mutate",
+                commandId: CommandId.makeUnsafe(`journey-tool:${crypto.randomUUID()}`),
+                threadId: ThreadId.makeUnsafe(threadId),
+                mutation,
+                createdAt,
+              }),
+            );
+            journey = await readJourney();
+          } else {
+            respond(
+              404,
+              { "Content-Type": "text/plain", "Cache-Control": "no-store" },
+              "Unknown Journey tool route",
+            );
+            return;
+          }
+
+          respond(
+            200,
+            { "Content-Type": "application/json", "Cache-Control": "no-store" },
+            JSON.stringify({ snapshot: journey }),
+          );
+        } catch (error) {
+          logger.warn("journey tool request failed", { threadId, error: String(error) });
+          respond(
+            400,
+            { "Content-Type": "text/plain", "Cache-Control": "no-store" },
+            error instanceof Error ? error.message : "Journey tool request failed.",
+          );
+        }
+      })();
+      return;
+    }
     if (req.method === "POST" && rawUrl.startsWith("/hooks/")) {
       const hookUrl = new URL(rawUrl, `http://localhost:${port}`);
       const hookPath = hookUrl.pathname;
@@ -1584,6 +1658,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           yield* macosSleepPreventer.clearThread(normalizedCommand.threadId);
           pendingPiPromptBuffers.delete(normalizedCommand.threadId);
           autoTitledThreads.delete(normalizedCommand.threadId);
+          journeyToolTokens.delete(normalizedCommand.threadId);
         }
 
         return result;
@@ -1855,6 +1930,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ...(dangerouslySkipPermissions !== undefined ? { dangerouslySkipPermissions } : {}),
           claudeCodeBackend: threadRow.value.claudeCodeBackend,
           model: threadRow.value.model,
+          ...(threadRow.value.surface === "journey"
+            ? { journeyTools: getJourneyToolAccess(threadId) }
+            : {}),
         });
       }
 
@@ -1899,6 +1977,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         const resolvedCwd = yield* resolveHarnessSessionCwd(requestedCwd, threadId);
 
+        const threadRow = yield* projectionThreadRepository.getById({
+          threadId: ThreadId.makeUnsafe(threadId),
+        });
+        const journeyTools =
+          Option.isSome(threadRow) && threadRow.value.surface === "journey"
+            ? getJourneyToolAccess(threadId)
+            : undefined;
+
         yield* piSessionManager.startSession({
           threadId,
           cwd: resolvedCwd,
@@ -1909,6 +1995,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ...(initialPrompt !== undefined ? { initialPrompt } : {}),
           ...(fastMode !== undefined ? { fastMode } : {}),
           ...(htmlMode !== undefined ? { htmlMode } : {}),
+          ...(journeyTools ? { journeyTools } : {}),
         });
         if (initialPrompt && initialPrompt.trim().length > 0) {
           dispatchAutoTitleIfNeeded(threadId, initialPrompt);

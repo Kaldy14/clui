@@ -3,6 +3,7 @@ import * as path from "node:path";
 import {
   DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_THREAD_SURFACE,
+  type JourneySnapshot,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -10,6 +11,7 @@ import {
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import { applyJourneyMutation } from "./journeyMutation.ts";
 import {
   listThreadsByProjectId,
   requireProject,
@@ -587,6 +589,45 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           journey: command.journey,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.journey.mutate": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.surface !== "journey" || thread.journey === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Journey mutations require an initialized journey thread.",
+        });
+      }
+
+      let journey: JourneySnapshot;
+      try {
+        journey = applyJourneyMutation(thread.journey, command.mutation, command.createdAt);
+      } catch (error) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: error instanceof Error ? error.message : "Invalid Journey mutation.",
+        });
+      }
+
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.journey-updated",
+        payload: {
+          threadId: command.threadId,
+          journey,
           updatedAt: command.createdAt,
         },
       };

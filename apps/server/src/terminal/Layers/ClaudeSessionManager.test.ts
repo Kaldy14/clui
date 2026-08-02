@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import type { ClaudeCodeProxyStatus, ClaudeSessionEvent } from "@clui/contracts";
 import {
@@ -134,6 +137,7 @@ function makeRuntime(
     hookConfig?: { serverPort: number };
     ptyAdapter?: FakePtyAdapter;
     claudeCodeProxyManager?: FakeClaudeCodeProxyManager;
+    stateDir?: string;
   } = {},
 ) {
   const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
@@ -150,6 +154,7 @@ function makeRuntime(
     ...(options.claudeCodeProxyManager && {
       claudeCodeProxyManager: options.claudeCodeProxyManager,
     }),
+    ...(options.stateDir && { stateDir: options.stateDir }),
   });
   return { ptyAdapter, runtime };
 }
@@ -167,6 +172,7 @@ function defaultInput(
     executionMode: "interactive" | "exec";
     initialPrompt: string;
     dangerouslySkipPermissions: boolean;
+    journeyTools: { endpoint: string; token: string };
   }> = {},
 ) {
   return {
@@ -327,6 +333,55 @@ describe("ClaudeSessionManagerRuntime", () => {
           "Continue the selected Journey node.",
         ]),
       );
+    });
+
+    it("injects the generated Journey MCP server into Codex exec", async () => {
+      const stateDir = await mkdtemp(path.join(os.tmpdir(), "clui-journey-mcp-"));
+      try {
+        const result = makeRuntime({ stateDir });
+        runtime = result.runtime;
+
+        await runtime.startSession(
+          defaultInput({
+            harness: "codexCli",
+            executionMode: "exec",
+            initialPrompt: "Evolve the Journey while working.",
+            journeyTools: {
+              endpoint: "http://127.0.0.1:4100/journey-tools",
+              token: "journey-token",
+            },
+          }),
+        );
+
+        const spawnInput = result.ptyAdapter.spawnInputs[0]!;
+        expect(spawnInput.args).toEqual(
+          expect.arrayContaining([
+            "-c",
+            expect.stringContaining("mcp_servers.clui_journey.command="),
+            "-c",
+            expect.stringContaining("mcp_servers.clui_journey.args="),
+            "-c",
+            expect.stringContaining("mcp_servers.clui_journey.env_vars="),
+            "-c",
+            "mcp_servers.clui_journey.required=true",
+          ]),
+        );
+        expect(spawnInput.env).toMatchObject({
+          CLUI_JOURNEY_TOOL_ENDPOINT: "http://127.0.0.1:4100/journey-tools",
+          CLUI_JOURNEY_TOOL_THREAD_ID: "thread-1",
+          CLUI_JOURNEY_TOOL_TOKEN: "journey-token",
+        });
+
+        const source = await readFile(
+          path.join(stateDir, "journey-runtime", "clui-journey-mcp.mjs"),
+          "utf8",
+        );
+        expect(source).toContain('name: "journey_get"');
+        expect(source).toContain('name: "journey_update"');
+        expect(source).toContain('message.method === "tools/call"');
+      } finally {
+        await rm(stateDir, { recursive: true, force: true });
+      }
     });
 
     it("rejects non-interactive execution for non-Codex harnesses", async () => {

@@ -170,6 +170,56 @@ describe("decider project scripts", () => {
       type: "thread.journey-updated",
       payload: { threadId, journey, updatedAt: now },
     });
+
+    const initializedReadModel = await Effect.runPromise(
+      projectEvent(await makeReadModel("journey"), {
+        ...event,
+        sequence: 2,
+        eventId: asEventId("evt-initialized-journey"),
+      }),
+    );
+    const mutationTime = "2026-08-02T10:01:00.000Z";
+    const mutationResult = await Effect.runPromise(
+      decideOrchestrationCommand({
+        readModel: initializedReadModel,
+        command: {
+          type: "thread.journey.mutate",
+          commandId: CommandId.makeUnsafe("cmd-mutate-journey"),
+          threadId,
+          mutation: {
+            nodes: [
+              {
+                id: "research",
+                type: "research",
+                status: "running",
+                title: "Inspect the repository",
+                summary: "Reading current code",
+                detailMarkdown: "",
+                todos: [],
+                interaction: null,
+                activity: [],
+                createdAt: mutationTime,
+                updatedAt: mutationTime,
+              },
+            ],
+            activeNodeId: "research",
+          },
+          createdAt: mutationTime,
+        },
+      }),
+    );
+    const mutationEvent = Array.isArray(mutationResult) ? mutationResult[0] : mutationResult;
+    expect(mutationEvent).toMatchObject({
+      type: "thread.journey-updated",
+      payload: {
+        threadId,
+        journey: {
+          activeNodeId: "research",
+          nodes: [{ id: "research", status: "running", updatedAt: mutationTime }],
+          updatedAt: mutationTime,
+        },
+      },
+    });
   });
 
   it("propagates scripts in project.meta.update payload", async () => {

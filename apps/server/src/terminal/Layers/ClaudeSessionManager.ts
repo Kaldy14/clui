@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import type {
   ClaudeCodeBackend,
@@ -38,10 +40,18 @@ import {
 } from "../sessionProcessRegistry";
 import { ServerConfig } from "../../config";
 import { ClaudeCodeProxyManager } from "../claudeCodeProxy";
+import {
+  buildJourneyMcpServerSource,
+  CLUI_JOURNEY_TOOL_ENDPOINT_ENV,
+  CLUI_JOURNEY_TOOL_THREAD_ID_ENV,
+  CLUI_JOURNEY_TOOL_TOKEN_ENV,
+} from "../journeyMcpServer";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 200_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 10;
+const JOURNEY_MCP_RUNTIME_DIR_NAME = "journey-runtime";
+const JOURNEY_MCP_SERVER_FILENAME = "clui-journey-mcp.mjs";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -89,6 +99,8 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private readonly hookConfig: HookConfig | null;
   private readonly dangerouslySkipPermissions: boolean;
   private readonly processRegistryDir: string | null;
+  private readonly journeyMcpServerPath: string | null;
+  private journeyMcpRuntimePromise: Promise<void> | null = null;
   private readonly claudeCodeProxyManager: NonNullable<
     ClaudeSessionManagerOptions["claudeCodeProxyManager"]
   >;
@@ -105,6 +117,9 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     this.processRegistryDir = options.stateDir
       ? getSessionProcessRegistryDir(options.stateDir)
       : null;
+    this.journeyMcpServerPath = options.stateDir
+      ? path.join(options.stateDir, JOURNEY_MCP_RUNTIME_DIR_NAME, JOURNEY_MCP_SERVER_FILENAME)
+      : null;
     this.claudeCodeProxyManager = options.claudeCodeProxyManager ?? new ClaudeCodeProxyManager();
   }
 
@@ -120,6 +135,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     dangerouslySkipPermissions?: boolean;
     claudeCodeBackend?: ClaudeCodeBackend;
     model?: string;
+    journeyTools?: { endpoint: string; token: string };
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
       const harness = input.harness ?? "claudeCode";
@@ -170,6 +186,9 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       this.sessions.set(input.threadId, entry);
 
       const skipPermissions = input.dangerouslySkipPermissions ?? this.dangerouslySkipPermissions;
+      if (harness === "codexCli" && input.journeyTools) {
+        await this.ensureJourneyMcpRuntime();
+      }
       const args =
         harness === "codexCli"
           ? this.buildCodexArgs(input, skipPermissions)
@@ -183,6 +202,11 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
             ? await this.claudeCodeProxyManager.getClaudeEnvironment(input.model ?? "")
             : undefined;
         const spawnEnv = createSpawnEnv(process.env, runtimeEnv);
+        if (input.journeyTools) {
+          spawnEnv[CLUI_JOURNEY_TOOL_ENDPOINT_ENV] = input.journeyTools.endpoint;
+          spawnEnv[CLUI_JOURNEY_TOOL_THREAD_ID_ENV] = input.threadId;
+          spawnEnv[CLUI_JOURNEY_TOOL_TOKEN_ENV] = input.journeyTools.token;
+        }
 
         const ptyProcess = await Effect.runPromise(
           this.ptyAdapter.spawn({
@@ -523,6 +547,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       executionMode?: "interactive" | "exec";
       initialPrompt?: string;
       model?: string;
+      journeyTools?: { endpoint: string; token: string };
     },
     skipPermissions: boolean,
   ): string[] {
@@ -550,6 +575,25 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         port: this.hookConfig.serverPort,
       });
     }
+    if (input.journeyTools) {
+      if (!this.journeyMcpServerPath) {
+        throw new Error("Clui Journey MCP runtime requires a configured state directory.");
+      }
+      args.push(
+        "-c",
+        `mcp_servers.clui_journey.command=${JSON.stringify(process.execPath)}`,
+        "-c",
+        `mcp_servers.clui_journey.args=${JSON.stringify([this.journeyMcpServerPath])}`,
+        "-c",
+        `mcp_servers.clui_journey.env_vars=${JSON.stringify([
+          CLUI_JOURNEY_TOOL_ENDPOINT_ENV,
+          CLUI_JOURNEY_TOOL_THREAD_ID_ENV,
+          CLUI_JOURNEY_TOOL_TOKEN_ENV,
+        ])}`,
+        "-c",
+        "mcp_servers.clui_journey.required=true",
+      );
+    }
 
     if (executionMode === "exec") {
       args.push("exec", "--json", "--color", "never");
@@ -568,6 +612,25 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       args.push(input.resumeSessionId);
     }
     return args;
+  }
+
+  private async ensureJourneyMcpRuntime(): Promise<void> {
+    if (!this.journeyMcpServerPath) {
+      throw new Error("Clui Journey MCP runtime requires a configured state directory.");
+    }
+    if (!this.journeyMcpRuntimePromise) {
+      this.journeyMcpRuntimePromise = (async () => {
+        await mkdir(path.dirname(this.journeyMcpServerPath!), { recursive: true });
+        await writeFile(this.journeyMcpServerPath!, buildJourneyMcpServerSource(), {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+      })().catch((error) => {
+        this.journeyMcpRuntimePromise = null;
+        throw error;
+      });
+    }
+    await this.journeyMcpRuntimePromise;
   }
 
   private onProcessData(entry: ClaudeSessionEntry, data: string): void {

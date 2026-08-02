@@ -204,12 +204,17 @@ export function parseJourneyAgentResponse(text: string): JourneySnapshot {
   return Schema.decodeUnknownSync(JourneySnapshotSchema)(candidate);
 }
 
-export function settleJourneyAgentSnapshot(snapshot: JourneySnapshot): JourneySnapshot {
+export function settleJourneyAgentSnapshot(
+  snapshot: JourneySnapshot,
+  now = new Date().toISOString(),
+): JourneySnapshot {
+  if (!snapshot.nodes.some((node) => node.status === "running")) return snapshot;
   return {
     ...snapshot,
     nodes: snapshot.nodes.map((node) =>
-      node.status === "running" ? { ...node, status: "ready" as const } : node,
+      node.status === "running" ? { ...node, status: "ready" as const, updatedAt: now } : node,
     ),
+    updatedAt: now,
   };
 }
 
@@ -226,6 +231,10 @@ Focused node: ${focusNode ? `${focusNode.title} (${focusNode.id})` : input.focus
 User input: ${input.userMessage || "Continue this node and advance the journey."}
 
 Rules:
+- journey_get and journey_update are the live graph protocol and the source of truth when available.
+- Call journey_update immediately when you identify useful work so its node appears as running before you do that work.
+- Call journey_update again at every meaningful transition: new branch, result, blocker, question, proposal, implementation milestone, or completed task. Each call is shown in the UI immediately.
+- Never create a completed research, implementation, or review node retroactively. Create it as running first, do the concrete work, then update it with the real result.
 - The graph has no prescribed shape. Add, update, supersede, or complete nodes only when useful.
 - Preserve durable completed decisions and work unless the new information explicitly invalidates them.
 - Use dependencies to show what blocks what. Edge direction is prerequisite source -> dependent target.
@@ -236,7 +245,6 @@ Rules:
 - When more agent work is useful, leave the relevant node ready. Do not pretend work happened.
 - Keep summaries concise; put detail in detailMarkdown.
 - Reuse existing IDs for updated nodes and use stable kebab-case IDs for new nodes.
-- Return the complete updated snapshot, not a patch. Preserve layoutDirection.
 - Set activeNodeId to the next node that deserves attention, or null when none does.
 - Set every updated timestamp and the snapshot updatedAt to an ISO-8601 string.
 
@@ -288,7 +296,9 @@ For a form, replace interaction:null with:
 Current snapshot:
 ${JSON.stringify(input.snapshot, null, 2)}
 
-Respond with exactly:
+When the Journey tools are available, use them throughout the run and finish with a short plain-language summary. Do not return a <journey-update> snapshot after using the tools.
+
+Fallback only when journey_get and journey_update are unavailable: return exactly:
 <journey-update>
 { complete JSON snapshot }
 </journey-update>`;

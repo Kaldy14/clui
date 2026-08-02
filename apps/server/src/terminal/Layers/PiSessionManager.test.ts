@@ -280,6 +280,39 @@ describe("PiSessionManagerRuntime", () => {
     expect(extensionSource).toContain("ctx.modelRegistry?.isUsingOAuth");
   });
 
+  it("registers live Journey tools for Journey pi sessions", async () => {
+    stateDir = await makeTempDir();
+    const cwd = await makeProjectCwd(stateDir);
+    const ptyAdapter = new FakePtyAdapter();
+    runtime = new PiSessionManagerRuntime({ ptyAdapter, stateDir });
+
+    await runtime.startSession({
+      threadId: "thread-journey",
+      cwd,
+      cols: 100,
+      rows: 24,
+      journeyTools: {
+        endpoint: "http://127.0.0.1:4100/journey-tools",
+        token: "journey-token",
+      },
+    });
+
+    const spawnInput = ptyAdapter.spawnInputs[0]!;
+    expect(spawnInput.env).toMatchObject({
+      CLUI_JOURNEY_TOOL_ENDPOINT: "http://127.0.0.1:4100/journey-tools",
+      CLUI_JOURNEY_TOOL_THREAD_ID: "thread-journey",
+      CLUI_JOURNEY_TOOL_TOKEN: "journey-token",
+    });
+
+    const extensionSource = await readFile(
+      path.join(stateDir, "pi-runtime", "clui-pi-session-sync.js"),
+      "utf8",
+    );
+    expect(extensionSource).toContain('name: "journey_get"');
+    expect(extensionSource).toContain('name: "journey_update"');
+    expect(extensionSource).toContain('requestJourney("/update"');
+  });
+
   it("kills a live RPC child when startup fails after spawn", async () => {
     stateDir = await makeTempDir();
     const cwd = await makeProjectCwd(stateDir);

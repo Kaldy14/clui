@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildJourneyAgentPrompt,
   JOURNEY_NODE_EXPANDED_WIDTH,
   JOURNEY_NODE_FOCUSED_WIDTH,
   layoutJourneyNodes,
@@ -67,9 +68,23 @@ describe("journey graph", () => {
 
   it("settles agent-owned running nodes after a response", () => {
     const snapshot = makeInitialJourney("Settle response", "2026-08-02T10:00:00.000Z");
-    const settled = settleJourneyAgentSnapshot(snapshot);
+    const settled = settleJourneyAgentSnapshot(snapshot, "2026-08-02T10:01:00.000Z");
 
     expect(settled.nodes[0]?.status).toBe("ready");
+    expect(settled.updatedAt).toBe("2026-08-02T10:01:00.000Z");
     expect(snapshot.nodes[0]?.status).toBe("running");
+  });
+
+  it("directs agents to mutate the graph before and after concrete work", () => {
+    const snapshot = makeInitialJourney("Show live progress", "2026-08-02T10:00:00.000Z");
+    const prompt = buildJourneyAgentPrompt({
+      snapshot,
+      focusNodeId: "destination",
+      userMessage: "Continue",
+    });
+
+    expect(prompt).toContain("Call journey_update immediately");
+    expect(prompt).toContain("Create it as running first");
+    expect(prompt).toContain("Do not return a <journey-update> snapshot after using the tools");
   });
 });

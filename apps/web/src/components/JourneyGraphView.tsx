@@ -807,6 +807,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const pendingRunRef = useRef<{
     nodeId: string;
     finishing: boolean;
+    baselineJourneyUpdatedAt: string;
     baselineAssistantId: string | null;
     baselineAssistantText: string | null;
   } | null>(null);
@@ -894,11 +895,19 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         }
         await new Promise((resolve) => window.setTimeout(resolve, 150));
       }
-      if (!responseText) throw new Error("The journey agent completed without a new response.");
-      const settled = settleJourneyAgentSnapshot(parseJourneyAgentResponse(responseText));
-      const currentDirection =
-        useStore.getState().threads.find((entry) => entry.id === threadId)?.journey
-          ?.layoutDirection ?? settled.layoutDirection;
+      const readModel = await api.orchestration.getSnapshot();
+      const serverJourney =
+        readModel.threads.find((entry) => entry.id === threadId)?.journey ?? null;
+      const hasLiveToolUpdates =
+        serverJourney !== null && serverJourney.updatedAt !== pending.baselineJourneyUpdatedAt;
+      let settled: JourneySnapshot;
+      if (hasLiveToolUpdates) {
+        settled = settleJourneyAgentSnapshot(serverJourney);
+      } else {
+        if (!responseText) throw new Error("The journey agent completed without a graph update.");
+        settled = settleJourneyAgentSnapshot(parseJourneyAgentResponse(responseText));
+      }
+      const currentDirection = serverJourney?.layoutDirection ?? settled.layoutDirection;
       await persistJourney({ ...settled, layoutDirection: currentDirection });
       pendingRunRef.current = null;
       setAgentRunNodeId(null);
@@ -937,6 +946,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   useEffect(() => {
     const activeNode = journey?.nodes.find((node) => node.id === journey.activeNodeId);
     if (
+      !journey ||
       !activeNode ||
       !thread ||
       activeNode.status !== "running" ||
@@ -945,6 +955,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     ) {
       return;
     }
+    const baselineJourneyUpdatedAt = journey.updatedAt;
 
     let cancelled = false;
     const resumePendingRun = async () => {
@@ -959,6 +970,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         pendingRunRef.current = {
           nodeId: activeNode.id,
           finishing: false,
+          baselineJourneyUpdatedAt,
           baselineAssistantId: null,
           baselineAssistantText: null,
         };
@@ -982,6 +994,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       pendingRunRef.current = {
         nodeId: activeNode.id,
         finishing: false,
+        baselineJourneyUpdatedAt,
         baselineAssistantId: hasCompletedResponse ? null : (baselineItem?.id ?? null),
         baselineAssistantText: hasCompletedResponse ? null : (baselineItem?.text ?? null),
       };
@@ -1040,6 +1053,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       pendingRunRef.current = {
         nodeId,
         finishing: false,
+        baselineJourneyUpdatedAt: runningSnapshot.updatedAt,
         baselineAssistantId: null,
         baselineAssistantText: null,
       };
@@ -1241,7 +1255,10 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
           direction: journey.layoutDirection,
           expanded: expandedNodeId === node.id,
           focused: focusedNodeId === node.id,
-          agentWorking: journey.activeNodeId === node.id && agentRunNodeId === node.id,
+          agentWorking:
+            agentRunNodeId !== null &&
+            journey.activeNodeId === node.id &&
+            node.status === "running",
           onToggleExpanded: handleToggleNodeExpanded,
           onToggleFocus: handleToggleNodeFocus,
           onToggleTodo: handleToggleTodo,

@@ -37,6 +37,7 @@
 - Progressive disclosure: Nodes remain scannable when collapsed and reveal forms, questionnaires, todos, artifacts, and activity when expanded.
 - Reversible focus: Node focus is distinct from expansion. It enlarges the chosen expanded node and fits it prominently into the canvas without changing durable graph data; Escape, the node control, or Fit graph restores the overview.
 - Keep work observable in context: A running node exposes its live agent transcript without replacing or obscuring the graph on desktop; the output inspector keeps the originating node visible as context.
+- Graph progress is live state, not a final-report visualization: Agents create a running node before concrete research or implementation, mutate it at meaningful transitions, and record the real outcome when the work finishes. The final assistant message summarizes the run; it is not the primary graph transport.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
 - Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts. Pi and Codex must produce the same graph contract so changing the harness does not change how the Journey behaves.
 - Preserve user orientation: Layout changes are deliberate, animation is restrained, and expanded/selected state remains stable across graph updates.
@@ -93,7 +94,7 @@
 - Framework/styling system: React 19, Tailwind CSS v4, Base UI primitives, Zustand, TanStack Router/Query, Effect Schema contracts, WebSocket RPC, and SQLite projections.
 - Design-token constraints: Reuse existing semantic tokens and dark-mode behavior; add no competing design-system layer.
 - Performance constraints: Avoid continuous force simulation; update only changed graph elements; cap rendered live activity; keep layout asynchronous or bounded for larger graphs.
-- Compatibility constraints: Existing terminal threads and persisted orchestration events must decode unchanged. Journey graph data is separate from terminal scrollback and PTY lifecycle. Pi uses its structured transcript; Codex uses non-interactive JSONL events and resumable session IDs.
+- Compatibility constraints: Existing terminal threads and persisted orchestration events must decode unchanged. Journey graph data is separate from terminal scrollback and PTY lifecycle. Pi uses registered extension tools and its structured transcript; Codex uses a thread-scoped stdio MCP server, non-interactive JSONL events, and resumable session IDs. Both harnesses mutate the same validated server-side Journey contract.
 - Test/screenshot expectations: Unit-test graph reducers, layout direction, interaction validation, and thread-surface branching; run browser/component coverage where practical; require `bun lint` and `bun typecheck`.
 
 ## Open questions

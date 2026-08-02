@@ -4,6 +4,37 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Stream Journey graph mutations while agents work
+
+**Problem:** Journey agents worked invisibly and returned a complete graph only with their final response. Nodes such as “Research completed” could therefore appear after the fact even though no running research node had been visible while the work happened.
+
+**Root cause:** The Journey prompt treated one final `<journey-update>` snapshot as the graph protocol. Clui watched the harness output for display, but it did not expose an agent-callable graph API or persist intermediate graph mutations.
+
+**Fix:** Added authenticated, thread-scoped `journey_get` and `journey_update` tools for both harnesses: Codex receives a generated stdio MCP server and Pi receives generated extension tools. Tool updates decode into a validated mutation contract, dispatch through the orchestration decider, atomically upsert or remove nodes and edges, persist through the existing Journey event, and push to the graph immediately. Updated the agent prompt to create running nodes before concrete work and mutate them at each meaningful transition, while retaining the final tagged snapshot only as a compatibility fallback. The run finalizer now treats the server graph as authoritative after live mutations and only settles accidentally leftover running nodes. Added protocol, reducer, session wiring, prompt, and orchestration coverage, plus browser QA proving a running research node appeared before the file inspection and completed before the final response.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `packages/contracts/src/journey.ts`
+- `packages/contracts/src/orchestration.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/decider.projectScripts.test.ts`
+- `apps/server/src/orchestration/journeyMutation.ts`
+- `apps/server/src/orchestration/journeyMutation.test.ts`
+- `apps/server/src/terminal/journeyMcpServer.ts`
+- `apps/server/src/terminal/journeyMcpServer.test.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.test.ts`
+- `apps/server/src/terminal/Services/ClaudeSession.ts`
+- `apps/server/src/terminal/Services/PiSession.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Add Journey node focus mode
 
 **Problem:** Expanding a Journey node revealed its details but left it at graph scale, making larger questionnaires, activity histories, and implementation details harder to read and interact with.

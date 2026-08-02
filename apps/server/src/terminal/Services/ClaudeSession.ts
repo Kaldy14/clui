@@ -45,6 +45,7 @@ export interface ClaudeSessionManagerShape {
     dangerouslySkipPermissions?: boolean;
     claudeCodeBackend?: ClaudeCodeBackend;
     model?: string;
+    journeyTools?: { endpoint: string; token: string };
   }) => Effect.Effect<void, ClaudeSessionError>;
   readonly getClaudeCodeProxyStatus: () => Effect.Effect<ClaudeCodeProxyStatus>;
   readonly startClaudeCodeProxyLogin: () => Effect.Effect<
