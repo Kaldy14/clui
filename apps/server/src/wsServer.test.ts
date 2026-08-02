@@ -2726,6 +2726,76 @@ describe("WebSocket Server", () => {
       });
     });
 
+    it("claude.start allows the thread project outside the server root", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      const serverRoot = makeTempDir("clui-ws-claude-server-root-");
+      const projectRoot = makeTempDir("clui-ws-claude-project-root-");
+      server = await createTestServer({
+        cwd: serverRoot,
+        claudeSessionManager: shape,
+        projectionSnapshotQuery: makeStartupOnlyProjectionSnapshotQuery(),
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+      await createProjectedThread(ws, {
+        projectId: "project-claude-local",
+        threadId: "thread-claude-local",
+        workspaceRoot: projectRoot,
+        worktreePath: null,
+      });
+
+      const startCwd = path.join(projectRoot, "packages", "api");
+      const response = await sendRequest(ws, WS_METHODS.claudeStart, {
+        threadId: "thread-claude-local",
+        cwd: startCwd,
+        cols: 80,
+        rows: 24,
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.args[0]).toMatchObject({
+        threadId: "thread-claude-local",
+        cwd: startCwd,
+      });
+    });
+
+    it("claude.start rejects a directory outside the thread project and worktree", async () => {
+      const { calls, shape } = makeMockClaudeSession();
+      const serverRoot = makeTempDir("clui-ws-claude-server-root-");
+      const projectRoot = makeTempDir("clui-ws-claude-project-root-");
+      const unrelatedRoot = makeTempDir("clui-ws-claude-unrelated-root-");
+      server = await createTestServer({ cwd: serverRoot, claudeSessionManager: shape });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+      await createProjectedThread(ws, {
+        projectId: "project-claude-contained",
+        threadId: "thread-claude-contained",
+        workspaceRoot: projectRoot,
+        worktreePath: null,
+      });
+
+      const response = await sendRequest(ws, WS_METHODS.claudeStart, {
+        threadId: "thread-claude-contained",
+        cwd: unrelatedRoot,
+        cols: 80,
+        rows: 24,
+      });
+
+      expect(response.error?.message).toContain(
+        "cwd must be within the server workspace, thread project, or worktree",
+      );
+      expect(calls).toHaveLength(0);
+    });
+
     it("claude.start passes resumeSessionId when provided", async () => {
       const { calls, shape } = makeMockClaudeSession();
       const workspaceRoot = makeTempDir("clui-ws-claude-resume-");
@@ -2853,6 +2923,47 @@ describe("WebSocket Server", () => {
       expect(calls[0]!.method).toBe("startSession");
       expect(calls[0]!.args[0]).toMatchObject({
         threadId: "thread-pi-worktree",
+        cwd: startCwd,
+        fresh: true,
+      });
+    });
+
+    it("pi.start allows the thread project outside the server root", async () => {
+      const { calls, shape } = makeMockPiSession();
+      const serverRoot = makeTempDir("clui-ws-pi-server-root-");
+      const projectRoot = makeTempDir("clui-ws-pi-project-root-");
+      server = await createTestServer({
+        cwd: serverRoot,
+        piSessionManager: shape,
+        projectionSnapshotQuery: makeStartupOnlyProjectionSnapshotQuery(),
+      });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws); // welcome
+      await createProjectedThread(ws, {
+        projectId: "project-pi-local",
+        threadId: "thread-pi-local",
+        workspaceRoot: projectRoot,
+        worktreePath: null,
+        harness: "pi",
+      });
+
+      const startCwd = path.join(projectRoot, "packages", "api");
+      const response = await sendRequest(ws, WS_METHODS.piStart, {
+        threadId: "thread-pi-local",
+        cwd: startCwd,
+        cols: 80,
+        rows: 24,
+        fresh: true,
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.args[0]).toMatchObject({
+        threadId: "thread-pi-local",
         cwd: startCwd,
         fresh: true,
       });

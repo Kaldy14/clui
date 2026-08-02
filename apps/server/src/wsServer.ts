@@ -98,6 +98,7 @@ import {
 } from "./hooks/hookReceiver";
 import { extractPromptText, shouldGenerateTitleFromPrompt } from "./terminal/titleGenerator";
 import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThreads.ts";
+import { ProjectionProjectRepository } from "./persistence/Services/ProjectionProjects.ts";
 import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { MacosSleepPreventer } from "./macosSleepPreventer";
 import { AUTO_ARCHIVE_SWEEP_INTERVAL_MS, findAutoArchivableThreads } from "./autoArchiveThreads";
@@ -333,6 +334,7 @@ export type ServerRuntimeServices =
   | Keybindings
   | Open
   | AnalyticsService
+  | ProjectionProjectRepository
   | ProjectionThreadRepository
   | MacosSleepPreventer;
 
@@ -1199,6 +1201,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const orchestrationReactor = yield* OrchestrationReactor;
   const checkpointReactor = yield* CheckpointReactor;
   const { openInEditor } = yield* Open;
+  const projectionProjectRepository = yield* ProjectionProjectRepository;
   const projectionThreadRepository = yield* ProjectionThreadRepository;
 
   const runInactiveThreadAutoArchiveSweep = Effect.fnUntraced(function* (reason: string) {
@@ -1260,21 +1263,37 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     Effect.gen(function* () {
       const resolvedCwd = path.resolve(requestedCwd);
       const resolvedRoot = path.resolve(cwd);
-      const isUnderRoot =
-        resolvedCwd === resolvedRoot || resolvedCwd.startsWith(`${resolvedRoot}/`);
+      const isWithinRoot = (root: string) => {
+        const relative = path.relative(path.resolve(root), resolvedCwd);
+        return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+      };
+      const isUnderRoot = isWithinRoot(resolvedRoot);
       if (isUnderRoot) return resolvedCwd;
 
-      const threadWorktreePath = yield* projectionThreadRepository.getWorktreePathById({
+      const bindingOption = yield* projectionThreadRepository.getWorkspaceBindingById({
         threadId: ThreadId.makeUnsafe(threadId),
       });
-      const resolvedWorktree = threadWorktreePath ? path.resolve(threadWorktreePath) : null;
-      const isThreadWorktree =
-        resolvedWorktree != null &&
-        (resolvedCwd === resolvedWorktree || resolvedCwd.startsWith(`${resolvedWorktree}/`));
+      if (Option.isNone(bindingOption)) {
+        return yield* new RouteRequestError({
+          message: "cwd must be within the server workspace, thread project, or worktree",
+        });
+      }
+
+      const binding = bindingOption.value;
+      const isThreadWorktree = binding.worktreePath != null && isWithinRoot(binding.worktreePath);
       if (isThreadWorktree) return resolvedCwd;
 
+      const projectOption = yield* projectionProjectRepository.getById({
+        projectId: binding.projectId,
+      });
+      const isThreadProject =
+        Option.isSome(projectOption) &&
+        projectOption.value.deletedAt == null &&
+        isWithinRoot(projectOption.value.workspaceRoot);
+      if (isThreadProject) return resolvedCwd;
+
       return yield* new RouteRequestError({
-        message: `cwd must be within workspace root: ${cwd}`,
+        message: "cwd must be within the server workspace, thread project, or worktree",
       });
     });
 

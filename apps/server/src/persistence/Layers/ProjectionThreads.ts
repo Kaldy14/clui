@@ -1,7 +1,7 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { JourneySnapshot } from "@clui/contracts";
-import { Effect, Layer, Option, Schema, Struct } from "effect";
+import { Effect, Layer, Schema, Struct } from "effect";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -10,7 +10,7 @@ import {
   ListProjectionThreadsByProjectInput,
   ProjectionThread,
   ProjectionThreadRepository,
-  ProjectionThreadWorktreePath,
+  ProjectionThreadWorkspaceBinding,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
 
@@ -169,15 +169,17 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
-  const getProjectionThreadWorktreePathRow = SqlSchema.findOneOption({
+  const getProjectionThreadWorkspaceBindingRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadInput,
-    Result: ProjectionThreadWorktreePath,
+    Result: ProjectionThreadWorkspaceBinding,
     execute: ({ threadId }) =>
       sql`
         SELECT
+          project_id AS "projectId",
           worktree_path AS "worktreePath"
         FROM projection_threads
         WHERE thread_id = ${threadId}
+          AND deleted_at IS NULL
       `,
   });
 
@@ -251,13 +253,12 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       ),
     );
 
-  const getWorktreePathById: ProjectionThreadRepositoryShape["getWorktreePathById"] = (input) =>
-    getProjectionThreadWorktreePathRow(input).pipe(
-      Effect.map((row) =>
-        Option.match(row, { onNone: () => null, onSome: (value) => value.worktreePath }),
-      ),
+  const getWorkspaceBindingById: ProjectionThreadRepositoryShape["getWorkspaceBindingById"] = (
+    input,
+  ) =>
+    getProjectionThreadWorkspaceBindingRow(input).pipe(
       Effect.mapError(
-        toPersistenceSqlError("ProjectionThreadRepository.getWorktreePathById:query"),
+        toPersistenceSqlError("ProjectionThreadRepository.getWorkspaceBindingById:query"),
       ),
     );
 
@@ -322,7 +323,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
   return {
     upsert,
     getById,
-    getWorktreePathById,
+    getWorkspaceBindingById,
     listByProjectId,
     deleteById,
     clearScrollbackSnapshotBulk,

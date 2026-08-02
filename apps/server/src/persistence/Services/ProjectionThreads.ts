@@ -59,10 +59,11 @@ export const ProjectionThread = Schema.Struct({
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 
-export const ProjectionThreadWorktreePath = Schema.Struct({
+export const ProjectionThreadWorkspaceBinding = Schema.Struct({
+  projectId: ProjectId,
   worktreePath: Schema.NullOr(Schema.String),
 });
-export type ProjectionThreadWorktreePath = typeof ProjectionThreadWorktreePath.Type;
+export type ProjectionThreadWorkspaceBinding = typeof ProjectionThreadWorkspaceBinding.Type;
 
 export const GetProjectionThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -98,12 +99,12 @@ export interface ProjectionThreadRepositoryShape {
   ) => Effect.Effect<Option.Option<ProjectionThread>, ProjectionRepositoryError>;
 
   /**
-   * Read only the registered worktree path for a projected thread.
+   * Read only the project/worktree binding used to authorize a session cwd.
    * Avoids loading large scrollback snapshots on session start validation.
    */
-  readonly getWorktreePathById: (
+  readonly getWorkspaceBindingById: (
     input: GetProjectionThreadInput,
-  ) => Effect.Effect<string | null, ProjectionRepositoryError>;
+  ) => Effect.Effect<Option.Option<ProjectionThreadWorkspaceBinding>, ProjectionRepositoryError>;
 
   /**
    * List projected threads for a project.

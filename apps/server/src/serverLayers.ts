@@ -23,6 +23,7 @@ import { GitServiceLive } from "./git/Layers/GitService";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { NodePtyHostAdapterLive } from "./terminal/Layers/NodePtyHost";
 import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads";
+import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects";
 import { MacosSleepPreventerLive } from "./macosSleepPreventer";
 import { DiffReviewLive } from "./diffReview/Layers/DiffReview";
 
@@ -90,6 +91,7 @@ export function makeServerRuntimeServicesLayer() {
     claudeSessionLayer,
     piSessionLayer,
     KeybindingsLive,
+    ProjectionProjectRepositoryLive,
     ProjectionThreadRepositoryLive,
     MacosSleepPreventerLive,
   ).pipe(Layer.provideMerge(NodeServices.layer));

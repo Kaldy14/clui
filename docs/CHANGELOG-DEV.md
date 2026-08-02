@@ -4,6 +4,23 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Allow Journey agents to run in selected projects during development
+
+**Problem:** In development mode, a Journey started for any repository other than Clui's `apps/server` failed with `cwd must be within workspace root`, so the agent could not work in the project selected for the thread.
+
+**Root cause:** Harness startup authorized directories only beneath the server process cwd or a thread worktree. `bun dev` starts the server from `apps/server`, while local (non-worktree) threads store their repository in the associated project's `workspaceRoot`, which the guard never consulted.
+
+**Fix:** Session cwd authorization now resolves the requesting thread's lightweight project/worktree binding and accepts directories beneath that registered project root or worktree, while preserving the existing server-workspace fallback. Directories outside those roots, deleted projects, and deleted threads remain rejected. Both Codex/Claude and Pi startup routes have regression coverage for external local projects, and the authorization path avoids loading large thread scrollback snapshots.
+
+**Affected files:**
+
+- `apps/server/src/persistence/Services/ProjectionThreads.ts`
+- `apps/server/src/persistence/Layers/ProjectionThreads.ts`
+- `apps/server/src/serverLayers.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Keep Journey graph layers close together
 
 **Problem:** Expanding a short Journey node could leave several hundred pixels of empty canvas before the next graph layer.
