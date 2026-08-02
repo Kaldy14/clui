@@ -13,6 +13,7 @@ import {
   nextAutomaticJourneyNodeId,
   parseJourneyAgentResponse,
   settleJourneyAgentSnapshot,
+  toggleJourneyNodeFocusState,
 } from "./journeyGraph";
 
 describe("journey graph", () => {
@@ -133,6 +134,17 @@ describe("journey graph", () => {
     expect(journeyNodeZIndex(false, false)).toBe(0);
     expect(journeyNodeZIndex(true, false)).toBeGreaterThan(journeyNodeZIndex(false, false));
     expect(journeyNodeZIndex(true, true)).toBeGreaterThan(journeyNodeZIndex(true, false));
+  });
+
+  it("collapses a node when its focused-state return action is used", () => {
+    expect(toggleJourneyNodeFocusState("research", null)).toEqual({
+      expandedNodeId: "research",
+      focusedNodeId: "research",
+    });
+    expect(toggleJourneyNodeFocusState("research", "research")).toEqual({
+      expandedNodeId: null,
+      focusedNodeId: null,
+    });
   });
 
   it("parses the tagged agent snapshot", () => {

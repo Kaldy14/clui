@@ -75,6 +75,7 @@ import {
   nextAutomaticJourneyNodeId,
   parseJourneyAgentResponse,
   settleJourneyAgentSnapshot,
+  toggleJourneyNodeFocusState,
   withJourneyNode,
 } from "../lib/journeyGraph";
 import { latestCodexExecAgentMessage } from "../lib/codexExecJsonl";
@@ -551,8 +552,12 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
               "rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
               data.focused && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
             )}
-            title={data.focused ? "Return to full graph" : "Focus node"}
-            aria-label={data.focused ? "Return to full graph" : `Focus node: ${node.title}`}
+            title={data.focused ? "Close node and return to graph" : "Focus node"}
+            aria-label={
+              data.focused
+                ? `Close node and return to graph: ${node.title}`
+                : `Focus node: ${node.title}`
+            }
             aria-pressed={data.focused}
             onClick={() => data.onToggleFocus(node.id)}
           >
@@ -1519,10 +1524,10 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
 
   const handleToggleNodeFocus = useCallback(
     (nodeId: string) => {
-      const nextFocusedNodeId = focusedNodeId === nodeId ? null : nodeId;
-      setFocusedNodeId(nextFocusedNodeId);
-      if (nextFocusedNodeId) {
-        setExpandedNodeId(nodeId);
+      const next = toggleJourneyNodeFocusState(nodeId, focusedNodeId);
+      setFocusedNodeId(next.focusedNodeId);
+      setExpandedNodeId(next.expandedNodeId);
+      if (next.focusedNodeId) {
         setAgentOutputNodeId(null);
       }
     },

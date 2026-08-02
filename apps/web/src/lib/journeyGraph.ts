@@ -21,6 +21,16 @@ export function journeyNodeZIndex(expanded: boolean, focused: boolean): number {
   return 0;
 }
 
+export function toggleJourneyNodeFocusState(
+  nodeId: string,
+  focusedNodeId: string | null,
+): { expandedNodeId: string | null; focusedNodeId: string | null } {
+  if (focusedNodeId === nodeId) {
+    return { expandedNodeId: null, focusedNodeId: null };
+  }
+  return { expandedNodeId: nodeId, focusedNodeId: nodeId };
+}
+
 export interface JourneyNodeLayout {
   id: string;
   x: number;

@@ -4,6 +4,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Collapse Journey nodes when leaving focused view
+
+**Problem:** Clicking the zoom-out control on a focused Journey node returned to the full graph but left the node expanded, requiring a second click to close it.
+
+**Root cause:** The focus toggle cleared `focusedNodeId` without clearing the corresponding `expandedNodeId`.
+
+**Fix:** Made the focused node's return control clear both focus and expansion in one state transition, and updated its tooltip and accessible label to describe the combined action. Added regression coverage for entering focus and returning directly to the compact node state.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Always show complete Journey node titles
 
 **Problem:** Compact Journey nodes replaced the end of longer titles with an ellipsis, hiding the work item the graph was meant to identify. The selected node title was also truncated in the agent-output inspector.
