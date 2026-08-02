@@ -4,6 +4,7 @@ import {
   buildJourneyAgentPrompt,
   JOURNEY_NODE_EXPANDED_WIDTH,
   JOURNEY_NODE_FOCUSED_WIDTH,
+  journeyNodeZIndex,
   layoutJourneyNodes,
   makeInitialJourney,
   parseJourneyAgentResponse,
@@ -39,6 +40,10 @@ describe("journey graph", () => {
     expect(vertical.find((node) => node.id === "review")!.y).toBeGreaterThan(
       vertical.find((node) => node.id === "destination")!.y,
     );
+    const expandedVertical = layoutJourneyNodes(snapshot, "destination");
+    expect(expandedVertical.find((node) => node.id === "review")!.y).toBeGreaterThan(
+      vertical.find((node) => node.id === "review")!.y,
+    );
 
     const horizontal = layoutJourneyNodes({ ...snapshot, layoutDirection: "LR" }, null);
     expect(horizontal.find((node) => node.id === "review")!.x).toBeGreaterThan(
@@ -55,6 +60,12 @@ describe("journey graph", () => {
     expect(expanded[0]?.width).toBe(JOURNEY_NODE_EXPANDED_WIDTH);
     expect(focused[0]?.width).toBe(JOURNEY_NODE_FOCUSED_WIDTH);
     expect(focused[0]!.height).toBeGreaterThan(expanded[0]!.height);
+  });
+
+  it("keeps expanded and focused nodes above compact graph siblings", () => {
+    expect(journeyNodeZIndex(false, false)).toBe(0);
+    expect(journeyNodeZIndex(true, false)).toBeGreaterThan(journeyNodeZIndex(false, false));
+    expect(journeyNodeZIndex(true, true)).toBeGreaterThan(journeyNodeZIndex(true, false));
   });
 
   it("parses the tagged agent snapshot", () => {

@@ -4,6 +4,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Simplify compact and expanded Journey nodes
+
+**Problem:** Compact Journey nodes repeated their type as both a large icon and a label. Expanded nodes used a fixed-height internal scroller and nested bordered panels for forms and todo groups, while neighboring graph nodes could render above the expanded content.
+
+**Root cause:** The original node treated expansion as a larger dashboard card: it retained the compact icon tile, capped the detail body at 560px, and added a new card-like container for each content group. React Flow also retained its normal selection elevation instead of giving expanded state an explicit foreground layer.
+
+**Fix:** Reduced compact metadata to one text type signal plus the status icon and label. Rebuilt expanded details as one continuous intrinsic-height surface using typography, spacing, and quiet dividers; questionnaire choices are now flat rows rather than nested cards, and todos/activity use plain sections. Removed the internal vertical scrollbar, widened reading layouts, assigned deterministic foreground layers to expanded and focused nodes, and disabled selection elevation so collapsed siblings cannot cover the open node.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Stream Journey graph mutations while agents work
 
 **Problem:** Journey agents worked invisibly and returned a complete graph only with their final response. Nodes such as “Research completed” could therefore appear after the fact even though no running research node had been visible while the work happened.

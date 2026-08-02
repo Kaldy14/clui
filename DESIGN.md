@@ -34,7 +34,9 @@
 ## Design principles
 
 - Semantic graph first: Agents create and update meaningful nodes and edges; layout coordinates are a presentation concern.
-- Progressive disclosure: Nodes remain scannable when collapsed and reveal forms, questionnaires, todos, artifacts, and activity when expanded.
+- Progressive disclosure: Nodes remain scannable when collapsed and reveal forms, questionnaires, todos, artifacts, and activity when expanded. Compact nodes show each semantic fact once; do not pair a large type icon with a redundant type label.
+- One node, one surface: Expanded content continues the node's existing surface. Use spacing, typography, and quiet dividers for hierarchy instead of nesting panels or cards inside the node.
+- Expansion owns the foreground: An expanded node renders above every collapsed sibling, and a focused node renders above the expanded layer. Expanded content uses its intrinsic height; the graph canvas pans around it rather than adding an internal vertical scrollbar.
 - Reversible focus: Node focus is distinct from expansion. It enlarges the chosen expanded node and fits it prominently into the canvas without changing durable graph data; Escape, the node control, or Fit graph restores the overview.
 - Keep work observable in context: A running node exposes its live agent transcript without replacing or obscuring the graph on desktop; the output inspector keeps the originating node visible as context.
 - Graph progress is live state, not a final-report visualization: Agents create a running node before concrete research or implementation, mutate it at meaningful transitions, and record the real outcome when the work finishes. The final assistant message summarizes the run; it is not the primary graph transport.
@@ -48,14 +50,14 @@
 - Color: Reuse Clui theme tokens for chrome. Node types receive restrained accent families; statuses alter borders, badges, icons, and motion without replacing type identity.
 - Typography: Reuse the application sans and monospace conventions. Node titles are compact; metadata and activity use smaller muted text; long content uses readable line height.
 - Spacing/layout rhythm: Compact 4/8px-derived rhythm, generous canvas whitespace, and consistent node widths within a layout pass.
-- Shape/radius/elevation: Reuse medium rounded cards, subtle borders, and low elevation. Selection and human-attention states may raise elevation slightly.
+- Shape/radius/elevation: Reuse medium rounded cards, subtle borders, and low elevation. Selection and human-attention states may raise elevation slightly. Inside an expanded Journey node, prefer flat sections and separators; reserve bordered containers for actual controls such as inputs, not content grouping.
 - Motion: Short layout transitions; a restrained activity pulse for running nodes; respect reduced motion.
 - Imagery/iconography: Reuse Lucide icons. Do not use illustrative imagery in the journey workspace.
 
 ## Components
 
 - Existing components to reuse: Buttons, badges, inputs, textareas, radio groups, checkboxes, collapsibles, scroll areas, tooltips, sheets, and app toolbar/sidebar patterns under `apps/web/src/components/ui/`.
-- New/changed components: Journey surface, graph toolbar, journey node with separate expand and focus controls, node status indicator, interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
+- New/changed components: Journey surface, graph toolbar, journey node with separate expand and focus controls, compact single-signal type metadata, intrinsic-height expanded details, flat interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
 - Variants and states: Node types include goal, question, proposal, task, todo group, research, implementation, review, and note. Statuses include draft, ready, running, waiting for user, blocked, completed, failed, cancelled, and superseded.
 - Token/component ownership: Journey-specific accent mappings live with the journey UI; shared theme primitives remain in `apps/web/src/index.css` and existing UI components.
 
@@ -70,7 +72,7 @@
 ## Responsive behavior
 
 - Supported breakpoints/devices: Desktop and tablet are primary; narrow browser windows remain usable.
-- Layout adaptations: Graph toolbar wraps; expanded nodes cap width; focused nodes receive a wider reading layout and are fitted to the available canvas; controls keep minimum touch targets; viewport can fit selected/all nodes. The live output inspector shares horizontal space on desktop and overlays the canvas at narrow widths so it remains readable without permanently collapsing the graph.
+- Layout adaptations: Graph toolbar wraps; expanded nodes cap width but not height; focused nodes receive a wider reading layout and are fitted to the available canvas; controls keep minimum touch targets; viewport can fit selected/all nodes. Long expanded content remains one intrinsic-height surface navigated with the graph viewport. The live output inspector shares horizontal space on desktop and overlays the canvas at narrow widths so it remains readable without permanently collapsing the graph.
 - Touch/hover differences: Essential controls remain visible or focusable and never depend solely on hover.
 
 ## Interaction states

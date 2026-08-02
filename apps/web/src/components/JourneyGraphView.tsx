@@ -67,6 +67,7 @@ import {
   JOURNEY_NODE_EXPANDED_WIDTH,
   JOURNEY_NODE_FOCUSED_WIDTH,
   JOURNEY_NODE_WIDTH,
+  journeyNodeZIndex,
   layoutJourneyNodes,
   makeInitialJourney,
   parseJourneyAgentResponse,
@@ -79,7 +80,6 @@ import { cn, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { updateThread, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
@@ -109,51 +109,60 @@ type JourneyHarness = Extract<CodingHarness, "pi" | "codexCli">;
 
 const NODE_TYPE_PRESENTATION: Record<
   JourneyNodeType,
-  { label: string; className: string; icon: typeof FlagIcon }
+  { label: string; className: string; textClassName: string; icon: typeof FlagIcon }
 > = {
   goal: {
     label: "Goal",
     className: "bg-violet-500/12 text-violet-700 dark:text-violet-300",
+    textClassName: "text-violet-700 dark:text-violet-300",
     icon: FlagIcon,
   },
   question: {
     label: "Question",
     className: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+    textClassName: "text-amber-700 dark:text-amber-300",
     icon: HelpCircleIcon,
   },
   proposal: {
     label: "Proposal",
     className: "bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
+    textClassName: "text-fuchsia-700 dark:text-fuchsia-300",
     icon: LightbulbIcon,
   },
   task: {
     label: "Task",
     className: "bg-blue-500/12 text-blue-700 dark:text-blue-300",
+    textClassName: "text-blue-700 dark:text-blue-300",
     icon: SquareCheckBigIcon,
   },
   todoGroup: {
     label: "Todos",
     className: "bg-cyan-500/12 text-cyan-700 dark:text-cyan-300",
+    textClassName: "text-cyan-700 dark:text-cyan-300",
     icon: ListChecksIcon,
   },
   research: {
     label: "Research",
     className: "bg-teal-500/12 text-teal-700 dark:text-teal-300",
+    textClassName: "text-teal-700 dark:text-teal-300",
     icon: FlaskConicalIcon,
   },
   implementation: {
     label: "Implementation",
     className: "bg-indigo-500/12 text-indigo-700 dark:text-indigo-300",
+    textClassName: "text-indigo-700 dark:text-indigo-300",
     icon: FileCode2Icon,
   },
   review: {
     label: "Review",
     className: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
+    textClassName: "text-emerald-700 dark:text-emerald-300",
     icon: ShieldCheckIcon,
   },
   note: {
     label: "Note",
     className: "bg-slate-500/12 text-slate-700 dark:text-slate-300",
+    textClassName: "text-slate-700 dark:text-slate-300",
     icon: StickyNoteIcon,
   },
 };
@@ -249,113 +258,145 @@ function JourneyInteractionForm({
   };
 
   return (
-    <div className="nodrag nowheel space-y-3 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
-      <div>
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold text-foreground">{interaction.title}</p>
-          {interaction.steps.length > 1 && (
-            <span className="text-[10px] text-muted-foreground">
-              {stepIndex + 1}/{interaction.steps.length}
-            </span>
+    <section className="nodrag nowheel space-y-5" aria-label={interaction.title}>
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground">{interaction.title}</p>
+          {interaction.description && (
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {interaction.description}
+            </p>
           )}
         </div>
-        {interaction.description && (
-          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-            {interaction.description}
-          </p>
+        {interaction.steps.length > 1 && (
+          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+            {stepIndex + 1} of {interaction.steps.length}
+          </span>
         )}
-      </div>
-      <div>
-        <p className="text-xs font-medium text-foreground">{step.title}</p>
+      </header>
+
+      <div className="border-l-2 border-amber-500/60 pl-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+          {step.title}
+        </p>
         {step.description && (
-          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{step.description}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{step.description}</p>
         )}
       </div>
-      <div className="space-y-3">
-        {step.fields.map((field) => (
-          <label key={field.id} className="block space-y-1.5 text-[11px] text-foreground">
-            <span className="font-medium">
-              {field.label}
-              {field.required ? <span className="ml-1 text-amber-600">*</span> : null}
-            </span>
-            {field.description && (
-              <span className="block text-muted-foreground">{field.description}</span>
-            )}
-            {field.type === "text" &&
-              (field.multiline ? (
-                <Textarea
-                  className="min-h-20 text-xs"
-                  value={typeof answers[field.id] === "string" ? (answers[field.id] as string) : ""}
-                  placeholder={field.placeholder}
-                  onChange={(event) => updateAnswer(field.id, event.target.value)}
-                />
-              ) : (
-                <Input
-                  className="h-8 text-xs"
-                  value={typeof answers[field.id] === "string" ? (answers[field.id] as string) : ""}
-                  placeholder={field.placeholder}
-                  onChange={(event) => updateAnswer(field.id, event.target.value)}
-                />
-              ))}
-            {field.type === "boolean" && (
-              <span className="flex items-center gap-2 rounded-md border border-border/50 px-2 py-1.5">
-                <Checkbox
-                  checked={answers[field.id] === true}
-                  onCheckedChange={(checked) => updateAnswer(field.id, checked === true)}
-                />
-                <span>{answers[field.id] === true ? "Yes" : "No"}</span>
-              </span>
-            )}
-            {(field.type === "singleChoice" || field.type === "multiChoice") && (
-              <span className="grid gap-1.5">
-                {field.options.map((option) => {
-                  const selected =
-                    field.type === "singleChoice"
-                      ? answers[field.id] === option.value
-                      : Array.isArray(answers[field.id]) &&
-                        (answers[field.id] as unknown[]).includes(option.value);
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={selected}
-                      className={cn(
-                        "rounded-md border px-2 py-1.5 text-left transition-colors",
-                        selected
-                          ? "border-primary/60 bg-primary/10 text-foreground"
-                          : "border-border/50 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                      )}
-                      onClick={() => {
-                        if (field.type === "singleChoice") {
-                          updateAnswer(field.id, option.value);
-                          return;
-                        }
-                        const current = Array.isArray(answers[field.id])
-                          ? (answers[field.id] as string[])
-                          : [];
-                        updateAnswer(
-                          field.id,
+
+      <div className="space-y-5">
+        {step.fields.map((field) => {
+          const inputId = `journey-${node.id}-${field.id}`;
+          return (
+            <div key={field.id} className="space-y-2 text-xs text-foreground">
+              <div>
+                <label
+                  htmlFor={field.type === "text" ? inputId : undefined}
+                  className="font-medium"
+                >
+                  {field.label}
+                  {field.required ? <span className="ml-1 text-amber-600">*</span> : null}
+                </label>
+                {field.description && (
+                  <p className="mt-1 leading-5 text-muted-foreground">{field.description}</p>
+                )}
+              </div>
+
+              {field.type === "text" &&
+                (field.multiline ? (
+                  <Textarea
+                    id={inputId}
+                    className="min-h-24 resize-y text-xs"
+                    value={
+                      typeof answers[field.id] === "string" ? (answers[field.id] as string) : ""
+                    }
+                    placeholder={field.placeholder}
+                    onChange={(event) => updateAnswer(field.id, event.target.value)}
+                  />
+                ) : (
+                  <Input
+                    id={inputId}
+                    className="h-9 text-xs"
+                    value={
+                      typeof answers[field.id] === "string" ? (answers[field.id] as string) : ""
+                    }
+                    placeholder={field.placeholder}
+                    onChange={(event) => updateAnswer(field.id, event.target.value)}
+                  />
+                ))}
+
+              {field.type === "boolean" && (
+                <label className="flex items-center gap-2 py-1 text-muted-foreground">
+                  <Checkbox
+                    checked={answers[field.id] === true}
+                    onCheckedChange={(checked) => updateAnswer(field.id, checked === true)}
+                  />
+                  <span>{answers[field.id] === true ? "Yes" : "No"}</span>
+                </label>
+              )}
+
+              {(field.type === "singleChoice" || field.type === "multiChoice") && (
+                <fieldset className="divide-y divide-border/50 border-y border-border/50">
+                  <legend className="sr-only">{field.label}</legend>
+                  {field.options.map((option) => {
+                    const selected =
+                      field.type === "singleChoice"
+                        ? answers[field.id] === option.value
+                        : Array.isArray(answers[field.id]) &&
+                          (answers[field.id] as unknown[]).includes(option.value);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={selected}
+                        className={cn(
+                          "flex w-full items-start gap-3 py-3 text-left transition-colors",
                           selected
-                            ? current.filter((value) => value !== option.value)
-                            : [...current, option.value],
-                        );
-                      }}
-                    >
-                      <span className="block font-medium">{option.label}</span>
-                      {option.description && (
-                        <span className="mt-0.5 block text-[10px] leading-4 opacity-75">
-                          {option.description}
+                            ? "text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={() => {
+                          if (field.type === "singleChoice") {
+                            updateAnswer(field.id, option.value);
+                            return;
+                          }
+                          const current = Array.isArray(answers[field.id])
+                            ? (answers[field.id] as string[])
+                            : [];
+                          updateAnswer(
+                            field.id,
+                            selected
+                              ? current.filter((value) => value !== option.value)
+                              : [...current, option.value],
+                          );
+                        }}
+                      >
+                        <span
+                          className={cn(
+                            "mt-1 size-2 shrink-0 rounded-full border border-current",
+                            selected && "bg-amber-500 text-amber-500",
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-medium">{option.label}</span>
+                          {option.description && (
+                            <span className="mt-1 block text-[11px] leading-4 opacity-75">
+                              {option.description}
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </span>
-            )}
-          </label>
-        ))}
+                      </button>
+                    );
+                  })}
+                </fieldset>
+              )}
+            </div>
+          );
+        })}
       </div>
-      <div className="flex items-center justify-between gap-2 pt-1">
+
+      <footer className="flex items-center justify-between gap-2 border-t border-border/50 pt-4">
         <Button
           type="button"
           variant="ghost"
@@ -379,8 +420,8 @@ function JourneyInteractionForm({
         >
           {isLastStep ? interaction.submitLabel : "Next"}
         </Button>
-      </div>
-    </div>
+      </footer>
+    </section>
   );
 }
 
@@ -388,7 +429,6 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
   const node = data.journeyNode;
   const type = NODE_TYPE_PRESENTATION[node.type];
   const status = NODE_STATUS_PRESENTATION[node.status];
-  const TypeIcon = type.icon;
   const StatusIcon = status.icon;
   const targetPosition = data.direction === "TB" ? Position.Top : Position.Left;
   const sourcePosition = data.direction === "TB" ? Position.Bottom : Position.Right;
@@ -399,7 +439,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
     <article
       aria-label={`${type.label}: ${node.title}. ${status.label}`}
       className={cn(
-        "group overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-[border-color,box-shadow,opacity]",
+        "group rounded-xl border bg-card text-card-foreground shadow-sm transition-[border-color,box-shadow,opacity]",
         status.className,
         data.focused
           ? "shadow-xl ring-2 ring-primary/20"
@@ -421,24 +461,20 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
         position={targetPosition}
         className="!size-2 !border-0 !bg-muted-foreground/45"
       />
-      <div className="flex items-start gap-1 p-3">
+      <div className={cn("flex items-start gap-2 px-4 py-3.5", data.expanded && "pb-4")}>
         <button
           type="button"
-          className="nodrag flex min-w-0 flex-1 items-start gap-3 text-left"
+          className="nodrag min-w-0 flex-1 text-left"
           onClick={() => data.onToggleExpanded(node.id)}
         >
-          <span className={cn("mt-0.5 rounded-md p-1.5", type.className)}>
-            <TypeIcon className="size-3.5" aria-hidden="true" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2">
-              <Badge variant="outline" size="sm" className={cn("border-0", type.className)}>
-                {type.label}
-              </Badge>
-              <span className="inline-flex min-w-0 items-center gap-1 text-[10px] font-medium">
+          <span className="block min-w-0">
+            <span className="flex items-center gap-2 text-[10px] font-semibold">
+              <span className={cn("truncate", type.textClassName)}>{type.label}</span>
+              <span className="h-3 w-px shrink-0 bg-border/70" aria-hidden="true" />
+              <span className="inline-flex min-w-0 items-center gap-1.5">
                 <StatusIcon
                   className={cn(
-                    "size-3",
+                    "size-3 shrink-0",
                     status.pulse ? "animate-spin motion-reduce:animate-none" : "",
                   )}
                   aria-hidden="true"
@@ -448,7 +484,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                 </span>
               </span>
             </span>
-            <span className="mt-2 block text-sm font-semibold leading-5 text-foreground">
+            <span className="mt-2.5 block text-sm font-semibold leading-5 text-foreground">
               {node.title}
             </span>
             {node.summary && (
@@ -500,25 +536,21 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
       </div>
 
       {data.expanded && (
-        <div className="nodrag nowheel max-h-[560px] space-y-3 overflow-y-auto border-t border-border/50 p-3">
+        <div className="nodrag nowheel space-y-5 border-t border-border/50 px-4 py-4">
           {hasAgentOutput && (
-            <Button
+            <button
               type="button"
-              variant="outline"
-              size="sm"
               className={cn(
-                "w-full justify-between",
+                "flex items-center gap-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
                 data.agentWorking &&
-                  "border-sky-500/40 bg-sky-500/8 text-sky-700 hover:bg-sky-500/12 dark:text-sky-300",
+                  "text-sky-700 hover:text-sky-800 dark:text-sky-300 dark:hover:text-sky-200",
               )}
               onClick={() => data.onOpenAgentOutput(node.id)}
             >
-              <span className="flex items-center gap-2">
-                <BotIcon className="size-3.5" />
-                {data.agentWorking ? "View live agent output" : "View agent output"}
-              </span>
+              <BotIcon className="size-3.5" />
+              {data.agentWorking ? "View live agent output" : "View agent output"}
               <PanelRightOpenIcon className="size-3.5" />
-            </Button>
+            </button>
           )}
 
           {node.detailMarkdown && (
@@ -528,7 +560,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
           )}
 
           {node.todos.length > 0 && (
-            <div className="space-y-1.5 rounded-lg border border-border/50 bg-muted/25 p-2.5">
+            <section className="space-y-2 border-t border-border/50 pt-4">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Todos
               </p>
@@ -555,19 +587,21 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                   </span>
                 </label>
               ))}
-            </div>
+            </section>
           )}
 
           {node.interaction && node.status === "waitingForUser" && (
-            <JourneyInteractionForm
-              key={node.interaction.id}
-              node={node}
-              onSubmit={(answers) => data.onSubmitInteraction(node.id, answers)}
-            />
+            <div className="border-t border-border/50 pt-4">
+              <JourneyInteractionForm
+                key={node.interaction.id}
+                node={node}
+                onSubmit={(answers) => data.onSubmitInteraction(node.id, answers)}
+              />
+            </div>
           )}
 
           {node.activity.length > 0 && (
-            <div className="space-y-1.5">
+            <section className="space-y-2 border-t border-border/50 pt-4">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Activity
               </p>
@@ -590,19 +624,20 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                   </span>
                 </div>
               ))}
-            </div>
+            </section>
           )}
 
           {node.status !== "waitingForUser" && node.status !== "running" && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() => data.onRunAgent(node.id)}
-            >
-              <SparklesIcon className="size-3.5" /> Continue with agent
-            </Button>
+            <footer className="flex justify-end border-t border-border/50 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => data.onRunAgent(node.id)}
+              >
+                <SparklesIcon className="size-3.5" /> Continue with agent
+              </Button>
+            </footer>
           )}
         </div>
       )}
@@ -1268,6 +1303,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         },
         draggable: focusedNodeId !== node.id,
         selectable: true,
+        zIndex: journeyNodeZIndex(expandedNodeId === node.id, focusedNodeId === node.id),
         style: { width: layout.width },
       };
     });
@@ -1426,6 +1462,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
               maxZoom={1.6}
               nodesConnectable={false}
               elementsSelectable
+              elevateNodesOnSelect={false}
               proOptions={{ hideAttribution: false }}
             >
               <JourneyViewportFocus
