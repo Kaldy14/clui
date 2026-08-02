@@ -523,13 +523,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                 </span>
               </span>
             </span>
-            <span
-              className={cn(
-                "mt-1 block text-[13px] font-semibold leading-4 text-foreground",
-                !data.expanded && "truncate",
-              )}
-              title={node.title}
-            >
+            <span className="mt-1 block break-words text-[13px] font-semibold leading-4 text-foreground">
               {node.title}
             </span>
           </span>
@@ -752,7 +746,7 @@ function JourneyAgentOutputPanel({
               {running ? "Live" : "Latest run"}
             </span>
           </div>
-          <p className="truncate text-[11px] text-muted-foreground">
+          <p className="break-words text-[11px] leading-4 text-muted-foreground">
             {node?.title ?? "Journey agent"} · {harness === "pi" ? "Pi" : "Codex"}
           </p>
         </div>

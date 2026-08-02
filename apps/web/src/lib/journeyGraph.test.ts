@@ -80,6 +80,34 @@ describe("journey graph", () => {
     expect(next.y - destination.y).toBe(renderedHeight + JOURNEY_LAYER_GAP);
   });
 
+  it("places the next layer after a wrapped collapsed node title", () => {
+    const initial = makeInitialJourney(
+      "A destination title long enough to wrap across several compact node lines",
+      "2026-08-02T10:00:00.000Z",
+    );
+    const snapshot = {
+      ...initial,
+      nodes: [...initial.nodes, { ...initial.nodes[0]!, id: "next", title: "Next" }],
+      edges: [
+        {
+          id: "destination-next",
+          source: "destination",
+          target: "next",
+          relation: "dependsOn" as const,
+        },
+      ],
+    };
+
+    const wrappedTitleHeight = 96;
+    const measured = layoutJourneyNodes(snapshot, null, null, {
+      destination: wrappedTitleHeight,
+    });
+    const destination = measured.find((node) => node.id === "destination")!;
+    const next = measured.find((node) => node.id === "next")!;
+
+    expect(next.y - destination.y).toBe(wrappedTitleHeight + JOURNEY_LAYER_GAP);
+  });
+
   it("gives a focused node more space than an expanded node", () => {
     const snapshot = makeInitialJourney("Inspect one node", "2026-08-02T10:00:00.000Z");
 

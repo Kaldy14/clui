@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Always show complete Journey node titles
+
+**Problem:** Compact Journey nodes replaced the end of longer titles with an ellipsis, hiding the work item the graph was meant to identify. The selected node title was also truncated in the agent-output inspector.
+
+**Root cause:** Both title elements used the shared `truncate` utility even though Journey nodes already report their rendered height back to the graph layout.
+
+**Fix:** Removed title truncation from node cards and the output inspector, allowed titles to wrap and break long tokens, and kept collapsed nodes compact only when their title fits. Added layout regression coverage proving a taller measured collapsed node moves the next graph layer down.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Expose agent output from collapsed Journey nodes
 
 **Problem:** Agent output could only be opened after expanding a Journey node, adding an unnecessary interaction when scanning the compact graph.
