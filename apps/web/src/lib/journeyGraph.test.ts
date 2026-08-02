@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  JOURNEY_NODE_EXPANDED_WIDTH,
+  JOURNEY_NODE_FOCUSED_WIDTH,
   layoutJourneyNodes,
   makeInitialJourney,
   parseJourneyAgentResponse,
@@ -41,6 +43,17 @@ describe("journey graph", () => {
     expect(horizontal.find((node) => node.id === "review")!.x).toBeGreaterThan(
       horizontal.find((node) => node.id === "destination")!.x,
     );
+  });
+
+  it("gives a focused node more space than an expanded node", () => {
+    const snapshot = makeInitialJourney("Inspect one node", "2026-08-02T10:00:00.000Z");
+
+    const expanded = layoutJourneyNodes(snapshot, "destination");
+    const focused = layoutJourneyNodes(snapshot, "destination", "destination");
+
+    expect(expanded[0]?.width).toBe(JOURNEY_NODE_EXPANDED_WIDTH);
+    expect(focused[0]?.width).toBe(JOURNEY_NODE_FOCUSED_WIDTH);
+    expect(focused[0]!.height).toBeGreaterThan(expanded[0]!.height);
   });
 
   it("parses the tagged agent snapshot", () => {

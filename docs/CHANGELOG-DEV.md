@@ -4,6 +4,22 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Add Journey node focus mode
+
+**Problem:** Expanding a Journey node revealed its details but left it at graph scale, making larger questionnaires, activity histories, and implementation details harder to read and interact with.
+
+**Root cause:** Journey nodes had only a disclosure control. The graph could fit the complete canvas, but there was no separate local focus state or viewport action for fitting one expanded node prominently.
+
+**Fix:** Added a distinct focus control beside the expand chevron. Focus mode expands the node, gives it a wider reading layout, centers and zooms it to fill most of the canvas, closes the competing agent-output panel, and temporarily disables node dragging. The control changes to a return action while focused; Escape, collapsing the node, or Fit graph also restores the overview. Added accessible labels, pressed/expanded semantics, design guidance, and focused-layout regression coverage.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Let Journeys run with Pi or Codex
 
 **Problem:** Journey mode always used Pi, with no way to choose Codex when starting the thread or inspect Codex's structured live output while the graph evolved.

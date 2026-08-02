@@ -17,7 +17,7 @@
 
 - Goals: Make terminal-native agents manageable across projects and threads; add a journey surface where agents and the user can build and resolve a free-form work graph; make current work, blockers, decisions, and human input immediately legible.
 - Non-goals: Enforce a fixed workflow shape; require an issue tracker; turn the journey canvas into a general-purpose whiteboard; replace terminal threads.
-- Success signals: A user can start a journey with either Pi or Codex, understand its frontier at a glance, expand a node, answer a structured request, observe agent work, switch graph direction, and return later without losing state.
+- Success signals: A user can start a journey with either Pi or Codex, understand its frontier at a glance, expand or focus a node, answer a structured request, observe agent work, switch graph direction, and return later without losing state.
 
 ## Personas and jobs
 
@@ -35,6 +35,7 @@
 
 - Semantic graph first: Agents create and update meaningful nodes and edges; layout coordinates are a presentation concern.
 - Progressive disclosure: Nodes remain scannable when collapsed and reveal forms, questionnaires, todos, artifacts, and activity when expanded.
+- Reversible focus: Node focus is distinct from expansion. It enlarges the chosen expanded node and fits it prominently into the canvas without changing durable graph data; Escape, the node control, or Fit graph restores the overview.
 - Keep work observable in context: A running node exposes its live agent transcript without replacing or obscuring the graph on desktop; the output inspector keeps the originating node visible as context.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
 - Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts. Pi and Codex must produce the same graph contract so changing the harness does not change how the Journey behaves.
@@ -53,14 +54,14 @@
 ## Components
 
 - Existing components to reuse: Buttons, badges, inputs, textareas, radio groups, checkboxes, collapsibles, scroll areas, tooltips, sheets, and app toolbar/sidebar patterns under `apps/web/src/components/ui/`.
-- New/changed components: Journey surface, graph toolbar, journey node, node status indicator, interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
+- New/changed components: Journey surface, graph toolbar, journey node with separate expand and focus controls, node status indicator, interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
 - Variants and states: Node types include goal, question, proposal, task, todo group, research, implementation, review, and note. Statuses include draft, ready, running, waiting for user, blocked, completed, failed, cancelled, and superseded.
 - Token/component ownership: Journey-specific accent mappings live with the journey UI; shared theme primitives remain in `apps/web/src/index.css` and existing UI components.
 
 ## Accessibility
 
 - Target standard: WCAG 2.2 AA for the journey surface.
-- Keyboard/focus behavior: Toolbar and expanded node controls are keyboard reachable; clicking interactive content does not drag the node; focus remains visible; graph nodes expose meaningful accessible labels.
+- Keyboard/focus behavior: Toolbar and expanded node controls are keyboard reachable; focus mode has explicit enter/exit labels and exits with Escape; clicking interactive content does not drag the node; focus remains visible; graph nodes expose meaningful accessible labels.
 - Contrast/readability: Type and status accent combinations must pass contrast in light and dark themes; text never depends on low-opacity color alone.
 - Screen-reader semantics: Nodes identify type, title, and status; todos use lists and checkboxes; forms use labels/fieldsets; activity updates use restrained live regions.
 - Reduced motion and sensory considerations: Disable activity pulsing and animated layout transitions under `prefers-reduced-motion`.
@@ -68,7 +69,7 @@
 ## Responsive behavior
 
 - Supported breakpoints/devices: Desktop and tablet are primary; narrow browser windows remain usable.
-- Layout adaptations: Graph toolbar wraps; expanded nodes cap width; controls keep minimum touch targets; viewport can fit selected/all nodes. The live output inspector shares horizontal space on desktop and overlays the canvas at narrow widths so it remains readable without permanently collapsing the graph.
+- Layout adaptations: Graph toolbar wraps; expanded nodes cap width; focused nodes receive a wider reading layout and are fitted to the available canvas; controls keep minimum touch targets; viewport can fit selected/all nodes. The live output inspector shares horizontal space on desktop and overlays the canvas at narrow widths so it remains readable without permanently collapsing the graph.
 - Touch/hover differences: Essential controls remain visible or focusable and never depend solely on hover.
 
 ## Interaction states

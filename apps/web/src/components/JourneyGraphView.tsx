@@ -38,12 +38,14 @@ import {
   FileCode2Icon,
   FlagIcon,
   FlaskConicalIcon,
+  FocusIcon,
   HelpCircleIcon,
   LightbulbIcon,
   ListChecksIcon,
   LoaderCircleIcon,
   Maximize2Icon,
   MessageSquareTextIcon,
+  Minimize2Icon,
   NetworkIcon,
   PanelRightOpenIcon,
   StickyNoteIcon,
@@ -63,6 +65,7 @@ import remarkGfm from "remark-gfm";
 import {
   buildJourneyAgentPrompt,
   JOURNEY_NODE_EXPANDED_WIDTH,
+  JOURNEY_NODE_FOCUSED_WIDTH,
   JOURNEY_NODE_WIDTH,
   layoutJourneyNodes,
   makeInitialJourney,
@@ -88,8 +91,10 @@ type JourneyNodeData = {
   journeyNode: JourneyNode;
   direction: JourneySnapshot["layoutDirection"];
   expanded: boolean;
+  focused: boolean;
   agentWorking: boolean;
   onToggleExpanded: (nodeId: string) => void;
+  onToggleFocus: (nodeId: string) => void;
   onToggleTodo: (nodeId: string, todoId: string, completed: boolean) => void;
   onSubmitInteraction: (
     nodeId: string,
@@ -396,62 +401,103 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
       className={cn(
         "group overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-[border-color,box-shadow,opacity]",
         status.className,
-        data.expanded ? "shadow-lg" : "hover:shadow-md",
+        data.focused
+          ? "shadow-xl ring-2 ring-primary/20"
+          : data.expanded
+            ? "shadow-lg"
+            : "hover:shadow-md",
         node.status === "cancelled" || node.status === "superseded" ? "opacity-60" : "",
       )}
-      style={{ width: data.expanded ? JOURNEY_NODE_EXPANDED_WIDTH : JOURNEY_NODE_WIDTH }}
+      style={{
+        width: data.focused
+          ? JOURNEY_NODE_FOCUSED_WIDTH
+          : data.expanded
+            ? JOURNEY_NODE_EXPANDED_WIDTH
+            : JOURNEY_NODE_WIDTH,
+      }}
     >
       <Handle
         type="target"
         position={targetPosition}
         className="!size-2 !border-0 !bg-muted-foreground/45"
       />
-      <button
-        type="button"
-        className="nodrag flex w-full items-start gap-3 p-3 text-left"
-        onClick={() => data.onToggleExpanded(node.id)}
-      >
-        <span className={cn("mt-0.5 rounded-md p-1.5", type.className)}>
-          <TypeIcon className="size-3.5" aria-hidden="true" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <Badge variant="outline" size="sm" className={cn("border-0", type.className)}>
-              {type.label}
-            </Badge>
-            <span className="inline-flex min-w-0 items-center gap-1 text-[10px] font-medium">
-              <StatusIcon
-                className={cn(
-                  "size-3",
-                  status.pulse ? "animate-spin motion-reduce:animate-none" : "",
-                )}
-                aria-hidden="true"
-              />
-              <span className="truncate">{data.agentWorking ? "Agent working" : status.label}</span>
-            </span>
+      <div className="flex items-start gap-1 p-3">
+        <button
+          type="button"
+          className="nodrag flex min-w-0 flex-1 items-start gap-3 text-left"
+          onClick={() => data.onToggleExpanded(node.id)}
+        >
+          <span className={cn("mt-0.5 rounded-md p-1.5", type.className)}>
+            <TypeIcon className="size-3.5" aria-hidden="true" />
           </span>
-          <span className="mt-2 block text-sm font-semibold leading-5 text-foreground">
-            {node.title}
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <Badge variant="outline" size="sm" className={cn("border-0", type.className)}>
+                {type.label}
+              </Badge>
+              <span className="inline-flex min-w-0 items-center gap-1 text-[10px] font-medium">
+                <StatusIcon
+                  className={cn(
+                    "size-3",
+                    status.pulse ? "animate-spin motion-reduce:animate-none" : "",
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="truncate">
+                  {data.agentWorking ? "Agent working" : status.label}
+                </span>
+              </span>
+            </span>
+            <span className="mt-2 block text-sm font-semibold leading-5 text-foreground">
+              {node.title}
+            </span>
+            {node.summary && (
+              <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-muted-foreground">
+                {node.summary}
+              </span>
+            )}
+            {node.todos.length > 0 && (
+              <span className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
+                <ListChecksIcon className="size-3" /> {completedTodos}/{node.todos.length}
+              </span>
+            )}
           </span>
-          {node.summary && (
-            <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-muted-foreground">
-              {node.summary}
-            </span>
-          )}
-          {node.todos.length > 0 && (
-            <span className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
-              <ListChecksIcon className="size-3" /> {completedTodos}/{node.todos.length}
-            </span>
-          )}
-        </span>
-        <ChevronDownIcon
-          className={cn(
-            "mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform",
-            data.expanded && "rotate-180",
-          )}
-          aria-hidden="true"
-        />
-      </button>
+        </button>
+        <div className="nodrag flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
+            className={cn(
+              "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              data.focused && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+            )}
+            title={data.focused ? "Return to full graph" : "Focus node"}
+            aria-label={data.focused ? "Return to full graph" : `Focus node: ${node.title}`}
+            aria-pressed={data.focused}
+            onClick={() => data.onToggleFocus(node.id)}
+          >
+            {data.focused ? (
+              <Minimize2Icon className="size-3.5" aria-hidden="true" />
+            ) : (
+              <FocusIcon className="size-3.5" aria-hidden="true" />
+            )}
+          </button>
+          <button
+            type="button"
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            title={data.expanded ? "Collapse node" : "Expand node"}
+            aria-label={
+              data.expanded ? `Collapse node: ${node.title}` : `Expand node: ${node.title}`
+            }
+            aria-expanded={data.expanded}
+            onClick={() => data.onToggleExpanded(node.id)}
+          >
+            <ChevronDownIcon
+              className={cn("size-3.5 transition-transform", data.expanded && "rotate-180")}
+              aria-hidden="true"
+            />
+          </button>
+        </div>
+      </div>
 
       {data.expanded && (
         <div className="nodrag nowheel max-h-[560px] space-y-3 overflow-y-auto border-t border-border/50 p-3">
@@ -632,9 +678,53 @@ function JourneyAgentOutputPanel({
   );
 }
 
+function JourneyViewportFocus({
+  focusedNodeId,
+  revision,
+}: {
+  focusedNodeId: string | null;
+  revision: string;
+}) {
+  const { fitView } = useReactFlow<JourneyFlowNode>();
+  const previousFocusedNodeIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (previousFocusedNodeIdRef.current === focusedNodeId && !focusedNodeId) return;
+    previousFocusedNodeIdRef.current = focusedNodeId;
+
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        void fitView(
+          focusedNodeId
+            ? {
+                nodes: [{ id: focusedNodeId }],
+                padding: 0.08,
+                minZoom: 0.7,
+                maxZoom: 1.85,
+                duration: 320,
+              }
+            : { padding: 0.18, maxZoom: 1.05, duration: 280 },
+        );
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [fitView, focusedNodeId, revision]);
+
+  return null;
+}
+
 function JourneyCanvasControls({
+  focusedNodeId,
+  onClearFocus,
   onDirectionChange,
 }: {
+  focusedNodeId: string | null;
+  onClearFocus: () => void;
   onDirectionChange: (direction: "TB" | "LR") => void;
 }) {
   const { fitView } = useReactFlow<JourneyFlowNode>();
@@ -664,7 +754,10 @@ function JourneyCanvasControls({
         className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         title="Fit graph"
         aria-label="Fit graph"
-        onClick={() => void fitView({ padding: 0.18, duration: 250 })}
+        onClick={() => {
+          onClearFocus();
+          if (!focusedNodeId) void fitView({ padding: 0.18, maxZoom: 1.05, duration: 250 });
+        }}
       >
         <Maximize2Icon className="size-3.5" />
       </button>
@@ -706,6 +799,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const bootstrapDestinationRef = useRef(initialDestination.trim());
   const [destination, setDestination] = useState(initialDestination);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [agentMessage, setAgentMessage] = useState("");
   const [agentOutputNodeId, setAgentOutputNodeId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -1087,9 +1181,46 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     [journey, persistJourney],
   );
 
+  const handleToggleNodeExpanded = useCallback(
+    (nodeId: string) => {
+      const collapsing = expandedNodeId === nodeId;
+      setExpandedNodeId(collapsing ? null : nodeId);
+      if (collapsing && focusedNodeId === nodeId) setFocusedNodeId(null);
+    },
+    [expandedNodeId, focusedNodeId],
+  );
+
+  const handleToggleNodeFocus = useCallback(
+    (nodeId: string) => {
+      const nextFocusedNodeId = focusedNodeId === nodeId ? null : nodeId;
+      setFocusedNodeId(nextFocusedNodeId);
+      if (nextFocusedNodeId) {
+        setExpandedNodeId(nodeId);
+        setAgentOutputNodeId(null);
+      }
+    },
+    [focusedNodeId],
+  );
+
+  useEffect(() => {
+    if (!focusedNodeId) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setFocusedNodeId(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusedNodeId]);
+
+  useEffect(() => {
+    if (focusedNodeId && !journey?.nodes.some((node) => node.id === focusedNodeId)) {
+      setFocusedNodeId(null);
+    }
+  }, [focusedNodeId, journey]);
+
   const layouts = useMemo(
-    () => (journey ? layoutJourneyNodes(journey, expandedNodeId) : []),
-    [expandedNodeId, journey],
+    () => (journey ? layoutJourneyNodes(journey, expandedNodeId, focusedNodeId) : []),
+    [expandedNodeId, focusedNodeId, journey],
   );
   const flowNodes = useMemo<JourneyFlowNode[]>(() => {
     if (!journey) return [];
@@ -1109,15 +1240,16 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
           journeyNode: node,
           direction: journey.layoutDirection,
           expanded: expandedNodeId === node.id,
+          focused: focusedNodeId === node.id,
           agentWorking: journey.activeNodeId === node.id && agentRunNodeId === node.id,
-          onToggleExpanded: (nodeId) =>
-            setExpandedNodeId((current) => (current === nodeId ? null : nodeId)),
+          onToggleExpanded: handleToggleNodeExpanded,
+          onToggleFocus: handleToggleNodeFocus,
           onToggleTodo: handleToggleTodo,
           onSubmitInteraction: handleSubmitInteraction,
           onRunAgent: (nodeId, message) => void runAgent(journey, nodeId, message),
           onOpenAgentOutput: setAgentOutputNodeId,
         },
-        draggable: true,
+        draggable: focusedNodeId !== node.id,
         selectable: true,
         style: { width: layout.width },
       };
@@ -1125,7 +1257,10 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   }, [
     agentRunNodeId,
     expandedNodeId,
+    focusedNodeId,
     handleSubmitInteraction,
+    handleToggleNodeExpanded,
+    handleToggleNodeFocus,
     handleToggleTodo,
     journey,
     layouts,
@@ -1276,6 +1411,10 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
               elementsSelectable
               proOptions={{ hideAttribution: false }}
             >
+              <JourneyViewportFocus
+                focusedNodeId={focusedNodeId}
+                revision={focusedNodeId ? journey.updatedAt : ""}
+              />
               <Background
                 variant={BackgroundVariant.Dots}
                 gap={24}
@@ -1296,7 +1435,11 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
                 }}
               />
               <Controls showInteractive={false} position="bottom-left" />
-              <JourneyCanvasControls onDirectionChange={handleDirectionChange} />
+              <JourneyCanvasControls
+                focusedNodeId={focusedNodeId}
+                onClearFocus={() => setFocusedNodeId(null)}
+                onDirectionChange={handleDirectionChange}
+              />
             </ReactFlow>
           </ReactFlowProvider>
         </div>
