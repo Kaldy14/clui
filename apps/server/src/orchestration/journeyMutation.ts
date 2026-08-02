@@ -13,6 +13,11 @@ export function applyJourneyMutation(
   );
 
   for (const node of mutation.nodes ?? []) {
+    if (node.status === "draft" || node.status === "ready") {
+      throw new Error(
+        `Agent-authored Journey node '${node.id}' cannot use status '${node.status}'. Start concrete work as running or record a real result/blocker.`,
+      );
+    }
     const existing = nodesById.get(node.id);
     nodesById.set(node.id, {
       ...node,

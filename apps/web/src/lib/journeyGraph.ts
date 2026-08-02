@@ -169,7 +169,7 @@ export function makeInitialJourney(
         type: "goal",
         status: "running",
         title: destination.trim(),
-        summary: "The agent is mapping the first useful frontier.",
+        summary: "The agent is starting concrete work.",
         detailMarkdown: "",
         todos: [],
         interaction: null,
@@ -178,7 +178,7 @@ export function makeInitialJourney(
             id: `activity-${now}`,
             kind: "system",
             summary: "Journey started",
-            detailMarkdown: "Clui asked the agent to define the initial graph.",
+            detailMarkdown: "Clui started the agent on the Journey destination.",
             createdAt: now,
           },
         ],
@@ -210,7 +210,16 @@ export function parseJourneyAgentResponse(text: string): JourneySnapshot {
   } catch (error) {
     throw new Error("The agent returned invalid journey JSON.", { cause: error });
   }
-  return Schema.decodeUnknownSync(JourneySnapshotSchema)(candidate);
+  const snapshot = Schema.decodeUnknownSync(JourneySnapshotSchema)(candidate);
+  const placeholderNodes = snapshot.nodes.filter(
+    (node) => node.status === "draft" || node.status === "ready",
+  );
+  if (placeholderNodes.length > 0) {
+    throw new Error(
+      `The agent returned speculative Journey nodes instead of starting real work: ${placeholderNodes.map((node) => node.id).join(", ")}.`,
+    );
+  }
+  return snapshot;
 }
 
 export function settleJourneyAgentSnapshot(
@@ -227,6 +236,29 @@ export function settleJourneyAgentSnapshot(
   };
 }
 
+function journeyPrerequisiteIsSatisfied(status: JourneyNode["status"]): boolean {
+  return status === "completed" || status === "superseded";
+}
+
+export function nextAutomaticJourneyNodeId(snapshot: JourneySnapshot): string | null {
+  if (snapshot.nodes.some((node) => node.status === "waitingForUser")) return null;
+
+  const nodesById = new Map(snapshot.nodes.map((node) => [node.id, node] as const));
+  const isRunnable = (node: JourneyNode): boolean => {
+    if (node.status !== "ready") return false;
+    return snapshot.edges
+      .filter((edge) => edge.target === node.id && edge.relation !== "relatesTo")
+      .every((edge) => {
+        const prerequisite = nodesById.get(edge.source);
+        return prerequisite !== undefined && journeyPrerequisiteIsSatisfied(prerequisite.status);
+      });
+  };
+
+  const activeNode = snapshot.activeNodeId ? nodesById.get(snapshot.activeNodeId) : undefined;
+  if (activeNode && isRunnable(activeNode)) return activeNode.id;
+  return snapshot.nodes.find(isRunnable)?.id ?? null;
+}
+
 export function buildJourneyAgentPrompt(input: {
   snapshot: JourneySnapshot;
   focusNodeId: string;
@@ -241,9 +273,13 @@ User input: ${input.userMessage || "Continue this node and advance the journey."
 
 Rules:
 - journey_get and journey_update are the live graph protocol and the source of truth when available.
-- Call journey_update immediately when you identify useful work so its node appears as running before you do that work.
+- Call journey_update immediately before concrete work so its node appears as running before you do that work.
 - Call journey_update again at every meaningful transition: new branch, result, blocker, question, proposal, implementation milestone, or completed task. Each call is shown in the UI immediately.
 - Never create a completed research, implementation, or review node retroactively. Create it as running first, do the concrete work, then update it with the real result.
+- Never create roadmap or placeholder nodes for work you may do later. A node exists only for work you are starting now, a result that already exists, or a concrete human/external blocker. Keep future ideas in the current node detail until you actually start them.
+- Agent-authored nodes must never use draft or ready. Start real agent work as running, record finished work as completed, and use waitingForUser only for a genuine human decision with an interaction.
+- Continue all non-HITL work autonomously in this harness turn. Do not stop to ask the user to press a generic Continue button. Pause only for waitingForUser, a real external blocker, failure/cancellation, or Journey completion.
+- Before moving to another concrete work node, complete, supersede, block, or fail the current node. Do not leave several ancestor nodes running.
 - The graph has no prescribed shape. Add, update, supersede, or complete nodes only when useful.
 - Preserve durable completed decisions and work unless the new information explicitly invalidates them.
 - Use dependencies to show what blocks what. Edge direction is prerequisite source -> dependent target.
@@ -251,7 +287,7 @@ Rules:
 - A task or todoGroup can contain multiple todos.
 - Do the concrete work represented by the focused node when possible: inspect, research, edit, test, or review the project as appropriate. Record only work you actually completed.
 - When the user must answer, set status to waitingForUser and include a multi-step interaction.
-- When more agent work is useful, leave the relevant node ready. Do not pretend work happened.
+- When more agent work is useful, start it now as running and continue. Do not leave it ready for a user click and do not pretend work happened.
 - Keep summaries concise; put detail in detailMarkdown.
 - Reuse existing IDs for updated nodes and use stable kebab-case IDs for new nodes.
 - Set activeNodeId to the next node that deserves attention, or null when none does.

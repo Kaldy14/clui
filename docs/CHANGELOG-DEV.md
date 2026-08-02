@@ -4,6 +4,27 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Remove speculative Journey nodes and generic continuation
+
+**Problem:** Journey agents could pre-create future `ready` proposal/task/research nodes that did not represent work in progress or an actual result. Expanded non-HITL nodes then showed a generic `Continue with agent` button, even though autonomous work should not require a user click and the action could appear to do nothing while another run was active.
+
+**Root cause:** The agent prompt explicitly instructed the harness to leave useful future work in `ready`, the live mutation schema allowed agents to author both `draft` and `ready` nodes, and the node renderer exposed the same manual continuation action for nearly every settled status. No runtime selected unfinished dependency-ready work after a harness turn ended.
+
+**Fix:** Journey agents are now instructed to create nodes only when concrete work starts, a real result exists, or human/external input is genuinely required, and to continue all non-HITL work within the active harness turn. Agent tool schemas no longer offer `draft` or `ready`, server mutation validation rejects those statuses, and fallback snapshots containing speculative ready/draft nodes fail validation. Added a dependency-aware automatic runner for legitimate internally-ready work, with user-queued prompts taking priority and any `waitingForUser` node pausing autonomy. Removed `Continue with agent`; only failed nodes expose the concrete `Retry failed node` recovery action. Updated the initial Journey copy and start prompt to begin real work instead of mapping a future frontier.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `apps/server/src/orchestration/journeyMutation.ts`
+- `apps/server/src/orchestration/journeyMutation.test.ts`
+- `apps/server/src/terminal/journeyMcpServer.ts`
+- `apps/server/src/terminal/journeyMcpServer.test.ts`
+- `apps/server/src/terminal/Layers/PiSessionManager.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Move Journey steering into a queued bottom composer
 
 **Problem:** The Journey prompt occupied most of the header, disappeared behind a disabled state while the agent worked, and gave no way to line up additional instructions for the next agent turn. Graph direction and fit controls also floated over the canvas instead of living in the persistent chrome.

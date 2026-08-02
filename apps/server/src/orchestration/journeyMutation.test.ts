@@ -93,7 +93,7 @@ describe("applyJourneyMutation", () => {
           {
             id: "research",
             type: "research",
-            status: "ready",
+            status: "running",
             title: "Research",
             summary: "",
             detailMarkdown: "",
@@ -131,5 +131,26 @@ describe("applyJourneyMutation", () => {
         updatedAt,
       ),
     ).toThrow("references missing node 'missing'");
+  });
+
+  it("rejects speculative draft and ready nodes from agents", () => {
+    for (const status of ["draft", "ready"] as const) {
+      expect(() =>
+        applyJourneyMutation(
+          initialJourney(),
+          {
+            nodes: [
+              {
+                ...initialJourney().nodes[0]!,
+                id: `placeholder-${status}`,
+                status,
+                title: "Future work",
+              },
+            ],
+          },
+          updatedAt,
+        ),
+      ).toThrow(`cannot use status '${status}'`);
+    }
   });
 });

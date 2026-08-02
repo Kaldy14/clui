@@ -72,6 +72,7 @@ import {
   journeyNodeZIndex,
   layoutJourneyNodes,
   makeInitialJourney,
+  nextAutomaticJourneyNodeId,
   parseJourneyAgentResponse,
   settleJourneyAgentSnapshot,
   withJourneyNode,
@@ -664,15 +665,20 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
             </section>
           )}
 
-          {node.status !== "waitingForUser" && node.status !== "running" && (
+          {node.status === "failed" && (
             <footer className="flex justify-end border-t border-border/50 pt-4">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => data.onRunAgent(node.id)}
+                onClick={() =>
+                  data.onRunAgent(
+                    node.id,
+                    `Retry the failed work in "${node.title}". Inspect the recorded failure first and either complete the work or record the concrete blocker.`,
+                  )
+                }
               >
-                <SparklesIcon className="size-3.5" /> Continue with agent
+                <RotateCcwIcon className="size-3.5" /> Retry failed node
               </Button>
             </footer>
           )}
@@ -1170,7 +1176,11 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   }, [failPendingRun, finishAgentRun, journeyHarness, threadId]);
 
   useEffect(() => {
-    const activeNode = journey?.nodes.find((node) => node.id === journey.activeNodeId);
+    const declaredActiveNode = journey?.nodes.find((node) => node.id === journey.activeNodeId);
+    const activeNode =
+      declaredActiveNode?.status === "running"
+        ? declaredActiveNode
+        : journey?.nodes.find((node) => node.status === "running");
     if (
       !journey ||
       !activeNode ||
@@ -1358,9 +1368,10 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
 
   useEffect(() => {
     const nextPrompt = journeyPromptQueue[0];
+    const automaticNodeId = journey ? nextAutomaticJourneyNodeId(journey) : null;
     if (
       !journey ||
-      !nextPrompt ||
+      (!nextPrompt && !automaticNodeId) ||
       queueLaunchRef.current ||
       pendingRunRef.current ||
       agentRunNodeId !== null ||
@@ -1369,19 +1380,28 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       return;
     }
 
-    const nodeId = journey.nodes.some((node) => node.id === nextPrompt.nodeId)
-      ? nextPrompt.nodeId
-      : (journey.activeNodeId ?? journey.nodes[0]?.id);
+    const nodeId = nextPrompt
+      ? journey.nodes.some((node) => node.id === nextPrompt.nodeId)
+        ? nextPrompt.nodeId
+        : (journey.activeNodeId ?? journey.nodes[0]?.id)
+      : automaticNodeId;
     if (!nodeId) {
-      removeJourneyPrompt(threadId, nextPrompt.id);
+      if (nextPrompt) removeJourneyPrompt(threadId, nextPrompt.id);
       return;
     }
 
-    queueLaunchRef.current = nextPrompt.id;
-    const launch = runAgent(journey, nodeId, nextPrompt.message);
+    const automaticNode = journey.nodes.find((node) => node.id === nodeId);
+    queueLaunchRef.current =
+      nextPrompt?.id ?? `automatic:${nodeId}:${automaticNode?.updatedAt ?? ""}`;
+    const launch = runAgent(
+      journey,
+      nodeId,
+      nextPrompt?.message ??
+        `Continue the concrete work in "${automaticNode?.title ?? nodeId}" autonomously. Do not create future placeholder nodes; perform the work now and record the real result.`,
+    );
     void launch
       .then((consumed) => {
-        if (consumed) removeJourneyPrompt(threadId, nextPrompt.id);
+        if (consumed && nextPrompt) removeJourneyPrompt(threadId, nextPrompt.id);
       })
       .finally(() => {
         queueLaunchRef.current = null;
@@ -1409,7 +1429,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       await runAgent(
         snapshot,
         "destination",
-        "Define the initial journey and its first useful frontier.",
+        "Start concrete work toward the destination now. Create only nodes for work you are actively starting, real results, or genuine human/external blockers; do not prebuild a roadmap of future placeholder nodes.",
       );
     } catch (error) {
       toastManager.add({
@@ -1463,9 +1483,8 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         ],
         updatedAt: now,
       }));
-      void persistJourney(updated).then(() =>
-        queueAgentPrompt(nodeId, `The user answered: ${JSON.stringify(answers)}`),
-      );
+      queueAgentPrompt(nodeId, `The user answered: ${JSON.stringify(answers)}`);
+      void persistJourney(updated);
     },
     [journey, persistJourney, queueAgentPrompt],
   );

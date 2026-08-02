@@ -427,10 +427,11 @@ export default function (pi) {
     pi.registerTool({
       name: "journey_update",
       label: "Update Journey",
-      description: "Immediately create, update, or remove Journey nodes and edges while work is happening. Call before concrete work to expose a running node, and again after the work to record its real result.",
+      description: "Immediately create, update, or remove Journey nodes and edges while real work is happening. Never create future placeholder nodes: start concrete work as running, then record its result or real blocker.",
       promptSnippet: "Update the visible Clui Journey graph while work progresses",
       promptGuidelines: [
         "Use journey_update before starting concrete work so the corresponding running node appears immediately, and call it again as soon as that work completes or becomes blocked.",
+        "Do not create draft or ready roadmap placeholders. Continue non-HITL work autonomously and pause only for a real user interaction or external blocker.",
       ],
       parameters: ${JSON.stringify(JOURNEY_UPDATE_INPUT_SCHEMA)},
       async execute(_toolCallId, params) {

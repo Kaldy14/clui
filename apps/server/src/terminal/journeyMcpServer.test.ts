@@ -11,6 +11,7 @@ import {
   CLUI_JOURNEY_TOOL_ENDPOINT_ENV,
   CLUI_JOURNEY_TOOL_THREAD_ID_ENV,
   CLUI_JOURNEY_TOOL_TOKEN_ENV,
+  JOURNEY_UPDATE_INPUT_SCHEMA,
 } from "./journeyMcpServer";
 
 describe("Journey MCP server", () => {
@@ -19,6 +20,14 @@ describe("Journey MCP server", () => {
   afterEach(async () => {
     if (tempDir) await rm(tempDir, { recursive: true, force: true });
     tempDir = null;
+  });
+
+  it("does not offer draft or ready statuses for agent-authored mutations", () => {
+    const schemaText = JSON.stringify(JOURNEY_UPDATE_INPUT_SCHEMA);
+    expect(schemaText).toContain('"running"');
+    expect(schemaText).toContain('"waitingForUser"');
+    expect(schemaText).not.toContain('"draft"');
+    expect(schemaText).not.toContain('"ready"');
   });
 
   it("negotiates MCP and lists the live Journey tools", async () => {

@@ -34,12 +34,14 @@
 ## Design principles
 
 - Semantic graph first: Agents create and update meaningful nodes and edges; layout coordinates are a presentation concern.
+- No speculative nodes: A node represents work that is starting now, a result that actually exists, or a concrete human/external blocker. Future roadmap items stay in the current node's detail until work begins; agents do not pre-populate `ready` proposals, tasks, research, or implementation placeholders.
 - Progressive disclosure: Collapsed nodes are overview labels, not summaries: show only type, status, a single-line title, and the expand/focus controls. Reveal summaries, forms, questionnaires, todos, artifacts, and activity only after expansion. Show each semantic fact once; do not pair a large type icon with a redundant type label.
 - One node, one surface: Expanded content continues the node's existing surface. Use spacing, typography, and quiet dividers for hierarchy instead of nesting panels or cards inside the node.
 - Expansion owns the foreground: An expanded node renders above every collapsed sibling, and a focused node renders above the expanded layer. Expanded content uses its intrinsic height; the graph canvas pans around it rather than adding an internal vertical scrollbar.
 - Reversible focus: Node focus is distinct from expansion. It enlarges the chosen expanded node and fits it prominently into the canvas without changing durable graph data; Escape, the node control, or Fit graph restores the overview.
 - Keep work observable in context: A running node exposes its live agent transcript without replacing or obscuring the graph on desktop; the output inspector keeps the originating node visible as context.
 - Steering is durable and asynchronous: The bottom composer accepts new prompts even while the agent is working. Prompts remain visible in FIFO order, can be removed before execution, survive thread switching, and automatically become the next agent turn when the harness is available.
+- Autonomy is the default: Agent-owned work continues without a user click. A Journey pauses only for an explicit human interaction, a real external blocker, failure, cancellation, or completion. Node actions name the concrete recovery/decision they perform; there is no generic `Continue with agent` action.
 - Graph progress is live state, not a final-report visualization: Agents create a running node before concrete research or implementation, mutate it at meaningful transitions, and record the real outcome when the work finishes. The final assistant message summarizes the run; it is not the primary graph transport.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
 - Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts. Pi and Codex must produce the same graph contract so changing the harness does not change how the Journey behaves.
@@ -81,6 +83,7 @@
 - Loading: Keep graph chrome visible with a centered lightweight spinner or skeleton nodes.
 - Agent output: Opening live output is non-destructive and preserves graph position. The inspector renders the selected harness's native live event stream, distinguishes a running stream from completed history, and can be closed without stopping the agent.
 - Steering composer: The resting control is a compact single-line prompt. Focus or click expands it into a multiline composer. Enter queues/sends and Shift+Enter adds a newline. Busy submissions are labelled `Queued`; each waiting item can be removed. Finishing a run automatically starts the oldest queued prompt.
+- Agent continuation: When no user prompt is queued, the oldest dependency-ready agent node starts automatically. `waitingForUser` nodes pause automatic continuation and render their explicit interaction. Failed nodes may expose a concrete retry action; completed, blocked, cancelled, superseded, and ordinary ready nodes do not show a generic continuation button.
 - Empty: Prompt for a destination and offer to create the first node.
 - Error: Preserve the last valid graph, identify the failed action/run, and provide retry or dismiss controls.
 - Success: Completed nodes remain visible with concise outcome summaries; journey completion is explicit, not inferred only from an empty frontier.
