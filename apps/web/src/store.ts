@@ -6,6 +6,7 @@ import {
   DEFAULT_PI_RENDER_MODE,
   type CodingHarness,
   type ClaudeCodeBackend,
+  type ThreadSurface,
   type ProviderKind,
   ProjectId,
   ThreadId,
@@ -345,6 +346,8 @@ function threadChanged(existing: Thread, incoming: Thread): boolean {
   if (existing.updatedAt !== incoming.updatedAt) return true;
   if (existing.title !== incoming.title) return true;
   if (existing.model !== incoming.model) return true;
+  if (existing.surface !== incoming.surface) return true;
+  if (existing.journey?.updatedAt !== incoming.journey?.updatedAt) return true;
   if (existing.harness !== incoming.harness) return true;
   if (existing.claudeCodeBackend !== incoming.claudeCodeBackend) return true;
   if (existing.piRenderMode !== incoming.piRenderMode) return true;
@@ -580,6 +583,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           }),
           thread.model,
         ),
+        surface: thread.surface ?? "terminal",
+        journey: thread.journey ?? null,
         harness: thread.harness ?? DEFAULT_CODING_HARNESS,
         claudeCodeBackend: thread.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
         piRenderMode: thread.piRenderMode ?? DEFAULT_PI_RENDER_MODE,
@@ -783,6 +788,7 @@ export function addOptimisticThread(
     projectId: Project["id"];
     title: string;
     model: string;
+    surface?: ThreadSurface;
     harness: CodingHarness;
     claudeCodeBackend: ClaudeCodeBackend;
     branch: string | null;
@@ -797,6 +803,8 @@ export function addOptimisticThread(
     projectId: input.projectId,
     title: input.title,
     model: input.model,
+    surface: input.surface ?? "terminal",
+    journey: null,
     harness: input.harness,
     claudeCodeBackend: input.claudeCodeBackend,
     piRenderMode: DEFAULT_PI_RENDER_MODE,
@@ -1111,6 +1119,7 @@ interface AppStore extends AppState {
     projectId: Project["id"];
     title: string;
     model: string;
+    surface?: ThreadSurface;
     harness: CodingHarness;
     claudeCodeBackend: ClaudeCodeBackend;
     branch: string | null;

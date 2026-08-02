@@ -19,7 +19,9 @@ import type {
   AgentActivityStatus,
   ClaudeCodeBackend,
   CodingHarness,
+  JourneySnapshot,
   PiRenderMode,
+  ThreadSurface,
 } from "@clui/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -112,6 +114,8 @@ export interface Thread {
   projectId: ProjectId;
   title: string;
   model: string;
+  surface: ThreadSurface;
+  journey: JourneySnapshot | null;
   harness: CodingHarness;
   claudeCodeBackend: ClaudeCodeBackend;
   piRenderMode: PiRenderMode;

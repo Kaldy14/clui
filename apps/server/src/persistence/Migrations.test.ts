@@ -69,6 +69,14 @@ layer("Migrations", (it) => {
         columns.some((column) => column.name === "claude_code_backend"),
         true,
       );
+      assert.equal(
+        columns.some((column) => column.name === "surface"),
+        true,
+      );
+      assert.equal(
+        columns.some((column) => column.name === "journey_json"),
+        true,
+      );
 
       const threads = yield* sql<{
         readonly scrollback_snapshot: string | null;
@@ -95,6 +103,11 @@ layer("Migrations", (it) => {
         SELECT name FROM effect_sql_migrations WHERE migration_id = 30
       `;
       assert.equal(proxyMigrationRows[0]?.name, "ProjectionThreadsClaudeCodeBackend");
+
+      const journeyMigrationRows = yield* sql<{ readonly name: string }>`
+        SELECT name FROM effect_sql_migrations WHERE migration_id = 33
+      `;
+      assert.equal(journeyMigrationRows[0]?.name, "ProjectionThreadsJourney");
     }),
   );
 });

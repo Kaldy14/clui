@@ -93,6 +93,82 @@ describe("decider project scripts", () => {
     expect(event.type).toBe("thread.created");
     expect(event.payload).toMatchObject({
       claudeCodeBackend: DEFAULT_CLAUDE_CODE_BACKEND,
+      surface: "terminal",
+    });
+  });
+
+  it("accepts journey updates only for journey threads", async () => {
+    const now = new Date().toISOString();
+    const threadId = ThreadId.makeUnsafe("thread-journey");
+    const journey = {
+      version: 1 as const,
+      destination: "Ship the MVP",
+      layoutDirection: "TB" as const,
+      nodes: [],
+      edges: [],
+      activeNodeId: null,
+      updatedAt: now,
+    };
+    const makeReadModel = async (surface: "terminal" | "journey") =>
+      Effect.runPromise(
+        projectEvent(createEmptyReadModel(now), {
+          sequence: 1,
+          eventId: asEventId(`evt-${surface}-thread`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          type: "thread.created",
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe(`cmd-${surface}-thread`),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: asProjectId("project-journey"),
+            title: "Journey",
+            model: "gpt-5.6-sol",
+            surface,
+            harness: "claudeCode",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      );
+
+    const terminalResult = await Effect.runPromiseExit(
+      decideOrchestrationCommand({
+        readModel: await makeReadModel("terminal"),
+        command: {
+          type: "thread.journey.update",
+          commandId: CommandId.makeUnsafe("cmd-update-terminal-journey"),
+          threadId,
+          journey,
+          createdAt: now,
+        },
+      }),
+    );
+    expect(terminalResult._tag).toBe("Failure");
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        readModel: await makeReadModel("journey"),
+        command: {
+          type: "thread.journey.update",
+          commandId: CommandId.makeUnsafe("cmd-update-journey"),
+          threadId,
+          journey,
+          createdAt: now,
+        },
+      }),
+    );
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event).toMatchObject({
+      type: "thread.journey-updated",
+      payload: { threadId, journey, updatedAt: now },
     });
   });
 

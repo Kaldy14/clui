@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   DEFAULT_CLAUDE_CODE_BACKEND,
+  DEFAULT_THREAD_SURFACE,
   type ChatAttachment,
   type OrchestrationEvent,
 } from "@clui/contracts";
@@ -426,6 +427,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             projectId: event.payload.projectId,
             title: event.payload.title,
             model: event.payload.model,
+            surface: event.payload.surface ?? DEFAULT_THREAD_SURFACE,
+            journey: null,
             harness: event.payload.harness,
             claudeCodeBackend: event.payload.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
             piRenderMode: event.payload.piRenderMode ?? "terminal",
@@ -584,6 +587,21 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             interactionMode: event.payload.interactionMode,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.journey-updated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            journey: event.payload.journey,
             updatedAt: event.payload.updatedAt,
           });
           return;

@@ -27,6 +27,8 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
     piRenderMode: "terminal",
     runtimeMode: "full-access",
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    surface: "terminal",
+    journey: null,
     branch: null,
     worktreePath: null,
     claudeSessionId: null,

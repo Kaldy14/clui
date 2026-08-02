@@ -1,8 +1,9 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Option } from "effect";
+import { JourneySnapshot } from "@clui/contracts";
+import { Effect, Layer, Option, Schema, Struct } from "effect";
 
-import { toPersistenceSqlError } from "../Errors.ts";
+import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionThreadInput,
   GetProjectionThreadInput,
@@ -13,11 +14,24 @@ import {
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
 
+const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    journey: Schema.NullOr(Schema.fromJsonString(JourneySnapshot)),
+  }),
+);
+
+function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+  return (cause: unknown) =>
+    Schema.isSchemaError(cause)
+      ? toPersistenceDecodeError(decodeOperation)(cause)
+      : toPersistenceSqlError(sqlOperation)(cause);
+}
+
 const makeProjectionThreadRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upsertProjectionThreadRow = SqlSchema.void({
-    Request: ProjectionThread,
+    Request: ProjectionThreadDbRowSchema,
     execute: (row) =>
       sql`
         INSERT INTO projection_threads (
@@ -25,6 +39,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           project_id,
           title,
           model,
+          surface,
+          journey_json,
           harness,
           claude_code_backend,
           pi_render_mode,
@@ -54,6 +70,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.projectId},
           ${row.title},
           ${row.model},
+          ${row.surface},
+          ${row.journey},
           ${row.harness},
           ${row.claudeCodeBackend},
           ${row.piRenderMode},
@@ -83,6 +101,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           project_id = excluded.project_id,
           title = excluded.title,
           model = excluded.model,
+          surface = excluded.surface,
+          journey_json = excluded.journey_json,
           harness = excluded.harness,
           claude_code_backend = excluded.claude_code_backend,
           pi_render_mode = excluded.pi_render_mode,
@@ -111,7 +131,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const getProjectionThreadRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadInput,
-    Result: ProjectionThread,
+    Result: ProjectionThreadDbRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
@@ -119,6 +139,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           model,
+          surface,
+          journey_json AS "journey",
           harness,
           claude_code_backend AS "claudeCodeBackend",
           pi_render_mode AS "piRenderMode",
@@ -161,7 +183,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const listProjectionThreadRows = SqlSchema.findAll({
     Request: ListProjectionThreadsByProjectInput,
-    Result: ProjectionThread,
+    Result: ProjectionThreadDbRowSchema,
     execute: ({ projectId }) =>
       sql`
         SELECT
@@ -169,6 +191,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           model,
+          surface,
+          journey_json AS "journey",
           harness,
           claude_code_backend AS "claudeCodeBackend",
           pi_render_mode AS "piRenderMode",
@@ -209,12 +233,22 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const upsert: ProjectionThreadRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadRow(row).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.upsert:query")),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadRepository.upsert:query",
+          "ProjectionThreadRepository.upsert:encode",
+        ),
+      ),
     );
 
   const getById: ProjectionThreadRepositoryShape["getById"] = (input) =>
     getProjectionThreadRow(input).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadRepository.getById:query",
+          "ProjectionThreadRepository.getById:decode",
+        ),
+      ),
     );
 
   const getWorktreePathById: ProjectionThreadRepositoryShape["getWorktreePathById"] = (input) =>
@@ -229,7 +263,12 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
     listProjectionThreadRows(input).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listByProjectId:query")),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadRepository.listByProjectId:query",
+          "ProjectionThreadRepository.listByProjectId:decode",
+        ),
+      ),
     );
 
   const deleteById: ProjectionThreadRepositoryShape["deleteById"] = (input) =>

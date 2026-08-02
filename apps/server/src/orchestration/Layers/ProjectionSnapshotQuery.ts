@@ -1,6 +1,7 @@
 import {
   ChatAttachment,
   IsoDateTime,
+  JourneySnapshot,
   MessageId,
   NonNegativeInt,
   OrchestrationCheckpointFile,
@@ -59,6 +60,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadSnapshotDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
+    journey: Schema.NullOr(Schema.fromJsonString(JourneySnapshot)),
     scrollbackSnapshot: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
   }),
 );
@@ -173,6 +175,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           model,
+          surface,
+          journey_json AS "journey",
           harness,
           claude_code_backend AS "claudeCodeBackend",
           pi_render_mode AS "piRenderMode",
@@ -578,6 +582,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             projectId: row.projectId,
             title: row.title,
             model: row.model,
+            surface: row.surface,
+            journey: row.journey,
             harness: row.harness,
             claudeCodeBackend: row.claudeCodeBackend,
             piRenderMode: row.piRenderMode,

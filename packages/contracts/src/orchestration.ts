@@ -1,5 +1,6 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
+import { JourneySnapshot } from "./journey";
 import { AgentActivityStatus, ClaudeHookStatus } from "./claude-terminal";
 import {
   ApprovalRequestId,
@@ -65,6 +66,9 @@ export const ProviderSandboxMode = Schema.Literals([
 export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const DEFAULT_CODING_HARNESS: CodingHarness = "claudeCode";
+export const ThreadSurface = Schema.Literals(["terminal", "journey"]);
+export type ThreadSurface = typeof ThreadSurface.Type;
+export const DEFAULT_THREAD_SURFACE: ThreadSurface = "terminal";
 export const PiRenderMode = Schema.Literals(["terminal", "html"] as const);
 export type PiRenderMode = typeof PiRenderMode.Type;
 export const DEFAULT_PI_RENDER_MODE: PiRenderMode = "terminal";
@@ -334,6 +338,8 @@ export const OrchestrationThread = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
+  surface: ThreadSurface.pipe(Schema.withDecodingDefault(() => DEFAULT_THREAD_SURFACE)),
+  journey: Schema.NullOr(JourneySnapshot).pipe(Schema.withDecodingDefault(() => null)),
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
   claudeCodeBackend: ClaudeCodeBackend.pipe(
     Schema.withDecodingDefault(() => DEFAULT_CLAUDE_CODE_BACKEND),
@@ -421,6 +427,7 @@ const ThreadCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
+  surface: ThreadSurface.pipe(Schema.withDecodingDefault(() => DEFAULT_THREAD_SURFACE)),
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
   claudeCodeBackend: Schema.optional(ClaudeCodeBackend),
   piRenderMode: Schema.optional(PiRenderMode),
@@ -495,6 +502,14 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   interactionMode: ProviderInteractionMode,
+  createdAt: IsoDateTime,
+});
+
+const ThreadJourneyUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.journey.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  journey: JourneySnapshot,
   createdAt: IsoDateTime,
 });
 
@@ -594,6 +609,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadJourneyUpdateCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -601,8 +617,12 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
 ]);
-export type DispatchableClientOrchestrationCommand =
-  typeof DispatchableClientOrchestrationCommand.Type;
+type WithOptionalThreadCreateSurface<T> = T extends { readonly type: "thread.create" }
+  ? Omit<T, "surface"> & { readonly surface?: ThreadSurface }
+  : T;
+export type DispatchableClientOrchestrationCommand = WithOptionalThreadCreateSurface<
+  typeof DispatchableClientOrchestrationCommand.Type
+>;
 
 export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
@@ -617,6 +637,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadJourneyUpdateCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -624,7 +645,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
 ]);
-export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
+export type ClientOrchestrationCommand = WithOptionalThreadCreateSurface<
+  typeof ClientOrchestrationCommand.Type
+>;
 
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
@@ -732,7 +755,9 @@ export const OrchestrationCommand = Schema.Union([
   DispatchableClientOrchestrationCommand,
   InternalOrchestrationCommand,
 ]);
-export type OrchestrationCommand = typeof OrchestrationCommand.Type;
+export type OrchestrationCommand = WithOptionalThreadCreateSurface<
+  typeof OrchestrationCommand.Type
+>;
 
 export const OrchestrationEventType = Schema.Literals([
   "project.created",
@@ -747,6 +772,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
+  "thread.journey-updated",
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
@@ -800,6 +826,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
+  surface: ThreadSurface.pipe(Schema.withDecodingDefault(() => DEFAULT_THREAD_SURFACE)),
   harness: CodingHarness.pipe(Schema.withDecodingDefault(() => DEFAULT_CODING_HARNESS)),
   claudeCodeBackend: Schema.optional(ClaudeCodeBackend),
   piRenderMode: Schema.optional(PiRenderMode),
@@ -871,6 +898,13 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   ),
   updatedAt: IsoDateTime,
 });
+
+export const ThreadJourneyUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  journey: JourneySnapshot,
+  updatedAt: IsoDateTime,
+});
+export type ThreadJourneyUpdatedPayload = typeof ThreadJourneyUpdatedPayload.Type;
 
 export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1066,6 +1100,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.journey-updated"),
+    payload: ThreadJourneyUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
   }),
@@ -1135,7 +1174,15 @@ export const OrchestrationEvent = Schema.Union([
     payload: ThreadTerminalStatusChangedPayload,
   }),
 ]);
-export type OrchestrationEvent = typeof OrchestrationEvent.Type;
+type WithOptionalThreadCreatedSurface<T> = T extends {
+  readonly type: "thread.created";
+  readonly payload: infer Payload extends { readonly surface: ThreadSurface };
+}
+  ? Omit<T, "payload"> & {
+      readonly payload: Omit<Payload, "surface"> & { readonly surface?: ThreadSurface };
+    }
+  : T;
+export type OrchestrationEvent = WithOptionalThreadCreatedSurface<typeof OrchestrationEvent.Type>;
 
 export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
 export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;

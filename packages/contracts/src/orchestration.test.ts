@@ -205,6 +205,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
     });
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.surface, "terminal");
   }),
 );
 
@@ -292,6 +293,8 @@ it.effect("decodes OrchestrationThread with missing claudeSessionId to null", ()
     const parsed = yield* decodeOrchestrationThread(baseThread);
     assert.strictEqual(parsed.claudeSessionId, null);
     assert.strictEqual(parsed.claudeCodeBackend, DEFAULT_CLAUDE_CODE_BACKEND);
+    assert.strictEqual(parsed.surface, "terminal");
+    assert.strictEqual(parsed.journey, null);
   }),
 );
 

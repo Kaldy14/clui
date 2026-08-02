@@ -131,6 +131,8 @@ describe("orchestration projector", () => {
         projectId: "project-1",
         title: "demo",
         model: "gpt-5-codex",
+        surface: "terminal",
+        journey: null,
         claudeCodeBackend: "anthropic",
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -192,6 +194,62 @@ describe("orchestration projector", () => {
         ),
       ),
     ).rejects.toBeDefined();
+  });
+
+  it("applies journey snapshots to journey threads", async () => {
+    const now = "2026-08-02T10:00:00.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-journey",
+          occurredAt: now,
+          commandId: "cmd-create-journey",
+          payload: {
+            threadId: "thread-journey",
+            projectId: "project-1",
+            title: "Journey",
+            model: "gpt-5.6-sol",
+            surface: "journey",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    const journey = {
+      version: 1,
+      destination: "Ship the MVP",
+      layoutDirection: "TB",
+      nodes: [],
+      edges: [],
+      activeNodeId: null,
+      updatedAt: now,
+    } as const;
+
+    const next = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.journey-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-journey",
+          occurredAt: now,
+          commandId: "cmd-update-journey",
+          payload: { threadId: "thread-journey", journey, updatedAt: now },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.journey).toEqual(journey);
   });
 
   it("keeps projector forward-compatible for unhandled event types", async () => {

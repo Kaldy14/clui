@@ -18,6 +18,7 @@ const DiffWorkerPoolProvider = lazy(() =>
     default: module.DiffWorkerPoolProvider,
   })),
 );
+const JourneyGraphView = lazy(() => import("../components/JourneyGraphView"));
 
 const newTerminalId = () => crypto.randomUUID().slice(0, 8);
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
@@ -167,6 +168,9 @@ function ChatThreadRouteView() {
   const routeThreadExists = useStore((store) =>
     store.threads.some((thread) => thread.id === threadId),
   );
+  const threadSurface = useStore(
+    (store) => store.threads.find((thread) => thread.id === threadId)?.surface ?? "terminal",
+  );
   // Subscribe to completion-related state so the badge-clearing effect below
   // re-fires when a thread completes while we're already viewing it.
   const hookStatus = useStore(
@@ -230,6 +234,22 @@ function ChatThreadRouteView() {
 
   if (!threadsHydrated || !routeThreadExists) {
     return null;
+  }
+
+  if (threadSurface === "journey") {
+    return (
+      <SidebarInset className="h-full min-h-0 overflow-hidden bg-background text-foreground">
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              Loading journey…
+            </div>
+          }
+        >
+          <JourneyGraphView threadId={threadId} />
+        </Suspense>
+      </SidebarInset>
+    );
   }
 
   if (!shouldUseDiffSheet) {

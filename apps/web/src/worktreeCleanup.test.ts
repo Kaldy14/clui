@@ -10,6 +10,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
     model: "gpt-5.3-codex",
+    surface: "terminal",
+    journey: null,
     harness: "claudeCode",
     claudeCodeBackend: "anthropic",
     piRenderMode: "terminal",

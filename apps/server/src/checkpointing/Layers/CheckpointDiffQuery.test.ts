@@ -51,6 +51,8 @@ function makeSnapshot(input: {
         projectId: input.projectId,
         title: "Thread",
         model: "gpt-5-codex",
+        surface: "terminal",
+        journey: null,
         harness: "claudeCode",
         claudeCodeBackend: "anthropic",
         piRenderMode: "terminal",

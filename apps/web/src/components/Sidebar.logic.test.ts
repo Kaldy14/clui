@@ -34,6 +34,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     piRenderMode: "terminal",
     runtimeMode: "full-access",
     interactionMode: "default",
+    surface: "terminal",
+    journey: null,
     session: null,
     messages: [],
     proposedPlans: [],
@@ -224,6 +226,44 @@ describe("createThreadAndNavigate", () => {
 
     expect(addOptimisticThread).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("creates journey threads as a distinct surface", async () => {
+    const api = {
+      orchestration: {
+        dispatchCommand: vi.fn(async (): Promise<{ sequence: number }> => ({ sequence: 1 })),
+      },
+    };
+    const addOptimisticThread = vi.fn();
+    const navigate = vi.fn(async () => undefined);
+
+    await createThreadAndNavigate({
+      api,
+      navigate,
+      addOptimisticThread,
+      commandId: CommandId.makeUnsafe("cmd-journey-create"),
+      threadId: ThreadId.makeUnsafe("journey-1"),
+      projectId: ProjectId.makeUnsafe("project-1"),
+      model: "gpt-5.6-sol",
+      surface: "journey",
+      harness: "pi",
+      createdAt: "2026-08-02T10:00:00.000Z",
+      branch: null,
+      worktreePath: null,
+    });
+
+    expect(api.orchestration.dispatchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "thread.create",
+        title: "New journey",
+        surface: "journey",
+        harness: "pi",
+      }),
+    );
+    expect(addOptimisticThread).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "New journey", surface: "journey", harness: "pi" }),
+    );
+    expect(navigate).toHaveBeenCalledWith({ to: "/$threadId", params: { threadId: "journey-1" } });
   });
 });
 

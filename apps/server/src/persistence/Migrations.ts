@@ -44,6 +44,7 @@ import Migration0029 from "./Migrations/029_ProjectionThreadsCollisionRepair.ts"
 import Migration0030 from "./Migrations/030_ProjectionThreadsClaudeCodeBackend.ts";
 import Migration0031 from "./Migrations/031_ProjectionThreadsSettled.ts";
 import Migration0032 from "./Migrations/032_ProjectionThreadsSnoozed.ts";
+import Migration0033 from "./Migrations/033_ProjectionThreadsJourney.ts";
 import { Effect } from "effect";
 
 /**
@@ -89,6 +90,7 @@ const loader = Migrator.fromRecord({
   "30_ProjectionThreadsClaudeCodeBackend": Migration0030,
   "31_ProjectionThreadsSettled": Migration0031,
   "32_ProjectionThreadsSnoozed": Migration0032,
+  "33_ProjectionThreadsJourney": Migration0033,
 });
 
 /**

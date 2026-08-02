@@ -1387,6 +1387,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           projectId: bootstrapProjectId,
           title: "New thread",
           model: bootstrapProjectDefaultModel,
+          surface: "terminal",
           harness: DEFAULT_CODING_HARNESS,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",

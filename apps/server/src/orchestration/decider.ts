@@ -2,6 +2,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   DEFAULT_CLAUDE_CODE_BACKEND,
+  DEFAULT_THREAD_SURFACE,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -259,6 +260,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           model: command.model,
+          surface: command.surface ?? DEFAULT_THREAD_SURFACE,
           harness: command.harness,
           claudeCodeBackend: command.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
           piRenderMode: command.piRenderMode ?? "terminal",
@@ -551,6 +553,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           interactionMode: command.interactionMode,
           updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.journey.update": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.surface !== "journey") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Journey snapshots can only be updated on journey threads.",
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.journey-updated",
+        payload: {
+          threadId: command.threadId,
+          journey: command.journey,
+          updatedAt: command.createdAt,
         },
       };
     }

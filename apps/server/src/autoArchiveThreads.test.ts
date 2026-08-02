@@ -24,6 +24,8 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
     projectId,
     title: "Thread title",
     model: "claude-opus-4-6",
+    surface: "terminal",
+    journey: null,
     harness: DEFAULT_CODING_HARNESS,
     claudeCodeBackend: "anthropic",
     piRenderMode: "terminal",

@@ -4,6 +4,43 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Add free-form agent Journeys
+
+**Problem:** Clui threads only offered a terminal surface, making long-running discovery, decision, and implementation work difficult to understand or steer as it branched into questions, proposals, tasks, and user checkpoints.
+
+**Root cause:** The thread contract, projection, persistence model, route, and sidebar all assumed every thread was a terminal-backed coding session. There was no durable semantic graph model or UI surface capable of showing agent work and structured user interactions together.
+
+**Fix:** Added Journey as a distinct thread surface with a versioned, runtime-validated graph snapshot and event-projected SQLite persistence. Journey threads render an `@xyflow/react` graph with semantic node colors, status treatments, top-to-bottom or left-to-right layout, inline node expansion, todos, activity, and multi-step questionnaires. A hidden Pi HTML-mode session drives the graph: focused nodes can perform real project work, return a complete validated graph update, wait for user answers, and continue from those answers. Added a dedicated sidebar creation action, backward-compatible thread defaults, server invariants, layout/response parsing coverage, a production design contract, and full regression validation.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `packages/contracts/src/journey.ts`
+- `packages/contracts/src/index.ts`
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/orchestration.test.ts`
+- `apps/server/src/orchestration/`
+- `apps/server/src/persistence/`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/autoArchiveThreads.test.ts`
+- `apps/server/src/checkpointing/Layers/CheckpointDiffQuery.test.ts`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+- `apps/web/src/routes/_chat.$threadId.tsx`
+- `apps/web/src/store.ts`
+- `apps/web/src/store.test.ts`
+- `apps/web/src/types.ts`
+- `apps/web/src/index.css`
+- `apps/web/package.json`
+- `bun.lock`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-28 — Bound Clui CPU, memory, and idle energy usage
 
 **Problem:** A live Clui session accumulated blocked Git children, polled Git and GitHub state for

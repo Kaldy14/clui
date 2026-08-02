@@ -1,6 +1,7 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@clui/contracts";
 import {
   DEFAULT_CLAUDE_CODE_BACKEND,
+  DEFAULT_THREAD_SURFACE,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -18,6 +19,7 @@ import {
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
+  ThreadJourneyUpdatedPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -263,6 +265,8 @@ export function projectEvent(
             projectId: payload.projectId,
             title: payload.title,
             model: payload.model,
+            surface: payload.surface ?? DEFAULT_THREAD_SURFACE,
+            journey: null,
             harness: payload.harness,
             claudeCodeBackend: payload.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND,
             piRenderMode: payload.piRenderMode ?? "terminal",
@@ -415,6 +419,17 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             interactionMode: payload.interactionMode,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.journey-updated":
+      return decodeForEvent(ThreadJourneyUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            journey: payload.journey,
             updatedAt: payload.updatedAt,
           }),
         })),

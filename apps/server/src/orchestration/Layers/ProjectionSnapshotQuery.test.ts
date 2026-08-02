@@ -237,6 +237,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           projectId: asProjectId("project-1"),
           title: "Thread 1",
           model: "gpt-5-codex",
+          surface: "terminal",
+          journey: null,
           harness: "claudeCode",
           claudeCodeBackend: "anthropic",
           piRenderMode: "terminal",
@@ -348,11 +350,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`
         INSERT INTO projection_threads (
           thread_id, project_id, title, model, branch, worktree_path,
-          claude_session_id, terminal_status,
+          claude_session_id, terminal_status, surface, journey_json,
           latest_turn_id, created_at, updated_at, deleted_at
         ) VALUES (
           'thread-2', 'project-2', 'Thread 2', 'test-model', NULL, NULL,
-          'sess-abc-123', 'active',
+          'sess-abc-123', 'active', 'journey',
+          '{"version":1,"destination":"Ship MVP","layoutDirection":"TB","nodes":[],"edges":[],"activeNodeId":null,"updatedAt":"2026-02-24T00:00:03.000Z"}',
           NULL,
           '2026-02-24T00:00:02.000Z', '2026-02-24T00:00:03.000Z', NULL
         )
@@ -371,6 +374,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const thread = snapshot.threads[0]!;
       assert.equal(thread.claudeSessionId, "sess-abc-123");
       assert.equal(thread.terminalStatus, "active");
+      assert.equal(thread.surface, "journey");
+      assert.deepEqual(thread.journey, {
+        version: 1,
+        destination: "Ship MVP",
+        layoutDirection: "TB",
+        nodes: [],
+        edges: [],
+        activeNodeId: null,
+        updatedAt: "2026-02-24T00:00:03.000Z",
+      });
     }),
   );
 });

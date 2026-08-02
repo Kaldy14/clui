@@ -3,6 +3,7 @@ import {
   DEFAULT_CLAUDE_CODE_PROXY_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   type ProjectId,
+  type ThreadSurface,
   type ThreadId,
 } from "@clui/contracts";
 import { useQuery } from "@tanstack/react-query";
@@ -22,6 +23,7 @@ export interface NewThreadOptions {
   readonly worktreePath?: string | null;
   readonly replace?: boolean;
   readonly reuseExistingDraft?: boolean;
+  readonly surface?: ThreadSurface;
 }
 
 export function useNewThreadHandler() {
@@ -54,7 +56,8 @@ export function useNewThreadHandler() {
       const createdAt = new Date().toISOString();
       const branch = options?.branch ?? null;
       const worktreePath = options?.worktreePath ?? null;
-      const harness = appSettings.defaultCodingHarness;
+      const surface = options?.surface ?? "terminal";
+      const harness = surface === "journey" ? "pi" : appSettings.defaultCodingHarness;
       const claudeCodeBackend =
         serverConfig?.settings.defaultClaudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND;
       const project = useStore.getState().projects.find((entry) => entry.id === projectId);
@@ -74,6 +77,7 @@ export function useNewThreadHandler() {
         threadId,
         projectId,
         model,
+        surface,
         harness,
         claudeCodeBackend,
         createdAt,

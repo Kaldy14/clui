@@ -16,6 +16,7 @@ import {
   GitBranchIcon,
   GitPullRequestIcon,
   GripVerticalIcon,
+  NetworkIcon,
   PinIcon,
   PlusIcon,
   RocketIcon,
@@ -778,6 +779,16 @@ function SidebarThreadRowBody({
     <>
       <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
         <SidebarThreadStatusLabel threadStatus={threadStatus} />
+        {thread.surface === "journey" && (
+          <span
+            role="img"
+            aria-label="Journey"
+            title="Journey"
+            className="inline-flex items-center justify-center text-violet-600 dark:text-violet-300/90"
+          >
+            <NetworkIcon className="size-3" />
+          </span>
+        )}
         {terminalStatus && (
           <span
             role="img"
@@ -3815,7 +3826,7 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                           />
                                         }
                                         showOnHover={!hasRunning}
-                                        className={`top-1 right-7 size-5 rounded-md p-0 hover:bg-secondary hover:text-foreground ${
+                                        className={`top-1 right-13 size-5 rounded-md p-0 hover:bg-secondary hover:text-foreground ${
                                           hasRunning
                                             ? "text-teal-600 dark:text-teal-300/90"
                                             : isOpen
@@ -3842,6 +3853,30 @@ export default function Sidebar({ onSearchClick }: { onSearchClick?: () => void 
                                 </Tooltip>
                               );
                             })()}
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <SidebarMenuAction
+                                    render={
+                                      <button
+                                        type="button"
+                                        aria-label={`Create new journey in ${project.name}`}
+                                      />
+                                    }
+                                    showOnHover
+                                    className="top-1 right-7 size-5 rounded-md p-0 text-violet-600 hover:bg-secondary hover:text-violet-700 dark:text-violet-300/85 dark:hover:text-violet-200"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      void handleNewThread(project.id, { surface: "journey" });
+                                    }}
+                                  >
+                                    <NetworkIcon className="size-3.5" />
+                                  </SidebarMenuAction>
+                                }
+                              />
+                              <TooltipPopup side="top">New journey</TooltipPopup>
+                            </Tooltip>
                             <Tooltip>
                               <TooltipTrigger
                                 render={

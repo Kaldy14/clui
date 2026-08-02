@@ -5,6 +5,7 @@ import {
   type CommandId,
   type NativeApi,
   type ProjectId,
+  type ThreadSurface,
   type ThreadId,
 } from "@clui/contracts";
 
@@ -216,6 +217,7 @@ export async function createThreadAndNavigate(input: {
     projectId: ProjectId;
     title: string;
     model: string;
+    surface: ThreadSurface;
     harness: CodingHarness;
     claudeCodeBackend: ClaudeCodeBackend;
     branch: string | null;
@@ -226,6 +228,7 @@ export async function createThreadAndNavigate(input: {
   threadId: ThreadId;
   projectId: ProjectId;
   model: string;
+  surface?: ThreadSurface;
   harness: CodingHarness;
   claudeCodeBackend?: ClaudeCodeBackend;
   createdAt: string;
@@ -236,14 +239,17 @@ export async function createThreadAndNavigate(input: {
   const branch = input.branch ?? null;
   const worktreePath = input.worktreePath ?? null;
   const claudeCodeBackend = input.claudeCodeBackend ?? DEFAULT_CLAUDE_CODE_BACKEND;
+  const surface = input.surface ?? "terminal";
+  const title = surface === "journey" ? "New journey" : "New thread";
 
   await input.api.orchestration.dispatchCommand({
     type: "thread.create",
     commandId: input.commandId,
     threadId: input.threadId,
     projectId: input.projectId,
-    title: "New thread",
+    title,
     model: input.model,
+    surface,
     harness: input.harness,
     claudeCodeBackend,
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -259,8 +265,9 @@ export async function createThreadAndNavigate(input: {
   input.addOptimisticThread({
     id: input.threadId,
     projectId: input.projectId,
-    title: "New thread",
+    title,
     model: input.model,
+    surface,
     harness: input.harness,
     claudeCodeBackend,
     branch,
