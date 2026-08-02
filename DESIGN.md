@@ -42,7 +42,7 @@
 - Graph progress is live state, not a final-report visualization: Agents create a running node before concrete research or implementation, mutate it at meaningful transitions, and record the real outcome when the work finishes. The final assistant message summarizes the run; it is not the primary graph transport.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
 - Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts. Pi and Codex must produce the same graph contract so changing the harness does not change how the Journey behaves.
-- Preserve user orientation: Layout changes are deliberate, animation is restrained, and expanded/selected state remains stable across graph updates.
+- Preserve user orientation: Layout changes are deliberate, animation is restrained, and expanded/selected state remains stable across graph updates. Layer spacing follows rendered node dimensions plus a compact edge gutter; speculative height estimates must not leave large empty bands in the graph.
 - Tradeoffs: Prefer clear durable state and predictable layout over maximal autonomous agent freedom or visually dense live logs.
 
 ## Visual language

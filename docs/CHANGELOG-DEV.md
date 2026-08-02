@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Keep Journey graph layers close together
+
+**Problem:** Expanding a short Journey node could leave several hundred pixels of empty canvas before the next graph layer.
+
+**Root cause:** The layout reserved a fixed 680px expanded-node height regardless of the node's rendered content height, then added another layer gap on top.
+
+**Fix:** Journey nodes now report their live height through `ResizeObserver`, and the layout uses that measurement for both top-to-bottom and left-to-right packing. Reduced the fallback expanded/focused estimates and tightened layer and sibling gutters, while retaining content-aware separation that prevents overlaps for tall forms and activity sections.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+
 ## 2026-08-02 — Increase Journey graph overview density
 
 **Problem:** Collapsed Journey nodes still consumed too much canvas space and displayed summary and todo-progress content that belongs in the expanded view.

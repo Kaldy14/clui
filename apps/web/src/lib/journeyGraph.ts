@@ -10,10 +10,10 @@ export const JOURNEY_NODE_WIDTH = 280;
 export const JOURNEY_NODE_EXPANDED_WIDTH = 520;
 export const JOURNEY_NODE_FOCUSED_WIDTH = 720;
 export const JOURNEY_NODE_HEIGHT = 64;
-const JOURNEY_NODE_EXPANDED_HEIGHT = 680;
-const JOURNEY_NODE_FOCUSED_HEIGHT = 820;
-const LAYER_GAP = 88;
-const NODE_GAP = 32;
+const JOURNEY_NODE_EXPANDED_HEIGHT = 360;
+const JOURNEY_NODE_FOCUSED_HEIGHT = 560;
+export const JOURNEY_LAYER_GAP = 48;
+export const JOURNEY_NODE_GAP = 24;
 
 export function journeyNodeZIndex(expanded: boolean, focused: boolean): number {
   if (focused) return 200;
@@ -80,6 +80,7 @@ export function layoutJourneyNodes(
   snapshot: JourneySnapshot,
   expandedNodeId: string | null,
   focusedNodeId: string | null = null,
+  measuredHeights: Readonly<Record<string, number>> = {},
 ): JourneyNodeLayout[] {
   const levels = graphLevels(snapshot.nodes, snapshot.edges);
   const nodesByLevel = new Map<number, JourneyNode[]>();
@@ -105,17 +106,19 @@ export function layoutJourneyNodes(
           : expanded
             ? JOURNEY_NODE_EXPANDED_WIDTH
             : JOURNEY_NODE_WIDTH,
-        height: focused
-          ? JOURNEY_NODE_FOCUSED_HEIGHT
-          : expanded
-            ? JOURNEY_NODE_EXPANDED_HEIGHT
-            : JOURNEY_NODE_HEIGHT,
+        height:
+          measuredHeights[node.id] ??
+          (focused
+            ? JOURNEY_NODE_FOCUSED_HEIGHT
+            : expanded
+              ? JOURNEY_NODE_EXPANDED_HEIGHT
+              : JOURNEY_NODE_HEIGHT),
       };
     });
 
     if (snapshot.layoutDirection === "TB") {
       const totalWidth = layerSizes.reduce((sum, size) => sum + size.width, 0);
-      const gaps = Math.max(0, layerSizes.length - 1) * NODE_GAP;
+      const gaps = Math.max(0, layerSizes.length - 1) * JOURNEY_NODE_GAP;
       let x = -(totalWidth + gaps) / 2;
       for (const size of layerSizes) {
         layouts.push({
@@ -125,15 +128,15 @@ export function layoutJourneyNodes(
           width: size.width,
           height: size.height,
         });
-        x += size.width + NODE_GAP;
+        x += size.width + JOURNEY_NODE_GAP;
       }
       primaryOffset +=
-        Math.max(JOURNEY_NODE_HEIGHT, ...layerSizes.map((size) => size.height)) + LAYER_GAP;
+        Math.max(JOURNEY_NODE_HEIGHT, ...layerSizes.map((size) => size.height)) + JOURNEY_LAYER_GAP;
       continue;
     }
 
     const totalHeight = layerSizes.reduce((sum, size) => sum + size.height, 0);
-    const gaps = Math.max(0, layerSizes.length - 1) * NODE_GAP;
+    const gaps = Math.max(0, layerSizes.length - 1) * JOURNEY_NODE_GAP;
     let y = -(totalHeight + gaps) / 2;
     for (const size of layerSizes) {
       layouts.push({
@@ -143,10 +146,10 @@ export function layoutJourneyNodes(
         width: size.width,
         height: size.height,
       });
-      y += size.height + NODE_GAP;
+      y += size.height + JOURNEY_NODE_GAP;
     }
     primaryOffset +=
-      Math.max(JOURNEY_NODE_WIDTH, ...layerSizes.map((size) => size.width)) + LAYER_GAP;
+      Math.max(JOURNEY_NODE_WIDTH, ...layerSizes.map((size) => size.width)) + JOURNEY_LAYER_GAP;
   }
   return layouts;
 }

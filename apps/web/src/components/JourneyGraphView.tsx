@@ -66,6 +66,7 @@ import {
   buildJourneyAgentPrompt,
   JOURNEY_NODE_EXPANDED_WIDTH,
   JOURNEY_NODE_FOCUSED_WIDTH,
+  JOURNEY_NODE_HEIGHT,
   JOURNEY_NODE_WIDTH,
   journeyNodeZIndex,
   layoutJourneyNodes,
@@ -102,6 +103,7 @@ type JourneyNodeData = {
   ) => void;
   onRunAgent: (nodeId: string, message?: string) => void;
   onOpenAgentOutput: (nodeId: string) => void;
+  onHeightChange: (nodeId: string, height: number, expanded: boolean, focused: boolean) => void;
 };
 
 type JourneyFlowNode = Node<JourneyNodeData, "journey">;
@@ -427,15 +429,28 @@ function JourneyInteractionForm({
 
 function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
   const node = data.journeyNode;
+  const articleRef = useRef<HTMLElement>(null);
   const type = NODE_TYPE_PRESENTATION[node.type];
   const status = NODE_STATUS_PRESENTATION[node.status];
   const StatusIcon = status.icon;
   const targetPosition = data.direction === "TB" ? Position.Top : Position.Left;
   const sourcePosition = data.direction === "TB" ? Position.Bottom : Position.Right;
   const hasAgentOutput = data.agentWorking || node.activity.some((entry) => entry.kind === "agent");
+  const { expanded, focused, onHeightChange } = data;
+
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article) return;
+    const reportHeight = () => onHeightChange(node.id, article.offsetHeight, expanded, focused);
+    reportHeight();
+    const observer = new ResizeObserver(reportHeight);
+    observer.observe(article);
+    return () => observer.disconnect();
+  }, [expanded, focused, node.id, onHeightChange]);
 
   return (
     <article
+      ref={articleRef}
       aria-label={`${type.label}: ${node.title}. ${status.label}`}
       className={cn(
         "group rounded-xl border bg-card text-card-foreground shadow-sm transition-[border-color,box-shadow,opacity]",
@@ -836,6 +851,9 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [agentMessage, setAgentMessage] = useState("");
   const [agentOutputNodeId, setAgentOutputNodeId] = useState<string | null>(null);
+  const [nodeMeasurements, setNodeMeasurements] = useState<
+    Record<string, { height: number; expanded: boolean; focused: boolean }>
+  >({});
   const [starting, setStarting] = useState(false);
   const [agentRunNodeId, setAgentRunNodeId] = useState<string | null>(null);
   const pendingRunRef = useRef<{
@@ -1266,9 +1284,44 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     }
   }, [focusedNodeId, journey]);
 
+  const handleNodeHeightChange = useCallback(
+    (nodeId: string, height: number, expanded: boolean, focused: boolean) => {
+      const roundedHeight = Math.ceil(height);
+      setNodeMeasurements((current) => {
+        const previous = current[nodeId];
+        if (
+          previous?.height === roundedHeight &&
+          previous.expanded === expanded &&
+          previous.focused === focused
+        ) {
+          return current;
+        }
+        return { ...current, [nodeId]: { height: roundedHeight, expanded, focused } };
+      });
+    },
+    [],
+  );
+
+  const measuredHeights = useMemo<Record<string, number>>(() => {
+    if (!journey) return {};
+    const heights: Record<string, number> = {};
+    for (const node of journey.nodes) {
+      const measurement = nodeMeasurements[node.id];
+      if (
+        measurement &&
+        measurement.expanded === (expandedNodeId === node.id) &&
+        measurement.focused === (focusedNodeId === node.id)
+      ) {
+        heights[node.id] = measurement.height;
+      }
+    }
+    return heights;
+  }, [expandedNodeId, focusedNodeId, journey, nodeMeasurements]);
+
   const layouts = useMemo(
-    () => (journey ? layoutJourneyNodes(journey, expandedNodeId, focusedNodeId) : []),
-    [expandedNodeId, focusedNodeId, journey],
+    () =>
+      journey ? layoutJourneyNodes(journey, expandedNodeId, focusedNodeId, measuredHeights) : [],
+    [expandedNodeId, focusedNodeId, journey, measuredHeights],
   );
   const flowNodes = useMemo<JourneyFlowNode[]>(() => {
     if (!journey) return [];
@@ -1278,7 +1331,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         x: 0,
         y: 0,
         width: JOURNEY_NODE_WIDTH,
-        height: 146,
+        height: JOURNEY_NODE_HEIGHT,
       };
       return {
         id: node.id,
@@ -1299,11 +1352,13 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
           onSubmitInteraction: handleSubmitInteraction,
           onRunAgent: (nodeId, message) => void runAgent(journey, nodeId, message),
           onOpenAgentOutput: setAgentOutputNodeId,
+          onHeightChange: handleNodeHeightChange,
         },
         draggable: focusedNodeId !== node.id,
         selectable: true,
         zIndex: journeyNodeZIndex(expandedNodeId === node.id, focusedNodeId === node.id),
-        style: { width: layout.width },
+        width: layout.width,
+        height: layout.height,
       };
     });
   }, [
@@ -1314,6 +1369,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     handleToggleNodeExpanded,
     handleToggleNodeFocus,
     handleToggleTodo,
+    handleNodeHeightChange,
     journey,
     layouts,
     runAgent,

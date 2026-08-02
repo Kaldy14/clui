@@ -6,6 +6,7 @@ import {
   JOURNEY_NODE_FOCUSED_WIDTH,
   JOURNEY_NODE_HEIGHT,
   JOURNEY_NODE_WIDTH,
+  JOURNEY_LAYER_GAP,
   journeyNodeZIndex,
   layoutJourneyNodes,
   makeInitialJourney,
@@ -51,6 +52,31 @@ describe("journey graph", () => {
     expect(horizontal.find((node) => node.id === "review")!.x).toBeGreaterThan(
       horizontal.find((node) => node.id === "destination")!.x,
     );
+  });
+
+  it("places the next layer after the rendered node height", () => {
+    const initial = makeInitialJourney("Measure expanded nodes", "2026-08-02T10:00:00.000Z");
+    const snapshot = {
+      ...initial,
+      nodes: [...initial.nodes, { ...initial.nodes[0]!, id: "next", title: "Next" }],
+      edges: [
+        {
+          id: "destination-next",
+          source: "destination",
+          target: "next",
+          relation: "dependsOn" as const,
+        },
+      ],
+    };
+
+    const renderedHeight = 236;
+    const measured = layoutJourneyNodes(snapshot, "destination", null, {
+      destination: renderedHeight,
+    });
+    const destination = measured.find((node) => node.id === "destination")!;
+    const next = measured.find((node) => node.id === "next")!;
+
+    expect(next.y - destination.y).toBe(renderedHeight + JOURNEY_LAYER_GAP);
   });
 
   it("gives a focused node more space than an expanded node", () => {
