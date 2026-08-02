@@ -90,6 +90,7 @@ import {
 
 type HarnessSessionEvent = ClaudeSessionEvent | PiSessionEvent;
 type HarnessKind = Thread["harness"];
+type JourneyHarness = Extract<CodingHarness, "pi" | "codexCli">;
 
 const IMAGE_PASTE_KEYSTROKE = "\x16";
 const ALT_BUFFER_WHEEL_PIXELS_PER_LINE = 50;
@@ -107,6 +108,18 @@ const NEW_THREAD_HARNESS_CHOICES: readonly NewThreadChoice<CodingHarness>[] =
     label: option.label,
     icon: <HarnessIcon harness={option.value} className="size-4 shrink-0" />,
   }));
+const JOURNEY_HARNESS_CHOICES: readonly NewThreadChoice<JourneyHarness>[] = [
+  {
+    value: "pi",
+    label: "Pi",
+    icon: <HarnessIcon harness="pi" className="size-4 shrink-0" />,
+  },
+  {
+    value: "codexCli",
+    label: "Codex",
+    icon: <HarnessIcon harness="codexCli" className="size-4 shrink-0" />,
+  },
+];
 const NEW_THREAD_ENVIRONMENT_CHOICES: readonly NewThreadChoice<EnvMode>[] = [
   {
     value: "local",
@@ -291,6 +304,9 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   const { updateSettings } = useAppSettings();
   const [starting, setStarting] = useState(false);
   const [journeyMode, setJourneyMode] = useState(false);
+  const [journeyHarness, setJourneyHarness] = useState<JourneyHarness>(() =>
+    thread.harness === "codexCli" ? "codexCli" : "pi",
+  );
   const [error, setError] = useState<string | null>(null);
   const dangerouslySkipPermissions = useTerminalStateStore(
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
@@ -439,13 +455,18 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       }
       if (!startCwd) return;
       if (journeyMode) {
+        const journeyModel =
+          journeyHarness === "codexCli" && thread.harness !== "codexCli"
+            ? DEFAULT_MODEL_BY_PROVIDER.codex
+            : undefined;
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
           threadId,
           surface: "journey",
-          harness: "pi",
-          piRenderMode: "html",
+          harness: journeyHarness,
+          ...(journeyHarness === "pi" ? { piRenderMode: "html" as const } : {}),
+          ...(journeyModel ? { model: journeyModel } : {}),
         });
         return;
       }
@@ -481,6 +502,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     hasInitialPrompt,
     initialPrompt,
     journeyMode,
+    journeyHarness,
     localFastMode,
     piRenderMode,
     clearNewThreadPromptDraft,
@@ -603,6 +625,17 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       thread.terminalStatus,
       threadId,
     ],
+  );
+
+  const handleJourneyModeChange = useCallback(
+    (next: boolean) => {
+      setJourneyMode(next);
+      if (next) {
+        setJourneyHarness(thread.harness === "codexCli" ? "codexCli" : "pi");
+      }
+      requestAnimationFrame(() => initialPromptRef.current?.focus({ preventScroll: true }));
+    },
+    [thread.harness],
   );
 
   const handleClaudeCodeBackendChange = useCallback(
@@ -769,7 +802,25 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
 
                 <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3">
                   <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {!journeyMode && (
+                    {journeyMode ? (
+                      <>
+                        <NewThreadChoiceMenu
+                          ariaLabel="Choose journey agent"
+                          value={journeyHarness}
+                          label={journeyHarness === "pi" ? "Pi" : "Codex"}
+                          icon={
+                            <HarnessIcon harness={journeyHarness} className="size-4 shrink-0" />
+                          }
+                          options={JOURNEY_HARNESS_CHOICES}
+                          onValueChange={setJourneyHarness}
+                        />
+
+                        <span
+                          aria-hidden="true"
+                          className="mx-0.5 h-4 w-px shrink-0 bg-border/70"
+                        />
+                      </>
+                    ) : (
                       <>
                         <NewThreadChoiceMenu
                           ariaLabel="Choose coding harness"
@@ -867,7 +918,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                       label="Journey"
                       ariaLabel="Start this thread as a journey"
                       icon={<NetworkIcon className="size-4" />}
-                      onCheckedChange={setJourneyMode}
+                      onCheckedChange={handleJourneyModeChange}
                     />
                   </div>
 

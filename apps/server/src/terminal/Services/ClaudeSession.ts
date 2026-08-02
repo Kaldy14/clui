@@ -38,6 +38,8 @@ export interface ClaudeSessionManagerShape {
     cwd: string;
     harness?: Exclude<CodingHarness, "pi">;
     resumeSessionId?: string;
+    executionMode?: "interactive" | "exec";
+    initialPrompt?: string;
     cols: number;
     rows: number;
     dangerouslySkipPermissions?: boolean;

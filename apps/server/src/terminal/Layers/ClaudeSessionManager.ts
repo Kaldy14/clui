@@ -113,6 +113,8 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     cwd: string;
     harness?: PtyCodingHarness;
     resumeSessionId?: string;
+    executionMode?: "interactive" | "exec";
+    initialPrompt?: string;
     cols: number;
     rows: number;
     dangerouslySkipPermissions?: boolean;
@@ -121,6 +123,13 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   }): Promise<void> {
     await this.runWithThreadLock(input.threadId, async () => {
       const harness = input.harness ?? "claudeCode";
+      const executionMode = input.executionMode ?? "interactive";
+      if (executionMode === "exec" && harness !== "codexCli") {
+        throw new Error("Non-interactive execution is only supported by the Codex CLI harness.");
+      }
+      if (executionMode === "exec" && !input.initialPrompt?.trim()) {
+        throw new Error("Non-interactive Codex execution requires an initial prompt.");
+      }
       const existing = this.sessions.get(input.threadId);
       if (existing?.process) {
         this.stopProcess(existing);
@@ -508,10 +517,17 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   }
 
   private buildCodexArgs(
-    input: { threadId: string; resumeSessionId?: string; model?: string },
+    input: {
+      threadId: string;
+      resumeSessionId?: string;
+      executionMode?: "interactive" | "exec";
+      initialPrompt?: string;
+      model?: string;
+    },
     skipPermissions: boolean,
   ): string[] {
-    const args: string[] = input.resumeSessionId ? ["resume"] : [];
+    const executionMode = input.executionMode ?? "interactive";
+    const args: string[] = [];
     if (skipPermissions) {
       args.push("--dangerously-bypass-approvals-and-sandbox");
     }
@@ -534,7 +550,21 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         port: this.hookConfig.serverPort,
       });
     }
+
+    if (executionMode === "exec") {
+      args.push("exec", "--json", "--color", "never");
+      if (!skipPermissions) {
+        args.push("--sandbox", "workspace-write");
+      }
+      if (input.resumeSessionId) {
+        args.push("resume", input.resumeSessionId);
+      }
+      args.push(input.initialPrompt!.trim());
+      return args;
+    }
+
     if (input.resumeSessionId) {
+      args.unshift("resume");
       args.push(input.resumeSessionId);
     }
     return args;

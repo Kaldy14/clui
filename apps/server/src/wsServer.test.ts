@@ -2545,6 +2545,8 @@ describe("WebSocket Server", () => {
         cwd: workspaceRoot,
         cols: 100,
         rows: 30,
+        executionMode: "exec",
+        initialPrompt: "Advance the Journey graph",
       });
 
       expect(response.error).toBeUndefined();
@@ -2556,6 +2558,8 @@ describe("WebSocket Server", () => {
             threadId: "thread-codex",
             harness: "codexCli",
             model: "gpt-5.6-sol",
+            executionMode: "exec",
+            initialPrompt: "Advance the Journey graph",
           },
         ],
       });

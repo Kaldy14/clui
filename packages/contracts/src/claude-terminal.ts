@@ -56,6 +56,8 @@ export const ClaudeStartInput = Schema.Struct({
   threadId: TrimmedNonEmptyString,
   cwd: TrimmedNonEmptyString,
   resumeSessionId: Schema.optional(Schema.String),
+  executionMode: Schema.optional(Schema.Literals(["interactive", "exec"])),
+  initialPrompt: Schema.optional(Schema.String),
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
   dangerouslySkipPermissions: Schema.optional(Schema.Boolean),

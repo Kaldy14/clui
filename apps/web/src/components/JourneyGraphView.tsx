@@ -1,10 +1,13 @@
 import type {
+  ClaudeSessionEvent,
+  CodingHarness,
   JourneyNode,
   JourneyNodeStatus,
   JourneyNodeType,
   JourneyQuestionnaireAnswer,
   JourneyQuestionnaireField,
   JourneySnapshot,
+  PiSessionEvent,
   ThreadId,
 } from "@clui/contracts";
 import {
@@ -67,6 +70,7 @@ import {
   settleJourneyAgentSnapshot,
   withJourneyNode,
 } from "../lib/journeyGraph";
+import { latestCodexExecAgentMessage } from "../lib/codexExecJsonl";
 import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscriptions";
 import { cn, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -76,7 +80,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
-import PiHtmlThreadView from "./PiHtmlThreadView";
+import { JourneyAgentOutputView } from "./JourneyAgentOutputView";
 import { Textarea } from "./ui/textarea";
 import { toastManager } from "./ui/toast";
 
@@ -96,6 +100,7 @@ type JourneyNodeData = {
 };
 
 type JourneyFlowNode = Node<JourneyNodeData, "journey">;
+type JourneyHarness = Extract<CodingHarness, "pi" | "codexCli">;
 
 const NODE_TYPE_PRESENTATION: Record<
   JourneyNodeType,
@@ -568,11 +573,13 @@ const NODE_TYPES = { journey: JourneyNodeCard };
 
 function JourneyAgentOutputPanel({
   threadId,
+  harness,
   node,
   running,
   onClose,
 }: {
   threadId: ThreadId;
+  harness: JourneyHarness;
   node: JourneyNode | null;
   running: boolean;
   onClose: () => void;
@@ -605,7 +612,7 @@ function JourneyAgentOutputPanel({
             </span>
           </div>
           <p className="truncate text-[11px] text-muted-foreground">
-            {node?.title ?? "Journey agent"}
+            {node?.title ?? "Journey agent"} · {harness === "pi" ? "Pi" : "Codex"}
           </p>
         </div>
         <Button
@@ -619,7 +626,7 @@ function JourneyAgentOutputPanel({
         </Button>
       </header>
       <div className="min-h-0 flex-1">
-        <PiHtmlThreadView threadId={threadId} />
+        <JourneyAgentOutputView threadId={threadId} harness={harness} />
       </div>
     </aside>
   );
@@ -677,6 +684,10 @@ function latestAssistantItem(
   return null;
 }
 
+function journeyHarnessForThread(harness: CodingHarness | undefined): JourneyHarness {
+  return harness === "codexCli" ? "codexCli" : "pi";
+}
+
 export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const thread = useStore((state) => state.threads.find((entry) => entry.id === threadId));
   const project = useStore((state) =>
@@ -688,6 +699,9 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   );
   const clearNewThreadPromptDraft = useTerminalStateStore(
     (state) => state.clearNewThreadPromptDraft,
+  );
+  const dangerouslySkipPermissions = useTerminalStateStore(
+    (state) => selectThreadTerminalState(state.terminalStateByThreadId, threadId).yoloMode,
   );
   const bootstrapDestinationRef = useRef(initialDestination.trim());
   const [destination, setDestination] = useState(initialDestination);
@@ -703,6 +717,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     baselineAssistantText: string | null;
   } | null>(null);
   const journey = thread?.journey ?? null;
+  const journeyHarness = journeyHarnessForThread(thread?.harness);
 
   const persistJourney = useCallback(
     async (snapshot: JourneySnapshot) => {
@@ -765,22 +780,28 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     try {
       const api = readNativeApi();
       if (!api) throw new Error("Clui is not connected to the server.");
-      let assistantItem: { id: string; text: string; createdAt: string | null } | null = null;
+      let responseText: string | null = null;
       for (let attempt = 0; attempt < 12; attempt += 1) {
-        const transcript = await api.pi.getTranscript({ threadId });
-        const candidate = latestAssistantItem(transcript.items);
-        if (
-          candidate &&
-          (candidate.id !== pending.baselineAssistantId ||
-            candidate.text !== pending.baselineAssistantText)
-        ) {
-          assistantItem = candidate;
-          break;
+        if (journeyHarness === "pi") {
+          const transcript = await api.pi.getTranscript({ threadId });
+          const candidate = latestAssistantItem(transcript.items);
+          if (
+            candidate &&
+            (candidate.id !== pending.baselineAssistantId ||
+              candidate.text !== pending.baselineAssistantText)
+          ) {
+            responseText = candidate.text;
+            break;
+          }
+        } else {
+          const scrollback = await api.claude.getScrollback({ threadId });
+          responseText = latestCodexExecAgentMessage(scrollback.scrollback ?? "");
+          if (responseText) break;
         }
         await new Promise((resolve) => window.setTimeout(resolve, 150));
       }
-      if (!assistantItem) throw new Error("The journey agent completed without a new response.");
-      const settled = settleJourneyAgentSnapshot(parseJourneyAgentResponse(assistantItem.text));
+      if (!responseText) throw new Error("The journey agent completed without a new response.");
+      const settled = settleJourneyAgentSnapshot(parseJourneyAgentResponse(responseText));
       const currentDirection =
         useStore.getState().threads.find((entry) => entry.id === threadId)?.journey
           ?.layoutDirection ?? settled.layoutDirection;
@@ -791,13 +812,13 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     } catch (error) {
       await failPendingRun(error);
     }
-  }, [failPendingRun, persistJourney, threadId]);
+  }, [failPendingRun, journeyHarness, persistJourney, threadId]);
 
   useEffect(() => {
     const api = readNativeApi();
     if (!api) return;
-    const outputSubscription = registerHarnessOutputSubscription(api, "pi", threadId);
-    const unsubscribe = api.pi.onSessionEvent((event) => {
+    const outputSubscription = registerHarnessOutputSubscription(api, journeyHarness, threadId);
+    const handleSessionEvent = (event: ClaudeSessionEvent | PiSessionEvent) => {
       if (event.threadId !== threadId) return;
       if (event.type === "hookStatus" && event.hookStatus === "completed") {
         void finishAgentRun();
@@ -808,12 +829,16 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
       if (event.type === "error" && pendingRunRef.current) {
         void failPendingRun(new Error(event.message));
       }
-    });
+    };
+    const unsubscribe =
+      journeyHarness === "pi"
+        ? api.pi.onSessionEvent(handleSessionEvent)
+        : api.claude.onSessionEvent(handleSessionEvent);
     return () => {
       outputSubscription.unsubscribe();
       unsubscribe();
     };
-  }, [failPendingRun, finishAgentRun, threadId]);
+  }, [failPendingRun, finishAgentRun, journeyHarness, threadId]);
 
   useEffect(() => {
     const activeNode = journey?.nodes.find((node) => node.id === journey.activeNodeId);
@@ -831,6 +856,29 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     const resumePendingRun = async () => {
       const api = readNativeApi();
       if (!api) return;
+      if (journeyHarness === "codexCli") {
+        const scrollback = await api.claude.getScrollback({ threadId });
+        const hasCompletedResponse =
+          latestCodexExecAgentMessage(scrollback.scrollback ?? "") !== null &&
+          (thread.hookStatus === "completed" || thread.terminalStatus === "dormant");
+        if (cancelled || pendingRunRef.current) return;
+        pendingRunRef.current = {
+          nodeId: activeNode.id,
+          finishing: false,
+          baselineAssistantId: null,
+          baselineAssistantText: null,
+        };
+        setAgentRunNodeId(activeNode.id);
+        if (hasCompletedResponse || thread.hookStatus === "completed") {
+          await finishAgentRun();
+          return;
+        }
+        if (thread.terminalStatus === "dormant") {
+          throw new Error("The Codex journey agent stopped before returning a graph update.");
+        }
+        return;
+      }
+
       const baselineItem = latestAssistantItem((await api.pi.getTranscript({ threadId })).items);
       const hasCompletedResponse =
         baselineItem?.createdAt != null &&
@@ -868,7 +916,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     return () => {
       cancelled = true;
     };
-  }, [failPendingRun, finishAgentRun, journey, thread, threadId]);
+  }, [failPendingRun, finishAgentRun, journey, journeyHarness, thread, threadId]);
 
   const runAgent = useCallback(
     async (snapshot: JourneySnapshot, nodeId: string, message = "") => {
@@ -905,17 +953,32 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
 
       try {
         await persistJourney(runningSnapshot);
+        const prompt = buildJourneyAgentPrompt({
+          snapshot: runningSnapshot,
+          focusNodeId: nodeId,
+          userMessage: message,
+        });
+
+        if (journeyHarness === "codexCli") {
+          await api.claude.start({
+            threadId,
+            cwd,
+            cols: 120,
+            rows: 32,
+            executionMode: "exec",
+            initialPrompt: prompt,
+            ...(thread.claudeSessionId ? { resumeSessionId: thread.claudeSessionId } : {}),
+            ...(dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+          });
+          return;
+        }
+
         const baselineTranscript = await api.pi.getTranscript({ threadId });
         const baselineAssistant = latestAssistantItem(baselineTranscript.items);
         if (pendingRunRef.current?.nodeId === nodeId) {
           pendingRunRef.current.baselineAssistantId = baselineAssistant?.id ?? null;
           pendingRunRef.current.baselineAssistantText = baselineAssistant?.text ?? null;
         }
-        const prompt = buildJourneyAgentPrompt({
-          snapshot: runningSnapshot,
-          focusNodeId: nodeId,
-          userMessage: message,
-        });
         if (thread.terminalStatus === "active") {
           await api.pi.prompt({ threadId, message: prompt });
         } else {
@@ -933,7 +996,15 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         await failPendingRun(error);
       }
     },
-    [failPendingRun, persistJourney, project, thread, threadId],
+    [
+      dangerouslySkipPermissions,
+      failPendingRun,
+      journeyHarness,
+      persistJourney,
+      project,
+      thread,
+      threadId,
+    ],
   );
 
   const handleStartJourney = useCallback(async () => {
@@ -1148,7 +1219,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
             <p className="text-[10px] text-muted-foreground">
               {journey.nodes.length} nodes ·{" "}
               {journey.nodes.filter((node) => node.status === "waitingForUser").length} waiting for
-              you
+              you · {journeyHarness === "pi" ? "Pi" : "Codex"}
             </p>
           </div>
         </div>
@@ -1232,6 +1303,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         {agentOutputNodeId && (
           <JourneyAgentOutputPanel
             threadId={threadId}
+            harness={journeyHarness}
             node={agentOutputNode}
             running={agentOutputRunning}
             onClose={() => setAgentOutputNodeId(null)}

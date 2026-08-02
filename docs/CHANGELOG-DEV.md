@@ -4,6 +4,30 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Let Journeys run with Pi or Codex
+
+**Problem:** Journey mode always used Pi, with no way to choose Codex when starting the thread or inspect Codex's structured live output while the graph evolved.
+
+**Root cause:** The new-thread Journey path hard-coded the Pi harness, and the graph runtime depended directly on Pi transcript APIs and the Pi HTML renderer. The Claude/Codex session contract only supported interactive terminal processes, so it could not launch a bounded non-interactive Codex turn and recover the graph response.
+
+**Fix:** Added a Pi/Codex selector to Journey mode in the normal new-thread composer. Codex Journeys now run through resumable `codex exec --json` sessions with workspace-write sandboxing, parse the final agent message into the same validated Journey snapshot used by Pi, and show a semantic live event stream for reasoning, commands, file changes, tools, plans, and errors. Kept existing Journeys backward-compatible by treating non-Codex Journey threads as Pi.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `packages/contracts/src/claude-terminal.ts`
+- `apps/server/src/terminal/Services/ClaudeSession.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/components/JourneyAgentOutputView.tsx`
+- `apps/web/src/lib/codexExecJsonl.ts`
+- `apps/web/src/lib/codexExecJsonl.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Show live Journey agent output
 
 **Problem:** Journey nodes only exposed high-level activity entries, so users could not inspect the agent's real-time transcript, tool calls, or latest completed output while work was running. Existing development databases created before the latest `main` rebase could also fail to start because the original Journey migration had already claimed migration ID 31.

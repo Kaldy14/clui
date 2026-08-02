@@ -17,7 +17,7 @@
 
 - Goals: Make terminal-native agents manageable across projects and threads; add a journey surface where agents and the user can build and resolve a free-form work graph; make current work, blockers, decisions, and human input immediately legible.
 - Non-goals: Enforce a fixed workflow shape; require an issue tracker; turn the journey canvas into a general-purpose whiteboard; replace terminal threads.
-- Success signals: A user can start a journey, understand its frontier at a glance, expand a node, answer a structured request, observe agent work, switch graph direction, and return later without losing state.
+- Success signals: A user can start a journey with either Pi or Codex, understand its frontier at a glance, expand a node, answer a structured request, observe agent work, switch graph direction, and return later without losing state.
 
 ## Personas and jobs
 
@@ -27,7 +27,7 @@
 
 ## Information architecture
 
-- Primary navigation: Existing project/thread sidebar remains the entry point. The standard new-thread composer switches between a terminal session and a journey; the sidebar has one creation action for both.
+- Primary navigation: Existing project/thread sidebar remains the entry point. The standard new-thread composer switches between a terminal session and a journey; Journey mode exposes an agent selector limited to Pi and Codex. The sidebar has one creation action for both.
 - Core routes/screens: Existing thread route branches to terminal or journey content. The journey surface consists of a graph toolbar, pannable graph, expandable nodes, and an optional activity/interaction area within expanded nodes.
 - Content hierarchy: Journey destination and controls; actionable/current nodes; dependencies and spawned relationships; expanded node details; node-linked live agent output inspector; completed history.
 
@@ -37,7 +37,7 @@
 - Progressive disclosure: Nodes remain scannable when collapsed and reveal forms, questionnaires, todos, artifacts, and activity when expanded.
 - Keep work observable in context: A running node exposes its live agent transcript without replacing or obscuring the graph on desktop; the output inspector keeps the originating node visible as context.
 - Status must not rely on color alone: Every status combines color with iconography, label, border/motion treatment, and accessible text.
-- Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts.
+- Free-form workflows, strict data: Journey shapes are unrestricted, while node types, statuses, interactions, and mutations use versioned validated contracts. Pi and Codex must produce the same graph contract so changing the harness does not change how the Journey behaves.
 - Preserve user orientation: Layout changes are deliberate, animation is restrained, and expanded/selected state remains stable across graph updates.
 - Tradeoffs: Prefer clear durable state and predictable layout over maximal autonomous agent freedom or visually dense live logs.
 
@@ -53,7 +53,7 @@
 ## Components
 
 - Existing components to reuse: Buttons, badges, inputs, textareas, radio groups, checkboxes, collapsibles, scroll areas, tooltips, sheets, and app toolbar/sidebar patterns under `apps/web/src/components/ui/`.
-- New/changed components: Journey surface, graph toolbar, journey node, node status indicator, interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, and thread-surface selector.
+- New/changed components: Journey surface, graph toolbar, journey node, node status indicator, interaction form renderer, todo list, activity feed, node-linked live agent output inspector, empty journey state, thread-surface selector, and Journey agent selector.
 - Variants and states: Node types include goal, question, proposal, task, todo group, research, implementation, review, and note. Statuses include draft, ready, running, waiting for user, blocked, completed, failed, cancelled, and superseded.
 - Token/component ownership: Journey-specific accent mappings live with the journey UI; shared theme primitives remain in `apps/web/src/index.css` and existing UI components.
 
@@ -74,7 +74,7 @@
 ## Interaction states
 
 - Loading: Keep graph chrome visible with a centered lightweight spinner or skeleton nodes.
-- Agent output: Opening live output is non-destructive and preserves graph position. The inspector follows the current Pi transcript, distinguishes a running stream from completed history, and can be closed without stopping the agent.
+- Agent output: Opening live output is non-destructive and preserves graph position. The inspector renders the selected harness's native live event stream, distinguishes a running stream from completed history, and can be closed without stopping the agent.
 - Empty: Prompt for a destination and offer to create the first node.
 - Error: Preserve the last valid graph, identify the failed action/run, and provide retry or dismiss controls.
 - Success: Completed nodes remain visible with concise outcome summaries; journey completion is explicit, not inferred only from an empty frontier.
@@ -92,11 +92,10 @@
 - Framework/styling system: React 19, Tailwind CSS v4, Base UI primitives, Zustand, TanStack Router/Query, Effect Schema contracts, WebSocket RPC, and SQLite projections.
 - Design-token constraints: Reuse existing semantic tokens and dark-mode behavior; add no competing design-system layer.
 - Performance constraints: Avoid continuous force simulation; update only changed graph elements; cap rendered live activity; keep layout asynchronous or bounded for larger graphs.
-- Compatibility constraints: Existing terminal threads and persisted orchestration events must decode unchanged. Journey graph data is separate from terminal scrollback and PTY lifecycle.
+- Compatibility constraints: Existing terminal threads and persisted orchestration events must decode unchanged. Journey graph data is separate from terminal scrollback and PTY lifecycle. Pi uses its structured transcript; Codex uses non-interactive JSONL events and resumable session IDs.
 - Test/screenshot expectations: Unit-test graph reducers, layout direction, interaction validation, and thread-surface branching; run browser/component coverage where practical; require `bun lint` and `bun typecheck`.
 
 ## Open questions
 
-- [ ] Decide which real agent runtime first receives journey graph tools after the interaction MVP proves the graph model.
 - [ ] Decide whether user-authored edges/nodes become part of the MVP after agent-authored mutations are stable.
 - [ ] Define the long-term conflict policy for parallel implementation nodes that touch overlapping files.

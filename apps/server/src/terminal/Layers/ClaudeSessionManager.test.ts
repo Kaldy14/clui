@@ -164,6 +164,8 @@ function defaultInput(
     harness: "claudeCode" | "codexCli";
     claudeCodeBackend: "anthropic" | "codex";
     model: string;
+    executionMode: "interactive" | "exec";
+    initialPrompt: string;
     dangerouslySkipPermissions: boolean;
   }> = {},
 ) {
@@ -277,6 +279,69 @@ describe("ClaudeSessionManagerRuntime", () => {
       expect(result.ptyAdapter.spawnInputs[1]!.args).toContain(
         "--dangerously-bypass-approvals-and-sandbox",
       );
+    });
+
+    it("runs resumable Codex exec with JSONL output for Journey agents", async () => {
+      const result = makeRuntime({ hookConfig: { serverPort: 4100 } });
+      runtime = result.runtime;
+
+      await runtime.startSession(
+        defaultInput({
+          harness: "codexCli",
+          executionMode: "exec",
+          initialPrompt: "Return the updated Journey graph.",
+          model: "gpt-5.6-sol",
+        }),
+      );
+
+      const firstArgs = result.ptyAdapter.spawnInputs[0]!.args ?? [];
+      expect(firstArgs).toEqual(
+        expect.arrayContaining([
+          "exec",
+          "--json",
+          "--color",
+          "never",
+          "--sandbox",
+          "workspace-write",
+          "Return the updated Journey graph.",
+        ]),
+      );
+      expect(firstArgs).not.toContain("resume");
+
+      await runtime.startSession(
+        defaultInput({
+          harness: "codexCli",
+          executionMode: "exec",
+          initialPrompt: "Continue the selected Journey node.",
+          resumeSessionId: "codex-session-1",
+        }),
+      );
+
+      const resumedArgs = result.ptyAdapter.spawnInputs[1]!.args ?? [];
+      expect(resumedArgs).toEqual(
+        expect.arrayContaining([
+          "exec",
+          "--json",
+          "resume",
+          "codex-session-1",
+          "Continue the selected Journey node.",
+        ]),
+      );
+    });
+
+    it("rejects non-interactive execution for non-Codex harnesses", async () => {
+      const result = makeRuntime();
+      runtime = result.runtime;
+
+      await expect(
+        runtime.startSession(
+          defaultInput({
+            executionMode: "exec",
+            initialPrompt: "Invalid Claude exec request",
+          }),
+        ),
+      ).rejects.toThrow("only supported by the Codex CLI harness");
+      expect(result.ptyAdapter.spawnInputs).toEqual([]);
     });
 
     it("injects the managed proxy environment for Codex-backed Claude Code", async () => {

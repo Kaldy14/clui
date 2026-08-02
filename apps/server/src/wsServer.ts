@@ -1823,6 +1823,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           cols,
           rows,
           resumeSessionId,
+          executionMode,
+          initialPrompt,
           dangerouslySkipPermissions,
         } = stripRequestTag(request.body);
 
@@ -1848,6 +1850,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           cols,
           rows,
           ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+          ...(executionMode !== undefined ? { executionMode } : {}),
+          ...(initialPrompt !== undefined ? { initialPrompt } : {}),
           ...(dangerouslySkipPermissions !== undefined ? { dangerouslySkipPermissions } : {}),
           claudeCodeBackend: threadRow.value.claudeCodeBackend,
           model: threadRow.value.model,
