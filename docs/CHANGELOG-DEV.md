@@ -4,6 +4,20 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Remove noisy Journey composer helper copy
+
+**Problem:** Expanding the bottom Journey input added a full-width footer explaining that a busy agent would queue the prompt and repeating Enter/Shift+Enter shortcuts, creating visual noise below the primary control.
+
+**Root cause:** Agent readiness and keyboard guidance were rendered as persistent helper text even though the placeholder, send action, and visible prompt queue already communicate the relevant state.
+
+**Fix:** Removed the composer helper footer entirely. The input now expands only to the prompt control and any real queued items, while queue/send semantics remain available through contextual placeholder and accessible button labels.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Remove the Journey minimap
 
 **Problem:** The bottom-right minimap occupied useful graph space, could overlap the steering composer, and did not add enough value alongside the existing Fit graph and pan/zoom controls.

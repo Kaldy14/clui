@@ -955,14 +955,6 @@ function JourneyPromptComposer({
           <SendIcon className="size-3.5" />
         </Button>
       </form>
-      {expanded && (
-        <div className="flex items-center justify-between border-t border-border/50 px-3 py-1.5 text-[10px] text-muted-foreground">
-          <span>
-            {agentBusy ? "The agent is working · this prompt will be queued" : "Agent ready"}
-          </span>
-          <span>Enter to send · Shift+Enter for newline</span>
-        </div>
-      )}
     </div>
   );
 }
