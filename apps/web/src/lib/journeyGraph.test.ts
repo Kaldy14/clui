@@ -4,6 +4,8 @@ import {
   buildJourneyAgentPrompt,
   JOURNEY_NODE_EXPANDED_WIDTH,
   JOURNEY_NODE_FOCUSED_WIDTH,
+  JOURNEY_NODE_HEIGHT,
+  JOURNEY_NODE_WIDTH,
   journeyNodeZIndex,
   layoutJourneyNodes,
   makeInitialJourney,
@@ -60,6 +62,16 @@ describe("journey graph", () => {
     expect(expanded[0]?.width).toBe(JOURNEY_NODE_EXPANDED_WIDTH);
     expect(focused[0]?.width).toBe(JOURNEY_NODE_FOCUSED_WIDTH);
     expect(focused[0]!.height).toBeGreaterThan(expanded[0]!.height);
+  });
+
+  it("keeps collapsed nodes compact for overview density", () => {
+    const snapshot = makeInitialJourney("Inspect one node", "2026-08-02T10:00:00.000Z");
+    const [node] = layoutJourneyNodes(snapshot, null);
+
+    expect(node?.width).toBe(JOURNEY_NODE_WIDTH);
+    expect(node?.height).toBe(JOURNEY_NODE_HEIGHT);
+    expect(JOURNEY_NODE_WIDTH).toBeLessThan(JOURNEY_NODE_EXPANDED_WIDTH);
+    expect(JOURNEY_NODE_HEIGHT).toBeLessThan(100);
   });
 
   it("keeps expanded and focused nodes above compact graph siblings", () => {

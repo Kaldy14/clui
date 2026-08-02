@@ -4,6 +4,21 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Increase Journey graph overview density
+
+**Problem:** Collapsed Journey nodes still consumed too much canvas space and displayed summary and todo-progress content that belongs in the expanded view.
+
+**Root cause:** The compact node retained the content hierarchy and padding of a detail card, used a 320px width and 132px layout estimate, and left large inter-node gaps.
+
+**Fix:** Reduced collapsed nodes to type, status, a single-line title, and the focus/expand controls. Tightened header and expanded-body padding, reduced compact width and height estimates, and narrowed graph gaps so more of the journey remains visible at once. Summary, todo progress, and all other detail remain available after expansion.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyGraph.ts`
+- `apps/web/src/lib/journeyGraph.test.ts`
+
 ## 2026-08-02 — Simplify compact and expanded Journey nodes
 
 **Problem:** Compact Journey nodes repeated their type as both a large icon and a label. Expanded nodes used a fixed-height internal scroller and nested bordered panels for forms and todo groups, while neighboring graph nodes could render above the expanded content.

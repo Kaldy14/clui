@@ -34,7 +34,7 @@
 ## Design principles
 
 - Semantic graph first: Agents create and update meaningful nodes and edges; layout coordinates are a presentation concern.
-- Progressive disclosure: Nodes remain scannable when collapsed and reveal forms, questionnaires, todos, artifacts, and activity when expanded. Compact nodes show each semantic fact once; do not pair a large type icon with a redundant type label.
+- Progressive disclosure: Collapsed nodes are overview labels, not summaries: show only type, status, a single-line title, and the expand/focus controls. Reveal summaries, forms, questionnaires, todos, artifacts, and activity only after expansion. Show each semantic fact once; do not pair a large type icon with a redundant type label.
 - One node, one surface: Expanded content continues the node's existing surface. Use spacing, typography, and quiet dividers for hierarchy instead of nesting panels or cards inside the node.
 - Expansion owns the foreground: An expanded node renders above every collapsed sibling, and a focused node renders above the expanded layer. Expanded content uses its intrinsic height; the graph canvas pans around it rather than adding an internal vertical scrollbar.
 - Reversible focus: Node focus is distinct from expansion. It enlarges the chosen expanded node and fits it prominently into the canvas without changing durable graph data; Escape, the node control, or Fit graph restores the overview.
@@ -49,7 +49,7 @@
 
 - Color: Reuse Clui theme tokens for chrome. Node types receive restrained accent families; statuses alter borders, badges, icons, and motion without replacing type identity.
 - Typography: Reuse the application sans and monospace conventions. Node titles are compact; metadata and activity use smaller muted text; long content uses readable line height.
-- Spacing/layout rhythm: Compact 4/8px-derived rhythm, generous canvas whitespace, and consistent node widths within a layout pass.
+- Spacing/layout rhythm: Compact 4/8px-derived rhythm, low-padding collapsed nodes, readable graph gaps, and consistent node widths within a layout pass.
 - Shape/radius/elevation: Reuse medium rounded cards, subtle borders, and low elevation. Selection and human-attention states may raise elevation slightly. Inside an expanded Journey node, prefer flat sections and separators; reserve bordered containers for actual controls such as inputs, not content grouping.
 - Motion: Short layout transitions; a restrained activity pulse for running nodes; respect reduced motion.
 - Imagery/iconography: Reuse Lucide icons. Do not use illustrative imagery in the journey workspace.

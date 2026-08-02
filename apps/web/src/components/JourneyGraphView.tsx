@@ -432,7 +432,6 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
   const StatusIcon = status.icon;
   const targetPosition = data.direction === "TB" ? Position.Top : Position.Left;
   const sourcePosition = data.direction === "TB" ? Position.Bottom : Position.Right;
-  const completedTodos = node.todos.filter((todo) => todo.completed).length;
   const hasAgentOutput = data.agentWorking || node.activity.some((entry) => entry.kind === "agent");
 
   return (
@@ -461,20 +460,20 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
         position={targetPosition}
         className="!size-2 !border-0 !bg-muted-foreground/45"
       />
-      <div className={cn("flex items-start gap-2 px-4 py-3.5", data.expanded && "pb-4")}>
+      <div className="flex items-start gap-1.5 px-3 py-2.5">
         <button
           type="button"
           className="nodrag min-w-0 flex-1 text-left"
           onClick={() => data.onToggleExpanded(node.id)}
         >
           <span className="block min-w-0">
-            <span className="flex items-center gap-2 text-[10px] font-semibold">
+            <span className="flex items-center gap-1.5 text-[10px] font-semibold leading-3.5">
               <span className={cn("truncate", type.textClassName)}>{type.label}</span>
-              <span className="h-3 w-px shrink-0 bg-border/70" aria-hidden="true" />
-              <span className="inline-flex min-w-0 items-center gap-1.5">
+              <span className="h-2.5 w-px shrink-0 bg-border/70" aria-hidden="true" />
+              <span className="inline-flex min-w-0 items-center gap-1">
                 <StatusIcon
                   className={cn(
-                    "size-3 shrink-0",
+                    "size-2.5 shrink-0",
                     status.pulse ? "animate-spin motion-reduce:animate-none" : "",
                   )}
                   aria-hidden="true"
@@ -484,26 +483,22 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                 </span>
               </span>
             </span>
-            <span className="mt-2.5 block text-sm font-semibold leading-5 text-foreground">
+            <span
+              className={cn(
+                "mt-1 block text-[13px] font-semibold leading-4 text-foreground",
+                !data.expanded && "truncate",
+              )}
+              title={node.title}
+            >
               {node.title}
             </span>
-            {node.summary && (
-              <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-muted-foreground">
-                {node.summary}
-              </span>
-            )}
-            {node.todos.length > 0 && (
-              <span className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
-                <ListChecksIcon className="size-3" /> {completedTodos}/{node.todos.length}
-              </span>
-            )}
           </span>
         </button>
         <div className="nodrag flex shrink-0 items-center gap-0.5">
           <button
             type="button"
             className={cn(
-              "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              "rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
               data.focused && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
             )}
             title={data.focused ? "Return to full graph" : "Focus node"}
@@ -512,14 +507,14 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
             onClick={() => data.onToggleFocus(node.id)}
           >
             {data.focused ? (
-              <Minimize2Icon className="size-3.5" aria-hidden="true" />
+              <Minimize2Icon className="size-3" aria-hidden="true" />
             ) : (
-              <FocusIcon className="size-3.5" aria-hidden="true" />
+              <FocusIcon className="size-3" aria-hidden="true" />
             )}
           </button>
           <button
             type="button"
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title={data.expanded ? "Collapse node" : "Expand node"}
             aria-label={
               data.expanded ? `Collapse node: ${node.title}` : `Expand node: ${node.title}`
@@ -528,7 +523,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
             onClick={() => data.onToggleExpanded(node.id)}
           >
             <ChevronDownIcon
-              className={cn("size-3.5 transition-transform", data.expanded && "rotate-180")}
+              className={cn("size-3 transition-transform", data.expanded && "rotate-180")}
               aria-hidden="true"
             />
           </button>
@@ -536,7 +531,11 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
       </div>
 
       {data.expanded && (
-        <div className="nodrag nowheel space-y-5 border-t border-border/50 px-4 py-4">
+        <div className="nodrag nowheel space-y-4 border-t border-border/50 px-3 py-3">
+          {node.summary && (
+            <p className="text-xs leading-4 text-muted-foreground">{node.summary}</p>
+          )}
+
           {hasAgentOutput && (
             <button
               type="button"
@@ -560,7 +559,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
           )}
 
           {node.todos.length > 0 && (
-            <section className="space-y-2 border-t border-border/50 pt-4">
+            <section className="space-y-2 border-t border-border/50 pt-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Todos
               </p>
@@ -591,7 +590,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
           )}
 
           {node.interaction && node.status === "waitingForUser" && (
-            <div className="border-t border-border/50 pt-4">
+            <div className="border-t border-border/50 pt-3">
               <JourneyInteractionForm
                 key={node.interaction.id}
                 node={node}
@@ -601,7 +600,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
           )}
 
           {node.activity.length > 0 && (
-            <section className="space-y-2 border-t border-border/50 pt-4">
+            <section className="space-y-2 border-t border-border/50 pt-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Activity
               </p>

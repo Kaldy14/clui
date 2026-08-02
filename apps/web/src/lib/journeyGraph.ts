@@ -6,14 +6,14 @@ import {
 } from "@clui/contracts";
 import { Schema } from "effect";
 
-export const JOURNEY_NODE_WIDTH = 320;
+export const JOURNEY_NODE_WIDTH = 280;
 export const JOURNEY_NODE_EXPANDED_WIDTH = 520;
 export const JOURNEY_NODE_FOCUSED_WIDTH = 720;
-const JOURNEY_NODE_HEIGHT = 132;
+export const JOURNEY_NODE_HEIGHT = 64;
 const JOURNEY_NODE_EXPANDED_HEIGHT = 680;
 const JOURNEY_NODE_FOCUSED_HEIGHT = 820;
-const LAYER_GAP = 150;
-const NODE_GAP = 56;
+const LAYER_GAP = 88;
+const NODE_GAP = 32;
 
 export function journeyNodeZIndex(expanded: boolean, focused: boolean): number {
   if (focused) return 200;
