@@ -533,6 +533,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             event.payload.title !== undefined;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
+            ...(event.payload.surface !== undefined ? { surface: event.payload.surface } : {}),
             ...(!skipTitle && event.payload.title !== undefined
               ? { title: event.payload.title }
               : {}),

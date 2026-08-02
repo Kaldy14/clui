@@ -27,7 +27,7 @@
 
 ## Information architecture
 
-- Primary navigation: Existing project/thread sidebar remains the entry point. A thread has a surface (`terminal` or `journey`); terminal harness selection remains independent.
+- Primary navigation: Existing project/thread sidebar remains the entry point. The standard new-thread composer switches between a terminal session and a journey; the sidebar has one creation action for both.
 - Core routes/screens: Existing thread route branches to terminal or journey content. The journey surface consists of a graph toolbar, pannable graph, expandable nodes, and an optional activity/interaction area within expanded nodes.
 - Content hierarchy: Journey destination and controls; actionable/current nodes; dependencies and spawned relationships; expanded node details; run/activity detail; completed history.
 

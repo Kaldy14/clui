@@ -19,6 +19,7 @@ import {
   FolderIcon,
   GaugeIcon,
   MonitorIcon,
+  NetworkIcon,
   PlayIcon,
   ShieldAlertIcon,
   TerminalIcon,
@@ -289,6 +290,7 @@ function modelForHarnessSelection(
 function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Thread }) {
   const { updateSettings } = useAppSettings();
   const [starting, setStarting] = useState(false);
+  const [journeyMode, setJourneyMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dangerouslySkipPermissions = useTerminalStateStore(
     (s) => selectThreadTerminalState(s.terminalStateByThreadId, threadId).yoloMode,
@@ -396,6 +398,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
   ]);
 
   const handleStart = useCallback(async () => {
+    if (journeyMode && !hasInitialPrompt) return;
     const api = readNativeApi();
     if (!api) return;
     setStarting(true);
@@ -435,6 +438,17 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
         startCwd = project.cwd;
       }
       if (!startCwd) return;
+      if (journeyMode) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId,
+          surface: "journey",
+          harness: "pi",
+          piRenderMode: "html",
+        });
+        return;
+      }
       // cols/rows are initial defaults — ActiveTerminalView sends a corrective
       // resize with actual container dimensions immediately after mounting.
       const initialPromptSentByStart = thread.harness === "pi" && hasInitialPrompt;
@@ -466,6 +480,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
     effectiveEnvMode,
     hasInitialPrompt,
     initialPrompt,
+    journeyMode,
     localFastMode,
     piRenderMode,
     clearNewThreadPromptDraft,
@@ -696,12 +711,20 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
       : thread.worktreePath
         ? "Worktree"
         : "New worktree";
-  const startDisabled = starting || (!cwd && !isWorktreePending) || !isWorktreeBaseSelected;
+  const startDisabled =
+    starting ||
+    (!cwd && !isWorktreePending) ||
+    !isWorktreeBaseSelected ||
+    (journeyMode && !hasInitialPrompt);
   const startLabel = starting
     ? isWorktreePending
       ? "Creating worktree"
-      : "Starting"
-    : `Start ${CODING_HARNESS_LABELS[thread.harness]}`;
+      : journeyMode
+        ? "Starting journey"
+        : "Starting"
+    : journeyMode
+      ? "Start journey"
+      : `Start ${CODING_HARNESS_LABELS[thread.harness]}`;
 
   return (
     <div
@@ -732,7 +755,11 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                     onChange={(event) => setInitialPrompt(event.target.value)}
                     onPaste={handleInitialPromptPaste}
                     onKeyDown={handlePromptKeyDown}
-                    placeholder={`Ask ${CODING_HARNESS_LABELS[thread.harness]} what to do first...`}
+                    placeholder={
+                      journeyMode
+                        ? "What do you want to figure out, decide, or build?"
+                        : `Ask ${CODING_HARNESS_LABELS[thread.harness]} what to do first...`
+                    }
                     aria-label="First prompt"
                     rows={3}
                     spellCheck
@@ -742,18 +769,27 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
 
                 <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3">
                   <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <NewThreadChoiceMenu
-                      ariaLabel="Choose coding harness"
-                      value={thread.harness}
-                      label={CODING_HARNESS_LABELS[thread.harness]}
-                      icon={<HarnessIcon harness={thread.harness} className="size-4 shrink-0" />}
-                      options={NEW_THREAD_HARNESS_CHOICES}
-                      onValueChange={handleHarnessChange}
-                    />
+                    {!journeyMode && (
+                      <>
+                        <NewThreadChoiceMenu
+                          ariaLabel="Choose coding harness"
+                          value={thread.harness}
+                          label={CODING_HARNESS_LABELS[thread.harness]}
+                          icon={
+                            <HarnessIcon harness={thread.harness} className="size-4 shrink-0" />
+                          }
+                          options={NEW_THREAD_HARNESS_CHOICES}
+                          onValueChange={handleHarnessChange}
+                        />
 
-                    <span aria-hidden="true" className="mx-0.5 h-4 w-px shrink-0 bg-border/70" />
+                        <span
+                          aria-hidden="true"
+                          className="mx-0.5 h-4 w-px shrink-0 bg-border/70"
+                        />
+                      </>
+                    )}
 
-                    {thread.harness === "pi" && (
+                    {!journeyMode && thread.harness === "pi" && (
                       <>
                         <NewThreadChoiceMenu
                           ariaLabel="Choose pi render mode"
@@ -785,7 +821,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                       </>
                     )}
 
-                    {thread.harness === "claudeCode" && (
+                    {!journeyMode && thread.harness === "claudeCode" && (
                       <>
                         <NewThreadChoiceMenu
                           ariaLabel="Choose Claude Code backend"
@@ -815,7 +851,7 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                       </>
                     )}
 
-                    {thread.harness !== "pi" && (
+                    {!journeyMode && thread.harness !== "pi" && (
                       <NewThreadToggleControl
                         checked={dangerouslySkipPermissions}
                         label="YOLO"
@@ -825,6 +861,14 @@ function NewThreadView({ threadId, thread }: { threadId: ThreadId; thread: Threa
                         onCheckedChange={setYolo}
                       />
                     )}
+
+                    <NewThreadToggleControl
+                      checked={journeyMode}
+                      label="Journey"
+                      ariaLabel="Start this thread as a journey"
+                      icon={<NetworkIcon className="size-4" />}
+                      onCheckedChange={setJourneyMode}
+                    />
                   </div>
 
                   <button

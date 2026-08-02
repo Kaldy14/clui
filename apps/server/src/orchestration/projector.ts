@@ -377,6 +377,7 @@ export function projectEvent(
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.surface !== undefined ? { surface: payload.surface } : {}),
               ...(!skipTitle && payload.title !== undefined ? { title: payload.title } : {}),
               ...(payload.model !== undefined ? { model: payload.model } : {}),
               ...(payload.harness !== undefined ? { harness: payload.harness } : {}),

@@ -4,6 +4,29 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-02 — Move Journey selection into the new-thread composer
+
+**Problem:** Journey had a separate project-sidebar creation button instead of being selectable from the normal new-thread screen, and its empty state included unnecessary explanatory copy.
+
+**Root cause:** A thread surface was fixed at creation time, so the first Journey implementation needed a separate creation path rather than letting an unstarted draft change modes.
+
+**Fix:** Added a Journey switch to the standard new-thread composer, made surface changes valid only while a thread is still new, and start Journey drafts through the existing graph bootstrap using the composer prompt. Removed the dedicated sidebar button and the two filler sentences from the Journey empty state.
+
+**Affected files:**
+
+- `DESIGN.md`
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/orchestration.test.ts`
+- `apps/server/src/orchestration/decider.ts`
+- `apps/server/src/orchestration/decider.lifecycle.test.ts`
+- `apps/server/src/orchestration/projector.ts`
+- `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/components/Sidebar.tsx`
+- `apps/web/src/routes/__root.tsx`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-02 — Add free-form agent Journeys
 
 **Problem:** Clui threads only offered a terminal surface, making long-running discovery, decision, and implementation work difficult to understand or steer as it branched into questions, proposals, tasks, and user checkpoints.

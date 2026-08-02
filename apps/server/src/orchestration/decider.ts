@@ -471,6 +471,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.surface !== undefined && thread.terminalStatus !== "new") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Surface can only be changed before the thread has started.",
+        });
+      }
       if (command.harness !== undefined && thread.terminalStatus !== "new") {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -494,6 +500,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
+          ...(command.surface !== undefined ? { surface: command.surface } : {}),
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.harness !== undefined ? { harness: command.harness } : {}),

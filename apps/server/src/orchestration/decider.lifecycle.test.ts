@@ -78,6 +78,34 @@ function eventTypes(
 }
 
 describe("lifecycle command decider", () => {
+  it("changes the surface only while a thread is new", async () => {
+    const draft = makeThread({ terminalStatus: "new" });
+    const event = await decide(
+      {
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-surface-journey"),
+        threadId: draft.id,
+        surface: "journey",
+      },
+      draft,
+    );
+
+    expect(eventTypes(event)).toEqual(["thread.meta-updated"]);
+    expect("type" in event ? event.payload : null).toMatchObject({ surface: "journey" });
+
+    await expect(
+      decide(
+        {
+          type: "thread.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-surface-too-late"),
+          threadId: draft.id,
+          surface: "journey",
+        },
+        makeThread({ terminalStatus: "active" }),
+      ),
+    ).rejects.toThrow("Surface can only be changed before the thread has started");
+  });
+
   it("emits explicit settle and snooze events", async () => {
     const thread = makeThread();
     const settled = await decide(

@@ -353,6 +353,7 @@ function EventRouter() {
       if (event.type === "thread.meta-updated") {
         const {
           threadId,
+          surface,
           title,
           titleSource,
           bookmarked,
@@ -373,6 +374,7 @@ function EventRouter() {
 
         const hasBranchPatch = branch !== undefined || worktreePath !== undefined;
         const hasTitlePatch = !isCurrentThread && (title !== undefined || bookmarked !== undefined);
+        const hasSurfacePatch = surface !== undefined;
         const hasHarnessPatch = harness !== undefined;
         const hasClaudeBackendPatch = claudeCodeBackend !== undefined || model !== undefined;
         const hasArchivePatch = archivedAt !== undefined;
@@ -380,6 +382,7 @@ function EventRouter() {
         if (
           hasBranchPatch ||
           hasTitlePatch ||
+          hasSurfacePatch ||
           hasHarnessPatch ||
           hasClaudeBackendPatch ||
           hasArchivePatch
@@ -387,6 +390,7 @@ function EventRouter() {
           useStore.setState((state) => {
             const threads = updateThread(state.threads, ThreadId.makeUnsafe(threadId), (t) => ({
               ...t,
+              ...(surface !== undefined ? { surface } : {}),
               ...(branch !== undefined ? { branch } : {}),
               ...(worktreePath !== undefined ? { worktreePath } : {}),
               ...(harness !== undefined ? { harness } : {}),

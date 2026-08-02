@@ -477,6 +477,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
   threadId: ThreadId,
+  surface: Schema.optional(ThreadSurface),
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   harness: Schema.optional(CodingHarness),
@@ -872,6 +873,7 @@ export const ThreadUnsnoozedPayload = Schema.Struct({
 
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
+  surface: Schema.optional(ThreadSurface),
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   harness: Schema.optional(CodingHarness),

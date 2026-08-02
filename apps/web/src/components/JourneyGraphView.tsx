@@ -69,6 +69,7 @@ import { registerHarnessOutputSubscription } from "../lib/harnessOutputSubscript
 import { cn, newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { updateThread, useStore } from "../store";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -597,7 +598,15 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const project = useStore((state) =>
     state.projects.find((entry) => entry.id === thread?.projectId),
   );
-  const [destination, setDestination] = useState("");
+  const initialDestination = useTerminalStateStore(
+    (state) =>
+      selectThreadTerminalState(state.terminalStateByThreadId, threadId).newThreadPromptDraft,
+  );
+  const clearNewThreadPromptDraft = useTerminalStateStore(
+    (state) => state.clearNewThreadPromptDraft,
+  );
+  const bootstrapDestinationRef = useRef(initialDestination.trim());
+  const [destination, setDestination] = useState(initialDestination);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [agentMessage, setAgentMessage] = useState("");
   const [starting, setStarting] = useState(false);
@@ -845,6 +854,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
   const handleStartJourney = useCallback(async () => {
     if (!destination.trim() || starting) return;
     setStarting(true);
+    clearNewThreadPromptDraft(threadId);
     const snapshot = makeInitialJourney(destination);
     try {
       await persistJourney(snapshot);
@@ -863,7 +873,13 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
     } finally {
       setStarting(false);
     }
-  }, [destination, persistJourney, runAgent, starting]);
+  }, [clearNewThreadPromptDraft, destination, persistJourney, runAgent, starting, threadId]);
+
+  useEffect(() => {
+    if (journey || !bootstrapDestinationRef.current) return;
+    bootstrapDestinationRef.current = "";
+    void handleStartJourney();
+  }, [handleStartJourney, journey]);
 
   const handleToggleTodo = useCallback(
     (nodeId: string, todoId: string, completed: boolean) => {
@@ -993,13 +1009,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
             <span className="rounded-xl bg-primary/10 p-2.5 text-primary">
               <NetworkIcon className="size-5" />
             </span>
-            <div>
-              <h1 className="text-base font-semibold text-foreground">Start a journey</h1>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                Describe the destination. The agent will create the first useful graph and evolve it
-                with you.
-              </p>
-            </div>
+            <h1 className="pt-2 text-base font-semibold text-foreground">Start a journey</h1>
           </div>
           <Textarea
             autoFocus
@@ -1014,8 +1024,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
               }
             }}
           />
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <span className="text-[11px] text-muted-foreground">The graph can take any shape.</span>
+          <div className="mt-4 flex justify-end">
             <Button
               disabled={!destination.trim() || starting}
               onClick={() => void handleStartJourney()}

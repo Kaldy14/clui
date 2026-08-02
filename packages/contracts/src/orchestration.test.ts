@@ -7,6 +7,7 @@ import {
   DEFAULT_CLAUDE_CODE_BACKEND,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
@@ -31,6 +32,7 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeProjectScript = Schema.decodeUnknownEffect(ProjectScript);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeCodingHarness = Schema.decodeUnknownEffect(CodingHarness);
 
 const baseThread = {
@@ -56,6 +58,19 @@ it.effect("decodes Codex CLI as a coding harness", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeCodingHarness("codexCli");
     assert.strictEqual(parsed, "codexCli");
+  }),
+);
+
+it.effect("accepts a journey surface change on thread metadata updates", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-journey-surface",
+      threadId: "thread-1",
+      surface: "journey",
+    });
+    assert.strictEqual(parsed.type, "thread.meta.update");
+    assert.strictEqual(parsed.surface, "journey");
   }),
 );
 
