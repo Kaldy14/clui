@@ -4,6 +4,20 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-03 — Keep Journey agent startup visibly active
+
+**Problem:** A newly opened Codex Journey output panel could appear completely blank while the root node remained on “Agent working,” making a healthy but slow coordinator look stuck.
+
+**Root cause:** Codex emits non-JSON startup text and lifecycle JSONL before its first displayable agent/tool item. The panel suppressed its waiting state as soon as any raw bytes arrived, even when the parser still had zero renderable entries.
+
+**Fix:** Base the Codex empty state on renderable entry count instead of raw output length. The panel now shows “Starting Codex…” before bytes arrive and a working message while startup output is present but no displayable item exists. Added regressions for both startup phases and the transition to rendered output.
+
+**Affected files:**
+
+- `apps/web/src/components/JourneyAgentOutputView.tsx`
+- `apps/web/src/components/JourneyAgentOutputView.test.tsx`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-03 — Restore authoritative Journey tools and durable output access
 
 **Problem:** A Journey started its coordinator node but never created child nodes, could spin on a rejected terminal callback, and hid the agent-output button after a run became terminal.

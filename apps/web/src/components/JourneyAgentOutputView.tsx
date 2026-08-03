@@ -22,6 +22,20 @@ import PiHtmlThreadView from "./PiHtmlThreadView";
 
 const MAX_CODEX_OUTPUT_ENTRIES = 200;
 
+export function journeyAgentOutputWaitingMessage(input: {
+  harness: Extract<CodingHarness, "pi" | "codexCli">;
+  output: string;
+  codexEntryCount: number;
+}): string | null {
+  if (input.harness === "pi") {
+    return input.output ? null : "Waiting for agent output…";
+  }
+  if (input.codexEntryCount > 0) return null;
+  return input.output
+    ? "Codex is working… Waiting for the first displayable update."
+    : "Starting Codex…";
+}
+
 const ENTRY_PRESENTATION = {
   agent: { label: "Codex", icon: BotIcon, className: "text-sky-600 dark:text-sky-300" },
   reasoning: {
@@ -221,6 +235,11 @@ function SelectedJourneyRunOutput({
       harness === "codexCli" ? codexExecOutputEntries(output).slice(-MAX_CODEX_OUTPUT_ENTRIES) : [],
     [harness, output],
   );
+  const waitingMessage = journeyAgentOutputWaitingMessage({
+    harness,
+    output,
+    codexEntryCount: entries.length,
+  });
 
   useLayoutEffect(() => {
     if (!atBottomRef.current) return;
@@ -246,8 +265,8 @@ function SelectedJourneyRunOutput({
           {output}
         </pre>
       ) : null}
-      {!output && !error && (
-        <p className="px-4 py-3 text-xs text-muted-foreground">Waiting for agent output…</p>
+      {waitingMessage && !error && (
+        <p className="px-4 py-3 text-xs text-muted-foreground">{waitingMessage}</p>
       )}
       {error && (
         <p className="m-3 rounded-md border border-red-500/35 bg-red-500/8 px-3 py-2 text-xs text-red-700 dark:text-red-300">
