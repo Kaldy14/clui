@@ -72,6 +72,7 @@ import {
 } from "../lib/journeyGraph";
 import {
   activeJourneyRuns,
+  hasJourneyAgentOutput,
   isJourneyRunActive,
   journeyInteractionSubmitCommand,
   journeyRootStartCommand,
@@ -102,6 +103,7 @@ type JourneyNodeData = {
   expanded: boolean;
   focused: boolean;
   agentWorking: boolean;
+  hasAgentOutput: boolean;
   agentOutputOpen: boolean;
   interactionBlockedReason: string | null;
   onToggleExpanded: (nodeId: string) => void;
@@ -453,7 +455,6 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
   const StatusIcon = status.icon;
   const targetPosition = data.direction === "TB" ? Position.Top : Position.Left;
   const sourcePosition = data.direction === "TB" ? Position.Bottom : Position.Right;
-  const hasAgentOutput = data.agentWorking || node.activity.some((entry) => entry.kind === "agent");
   const { expanded, focused, onHeightChange } = data;
 
   useEffect(() => {
@@ -522,7 +523,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
           </span>
         </button>
         <div className="nodrag flex shrink-0 items-center gap-0.5">
-          {hasAgentOutput && (
+          {data.hasAgentOutput && (
             <button
               type="button"
               className={cn(
@@ -1294,6 +1295,7 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
           expanded: expandedNodeId === node.id,
           focused: focusedNodeId === node.id,
           agentWorking: run !== null && isJourneyRunActive(run),
+          hasAgentOutput: hasJourneyAgentOutput(projection, node),
           agentOutputOpen: agentOutputNodeId === node.id,
           interactionBlockedReason:
             node.type === "proposal" && !projection

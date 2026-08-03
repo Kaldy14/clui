@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeJourneyRuns,
   coordinatorPrompt,
+  hasJourneyAgentOutput,
   journeyRootStartCommand,
   journeyInteractionSubmitCommand,
   journeySteeringRemoveCommand,
@@ -104,6 +105,31 @@ describe("Journey projection UI helpers", () => {
     ];
 
     expect(latestAttemptFenceForRun(attempts, "run-a")).toEqual(attempts[1]?.fence);
+  });
+
+  it("keeps agent output discoverable after the node run stops", () => {
+    const snapshot = projection([run("run-failed", "research-a", "failed")]);
+    const node = {
+      id: "research-a",
+      activity: [],
+    } as Pick<JourneyProjectionSnapshot["journey"]["nodes"][number], "id" | "activity">;
+
+    expect(hasJourneyAgentOutput(snapshot, node)).toBe(true);
+    expect(hasJourneyAgentOutput(projection([]), node)).toBe(false);
+    expect(
+      hasJourneyAgentOutput(null, {
+        ...node,
+        activity: [
+          {
+            id: "activity-1",
+            kind: "agent",
+            summary: "Persisted result",
+            detailMarkdown: "",
+            createdAt: now,
+          },
+        ],
+      }),
+    ).toBe(true);
   });
 
   it("targets node-local steering first and falls back to the active coordinator", () => {

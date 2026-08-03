@@ -9,6 +9,7 @@ import {
   buildCodexResearchProcessLaunch,
   buildDarwinReadOnlySandboxProfile,
   buildPiResearchProcessLaunch,
+  CODEX_JOURNEY_MCP_APPROVAL_CONFIG,
   PI_RESEARCH_TOOL_ALLOWLIST,
   preparePiResearchRuntime,
 } from "./researchHarnessProfile";
@@ -47,6 +48,15 @@ describe("buildCodexResearchProcessLaunch", () => {
         codexArgs: ["--dangerously-bypass-approvals-and-sandbox", "exec", "inspect"],
       }),
     ).toThrow("cannot bypass approvals or sandboxing");
+  });
+
+  it("allows only the fenced Journey MCP server to bypass interactive tool approvals", () => {
+    const launch = buildCodexResearchProcessLaunch({
+      codexExecutable: "/opt/clui/bin/codex",
+      codexArgs: ["-c", CODEX_JOURNEY_MCP_APPROVAL_CONFIG, "exec", "inspect"],
+    });
+
+    expect(launch.args).toEqual(expect.arrayContaining(["-c", CODEX_JOURNEY_MCP_APPROVAL_CONFIG]));
   });
 
   it.each([

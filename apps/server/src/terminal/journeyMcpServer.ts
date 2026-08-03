@@ -506,6 +506,128 @@ for await (const line of input) {
 }
 `.trimStart();
 }
+
+/** Pi extension equivalent of the stdio MCP server used by Codex Journey attempts. */
+export function buildJourneyPiExtensionSource(): string {
+  return `
+const endpoint = process.env.${CLUI_JOURNEY_TOOL_ENDPOINT_ENV};
+const threadId = process.env.${CLUI_JOURNEY_TOOL_THREAD_ID_ENV};
+const token = process.env.${CLUI_JOURNEY_TOOL_TOKEN_ENV};
+const runId = process.env.${CLUI_JOURNEY_TOOL_RUN_ID_ENV};
+const nodeId = process.env.${CLUI_JOURNEY_TOOL_NODE_ID_ENV};
+const attempt = process.env.${CLUI_JOURNEY_TOOL_ATTEMPT_ENV};
+const grantedCapabilities = new Set(JSON.parse(process.env.${CLUI_JOURNEY_TOOL_CAPABILITIES_ENV} ?? "[]"));
+
+const toolDefinitions = [
+  {
+    name: "journey_get",
+    label: "Read Journey",
+    capability: "graph.read",
+    description: "Read the latest durable Clui Journey graph before deciding the next mutation.",
+    promptSnippet: "Read the current Clui Journey graph",
+    promptGuidelines: ["Use journey_get when the current Journey graph may have changed."],
+    parameters: ${JSON.stringify(JOURNEY_GET_INPUT_SCHEMA)},
+    path: "/snapshot",
+    method: "GET",
+  },
+  {
+    name: "journey_update",
+    label: "Update Journey",
+    capability: "graph.mutate",
+    description: "Immediately create, update, or remove Journey nodes and edges while real work is happening.",
+    promptSnippet: "Update the visible Clui Journey graph while work progresses",
+    promptGuidelines: ["Use journey_update only for concrete work that is starting, a real result, or a genuine blocker."],
+    parameters: ${JSON.stringify(JOURNEY_UPDATE_INPUT_SCHEMA)},
+    path: "/update",
+    method: "POST",
+  },
+  {
+    name: "journey_research_start",
+    label: "Start Journey research",
+    capability: "research.start",
+    description: "Start a concrete read-only research node and its durable worker attempt.",
+    promptSnippet: "Start a read-only Journey research worker",
+    promptGuidelines: ["Use journey_research_start for concrete independent questions that can run concurrently."],
+    parameters: ${JSON.stringify(JOURNEY_RESEARCH_START_INPUT_SCHEMA)},
+    path: "/research/start",
+    method: "POST",
+  },
+  {
+    name: "journey_research_get",
+    label: "Read Journey research",
+    capability: "research.read",
+    description: "Inspect the durable state of Journey research runs.",
+    promptSnippet: "Inspect Journey research results",
+    promptGuidelines: ["Use journey_research_get to read completed research before deciding the next Journey mutation."],
+    parameters: ${JSON.stringify(JOURNEY_RESEARCH_GET_INPUT_SCHEMA)},
+    path: "/research/get",
+    method: "POST",
+  },
+  {
+    name: "journey_research_cancel",
+    label: "Cancel Journey research",
+    capability: "research.cancel",
+    description: "Cancel a Journey research run that is no longer needed.",
+    promptSnippet: "Cancel obsolete Journey research",
+    promptGuidelines: ["Use journey_research_cancel only for research that is no longer relevant to the active Journey."],
+    parameters: ${JSON.stringify(JOURNEY_RESEARCH_CANCEL_INPUT_SCHEMA)},
+    path: "/research/cancel",
+    method: "POST",
+  },
+  {
+    name: "journey_implementation_start",
+    label: "Start Journey implementation",
+    capability: "implementation.start",
+    description: "Start a repository-writing implementation node after any required approval.",
+    promptSnippet: "Start approved Journey implementation",
+    promptGuidelines: ["Use journey_implementation_start only after any required material proposal is approved."],
+    parameters: ${JSON.stringify(JOURNEY_IMPLEMENTATION_START_INPUT_SCHEMA)},
+    path: "/implementation/start",
+    method: "POST",
+  },
+];
+
+async function requestJourney(path, method, params) {
+  const response = await fetch(endpoint + path + "?thread=" + encodeURIComponent(threadId), {
+    method,
+    headers: {
+      Authorization: "Bearer " + token,
+      "X-Clui-Journey-Run-Id": runId,
+      "X-Clui-Journey-Node-Id": nodeId,
+      "X-Clui-Journey-Attempt": attempt,
+      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(method === "POST" ? { body: JSON.stringify(params ?? {}) } : {}),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || "Clui Journey request failed with status " + response.status);
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+export default function (pi) {
+  if (!endpoint || !threadId || !token || !runId || !nodeId || !attempt) {
+    throw new Error("Clui Journey Pi extension configuration is incomplete.");
+  }
+  for (const definition of toolDefinitions) {
+    if (!grantedCapabilities.has(definition.capability)) continue;
+    pi.registerTool({
+      name: definition.name,
+      label: definition.label,
+      description: definition.description,
+      promptSnippet: definition.promptSnippet,
+      promptGuidelines: definition.promptGuidelines,
+      parameters: definition.parameters,
+      async execute(_toolCallId, params) {
+        const result = await requestJourney(definition.path, definition.method, params);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      },
+    });
+  }
+}
+`.trimStart();
+}
 import crypto from "node:crypto";
 
 import {

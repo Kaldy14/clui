@@ -6,6 +6,7 @@ import type {
   JourneyAttemptFence,
   JourneyDecisionSubmitCommand,
   JourneyLogicalRun,
+  JourneyNode,
   JourneyPhysicalAttempt,
   JourneyProjectionSnapshot,
   JourneyProposalRevisionHash,
@@ -58,6 +59,17 @@ export function latestRunForNode(
           ? right.updatedAt.localeCompare(left.updatedAt)
           : attemptDifference;
       })[0] ?? null
+  );
+}
+
+/** Output remains inspectable after a run becomes terminal, even without an activity summary. */
+export function hasJourneyAgentOutput(
+  snapshot: JourneyProjectionSnapshot | null,
+  node: Pick<JourneyNode, "id" | "activity">,
+): boolean {
+  return (
+    node.activity.some((entry) => entry.kind === "agent") ||
+    (snapshot !== null && latestRunForNode(snapshot, node.id) !== null)
   );
 }
 

@@ -329,6 +329,8 @@ function setup(currentProjection = projection()) {
     adapter,
     authorizer,
     stateDir: workspace,
+    toolEndpoint: "http://127.0.0.1:3773/journey-tools",
+    ensureToolRuntime: async () => undefined,
     clock,
     resolveExecutable: () => "/usr/bin/true",
     inspectWorkspaceClean: async () => true,
@@ -515,14 +517,28 @@ describe("JourneyReactorRuntime", () => {
     ).toHaveLength(1);
   });
 
-  it("commits before launch, passes the capability token, and deduplicates callbacks", async () => {
+  it("commits before launch, injects attempt-scoped Codex tools, and deduplicates callbacks", async () => {
     const { runtime, adapter, commands, order } = setup();
     await runtime.handleEvent(
       event("journey.attempt-start-requested", { fence, capabilities: ["graph.read"] }),
     );
 
     expect(order.slice(0, 3)).toEqual(["output.begin", "authorizer.issue", "adapter.start"]);
-    expect(adapter.profile?.baseEnv).toMatchObject({ CLUI_JOURNEY_TOOL_TOKEN: "journey-token" });
+    expect(adapter.profile?.baseEnv).toMatchObject({
+      CLUI_JOURNEY_TOOL_ENDPOINT: "http://127.0.0.1:3773/journey-tools",
+      CLUI_JOURNEY_TOOL_THREAD_ID: threadId,
+      CLUI_JOURNEY_TOOL_TOKEN: "journey-token",
+    });
+    expect(adapter.profile?.codexConfigArgs).toEqual(
+      expect.arrayContaining([
+        "-c",
+        expect.stringContaining("mcp_servers.clui_journey.command="),
+        "-c",
+        expect.stringContaining("CLUI_JOURNEY_RUN_ID"),
+        "-c",
+        "mcp_servers.clui_journey.required=true",
+      ]),
+    );
 
     const started: JourneyHarnessLifecycleEvent = {
       type: "started",
@@ -625,6 +641,10 @@ describe("JourneyReactorRuntime", () => {
     await failed.runtime.handleEvent(
       event("journey.attempt-start-requested", { fence, capabilities: ["graph.read"] }),
     );
+    failed.adapter.emit({ type: "error", fence, message: "late launch error callback" });
+    await failed.runtime.flush();
+    failed.clock.fireAll();
+    await failed.runtime.flush();
     expect(failed.commands).toHaveLength(1);
     expect(failed.commands[0]).toMatchObject({
       type: "journey.attempt.fail",
@@ -753,6 +773,25 @@ describe("JourneyReactorRuntime", () => {
       outcome: { kind: "waitForDependencies" },
     });
     expect(output.deactivated).toBe(1);
+  });
+
+  it("injects the capability-fenced Pi Journey extension", async () => {
+    const { runtime, adapter } = setup(projection(run({ harness: "pi" })));
+
+    await runtime.handleEvent(
+      event("journey.attempt-start-requested", { fence, capabilities: ["graph.read"] }),
+    );
+
+    expect(adapter.profile).toMatchObject({
+      harness: "pi",
+      trustedPiExtensionPaths: [expect.stringMatching(/clui-journey-pi-extension\.js$/)],
+      trustedPiToolNames: ["journey_get"],
+      baseEnv: {
+        CLUI_JOURNEY_TOOL_ENDPOINT: "http://127.0.0.1:3773/journey-tools",
+        CLUI_JOURNEY_TOOL_THREAD_ID: threadId,
+        CLUI_JOURNEY_TOOL_TOKEN: "journey-token",
+      },
+    });
   });
 
   it("interrupts and retains ownership when quiescence exit acknowledgement times out", async () => {

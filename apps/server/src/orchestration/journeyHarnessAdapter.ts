@@ -37,6 +37,12 @@ export interface JourneyHarnessProfile {
   readonly runtimeRoot?: string;
   readonly resumeIdentity?: string;
   readonly baseEnv?: Readonly<Record<string, string | undefined>>;
+  /** Trusted global Codex CLI configuration inserted before `exec`. */
+  readonly codexConfigArgs?: ReadonlyArray<string>;
+  /** Trusted Pi extensions kept outside caller-controlled extra arguments. */
+  readonly trustedPiExtensionPaths?: ReadonlyArray<string>;
+  /** Capability-derived custom tools added to Pi's enforced read-only allowlist. */
+  readonly trustedPiToolNames?: ReadonlyArray<string>;
   readonly extraArgs?: ReadonlyArray<string>;
   readonly processRegistryDir?: string;
 }
@@ -205,6 +211,11 @@ function validateProfile(profile: JourneyHarnessProfile): void {
   if (!path.isAbsolute(profile.executable)) {
     throw new Error("Journey harness executable must be an absolute path.");
   }
+  for (const extensionPath of profile.trustedPiExtensionPaths ?? []) {
+    if (!path.isAbsolute(extensionPath)) {
+      throw new Error("Trusted Journey Pi extensions must use absolute paths.");
+    }
+  }
   if (
     profile.role === "researchWorker" &&
     profile.capabilities.some((capability) => FORBIDDEN_RESEARCH_CAPABILITIES.has(capability))
@@ -223,13 +234,17 @@ function validateProfile(profile: JourneyHarnessProfile): void {
 }
 
 function promptWithResultContract(role: JourneyRunRole, prompt: string): string {
-  const resultShape =
+  const roleInstructions =
     role === "coordinator"
-      ? "a Journey coordinator outcome"
+      ? `Use the available Journey tools to evolve the graph and start concrete research or implementation work. Do not perform repository work in the coordinator process.
+Return exactly one of these JSON shapes:
+{"kind":"complete","summary":"..."}
+{"kind":"waitForDependencies","successDependencyNodeIds":["..."],"observeTerminalRunIds":["..."],"reason":"..."}
+{"kind":"waitForUser","interactionId":"...","decisionNodeId":"...","reason":"..."}`
       : role === "researchWorker"
-        ? "a Journey research result"
-        : "a Journey implementation result";
-  return `${prompt.trim()}\n\nWhen finished, print exactly one final line beginning with ${RESULT_MARKER} followed by valid JSON for ${resultShape}.`;
+        ? `Return JSON shaped as {"kind":"research","summary":"...","evidence":[{"source":"...","finding":"..."}],"unresolved":["..."]}.`
+        : `Return JSON shaped as {"kind":"implementation","summary":"...","changedFiles":["..."],"verification":[{"command":"...","outcome":"...","passed":true}],"unresolved":["..."]}.`;
+  return `${prompt.trim()}\n\n${roleInstructions}\nWhen the run has reached its outcome, stop working and print exactly one final line beginning with ${RESULT_MARKER} followed immediately by the JSON.`;
 }
 
 function commonArgs(profile: JourneyHarnessProfile): string[] {
@@ -255,8 +270,14 @@ async function buildLaunch(
   };
 
   if (profile.harness === "codexCli") {
-    const args = [
+    const codexGlobalArgs = [
       ...commonArgs(profile),
+      "--ask-for-approval",
+      "never",
+      ...(profile.codexConfigArgs ?? []),
+    ];
+    const args = [
+      ...codexGlobalArgs,
       "exec",
       "--json",
       "--color",
@@ -275,7 +296,7 @@ async function buildLaunch(
     return {
       command: profile.executable,
       args: [
-        ...commonArgs(profile),
+        ...codexGlobalArgs,
         "exec",
         "--json",
         "--color",
@@ -307,13 +328,23 @@ async function buildLaunch(
     return buildPiResearchProcessLaunch({
       piExecutable: profile.executable,
       piArgs,
+      ...(profile.trustedPiExtensionPaths
+        ? { trustedExtensionPaths: profile.trustedPiExtensionPaths }
+        : {}),
+      ...(profile.trustedPiToolNames ? { trustedToolNames: profile.trustedPiToolNames } : {}),
       runtimeRoot: profile.runtimeRoot,
       baseEnv,
     });
   }
   return {
     command: profile.executable,
-    args: piArgs,
+    args: [
+      ...(profile.trustedPiExtensionPaths ?? []).flatMap((extensionPath) => [
+        "--extension",
+        extensionPath,
+      ]),
+      ...piArgs,
+    ],
     env: baseEnv,
   };
 }
@@ -520,6 +551,12 @@ export class JourneyHarnessAdapter {
       if (error instanceof JourneyHarnessOwnershipUncertainError) {
         entry.terminal = true;
         entry.state = "interrupted";
+        entry.failureReason = error.message;
+        throw error;
+      }
+      if (entry.process === null) {
+        entry.terminal = true;
+        entry.state = "failed";
         entry.failureReason = error.message;
         throw error;
       }

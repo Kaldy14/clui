@@ -89,6 +89,9 @@ function profile(input?: {
   capabilities?: ReadonlyArray<JourneyCapability>;
   runtimeRoot?: string;
   resumeIdentity?: string;
+  codexConfigArgs?: ReadonlyArray<string>;
+  trustedPiExtensionPaths?: ReadonlyArray<string>;
+  trustedPiToolNames?: ReadonlyArray<string>;
 }): JourneyHarnessProfile {
   const role = input?.role ?? "researchWorker";
   return {
@@ -102,6 +105,11 @@ function profile(input?: {
     executable: input?.harness === "pi" ? "/usr/local/bin/pi" : "/usr/local/bin/codex",
     ...(input?.runtimeRoot ? { runtimeRoot: input.runtimeRoot } : {}),
     ...(input?.resumeIdentity ? { resumeIdentity: input.resumeIdentity } : {}),
+    ...(input?.codexConfigArgs ? { codexConfigArgs: input.codexConfigArgs } : {}),
+    ...(input?.trustedPiExtensionPaths
+      ? { trustedPiExtensionPaths: input.trustedPiExtensionPaths }
+      : {}),
+    ...(input?.trustedPiToolNames ? { trustedPiToolNames: input.trustedPiToolNames } : {}),
   };
 }
 
@@ -223,6 +231,31 @@ describe("JourneyHarnessAdapter", () => {
     expect(factory.processes[0]!.killedWith).toEqual(["SIGTERM"]);
     expect(adapter.inspect(attemptFence)).toMatchObject({ state: "cancelling", pid: 1_000 });
     expect(adapter.inspect(fence("missing"))).toBeNull();
+  });
+
+  it("reports synchronous launch rejection only to the caller", async () => {
+    const factory = new FakeProcessFactory();
+    const lifecycle: JourneyHarnessLifecycleEvent[] = [];
+    const adapter = new JourneyHarnessAdapter(factory);
+    const attemptFence = fence("launch-rejected");
+
+    await expect(
+      adapter.start({
+        fence: attemptFence,
+        profile: profile({
+          codexConfigArgs: ["-c", 'approval_policy="on-request"'],
+        }),
+        prompt: "Inspect",
+        cwd: "/repo",
+        observer: { onLifecycle: (event) => lifecycle.push(event) },
+      }),
+    ).rejects.toThrow("cannot override sandbox or approval config");
+
+    expect(lifecycle).toEqual([]);
+    expect(adapter.inspect(attemptFence)).toMatchObject({
+      state: "failed",
+      failureReason: expect.stringContaining("cannot override sandbox or approval config"),
+    });
   });
 
   it("distinguishes quiescence termination from user cancellation", async () => {
@@ -516,6 +549,70 @@ describe("JourneyHarnessAdapter", () => {
     expect(codexLaunch!.command).toBe("/usr/local/bin/codex");
     expect(codexLaunch!.args).toEqual(expect.arrayContaining(["exec", "--sandbox", "read-only"]));
     expect(codexLaunch!.args.join(" ")).toContain("CLUI_JOURNEY_RESULT:");
+  });
+
+  it("places trusted Journey tool adapters where each harness can load them", async () => {
+    const factory = new FakeProcessFactory();
+    const adapter = new JourneyHarnessAdapter(factory);
+    const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "clui-journey-tools-"));
+    temporaryRoots.push(runtimeRoot);
+    const piExtension = "/clui-runtime/clui-journey-pi-extension.js";
+    const codexConfigArgs = [
+      "-c",
+      'mcp_servers.clui_journey.command="/usr/bin/node"',
+      "-c",
+      "mcp_servers.clui_journey.required=true",
+    ];
+
+    await adapter.start({
+      fence: fence("pi-tools"),
+      profile: profile({
+        harness: "pi",
+        runtimeRoot,
+        trustedPiExtensionPaths: [piExtension],
+        trustedPiToolNames: ["journey_get", "journey_research_get"],
+      }),
+      prompt: "Coordinate with Pi",
+      cwd: "/repo",
+    });
+    await adapter.start({
+      fence: fence("codex-tools"),
+      profile: profile({ harness: "codexCli", codexConfigArgs }),
+      prompt: "Coordinate with Codex",
+      cwd: "/repo",
+    });
+
+    const [piLaunch, codexLaunch] = factory.launches;
+    expect(piLaunch!.args).toEqual(expect.arrayContaining(["--extension", piExtension]));
+    expect(piLaunch!.args).toEqual(
+      expect.arrayContaining(["--tools", "read,grep,find,ls,journey_get,journey_research_get"]),
+    );
+    expect(codexLaunch!.args).toEqual(expect.arrayContaining(codexConfigArgs));
+    expect(codexLaunch!.args.indexOf("-c")).toBeLessThan(codexLaunch!.args.indexOf("exec"));
+    expect(codexLaunch!.args).toEqual(expect.arrayContaining(["--ask-for-approval", "never"]));
+  });
+
+  it("loads Journey tools for Codex implementation owners without interactive approvals", async () => {
+    const factory = new FakeProcessFactory();
+    const adapter = new JourneyHarnessAdapter(factory);
+    const codexConfigArgs = ["-c", 'mcp_servers.clui_journey.command="/usr/bin/node"'];
+
+    await adapter.start({
+      fence: fence("codex-implementation-tools"),
+      profile: profile({
+        harness: "codexCli",
+        role: "implementationOwner",
+        codexConfigArgs,
+      }),
+      prompt: "Implement the approved node",
+      cwd: "/repo",
+    });
+
+    const [launch] = factory.launches;
+    expect(launch!.args).toEqual(expect.arrayContaining(codexConfigArgs));
+    expect(launch!.args.indexOf("-c")).toBeLessThan(launch!.args.indexOf("exec"));
+    expect(launch!.args).toEqual(expect.arrayContaining(["--ask-for-approval", "never"]));
+    expect(launch!.args).toEqual(expect.arrayContaining(["--sandbox", "workspace-write"]));
   });
 
   it("validates coordinator and implementation results by role for both harnesses", async () => {

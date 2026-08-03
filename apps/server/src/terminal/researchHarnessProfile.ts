@@ -4,6 +4,8 @@ import path from "node:path";
 
 export const PI_RESEARCH_TOOL_ALLOWLIST = "read,grep,find,ls";
 export const CODEX_RESEARCH_SANDBOX = "read-only";
+export const CODEX_JOURNEY_MCP_APPROVAL_CONFIG =
+  'mcp_servers.clui_journey.default_tools_approval_mode="approve"';
 
 export interface ResearchProcessLaunch {
   readonly command: string;
@@ -111,6 +113,8 @@ export async function preparePiResearchRuntime(runtimeRoot: string): Promise<{
 export function buildPiResearchProcessLaunch(input: {
   readonly piExecutable: string;
   readonly piArgs: ReadonlyArray<string>;
+  readonly trustedExtensionPaths?: ReadonlyArray<string>;
+  readonly trustedToolNames?: ReadonlyArray<string>;
   readonly runtimeRoot: string;
   readonly baseEnv?: Readonly<Record<string, string | undefined>>;
   readonly platform?: NodeJS.Platform;
@@ -123,6 +127,14 @@ export function buildPiResearchProcessLaunch(input: {
   assertAbsolutePath("Pi executable", input.piExecutable);
   assertAbsolutePath("Pi research runtime root", input.runtimeRoot);
   assertNoPiToolOverride(input.piArgs);
+  for (const extensionPath of input.trustedExtensionPaths ?? []) {
+    assertAbsolutePath("trusted Pi extension", extensionPath);
+  }
+  for (const toolName of input.trustedToolNames ?? []) {
+    if (!/^[a-z][a-z0-9_]*$/u.test(toolName)) {
+      throw new Error(`Invalid trusted Pi tool name: ${toolName}`);
+    }
+  }
 
   let runtimeRoot: string;
   try {
@@ -156,7 +168,11 @@ export function buildPiResearchProcessLaunch(input: {
       "--session-dir",
       sessionDir,
       "--tools",
-      PI_RESEARCH_TOOL_ALLOWLIST,
+      [PI_RESEARCH_TOOL_ALLOWLIST, ...(input.trustedToolNames ?? [])].join(","),
+      ...(input.trustedExtensionPaths ?? []).flatMap((extensionPath) => [
+        "--extension",
+        extensionPath,
+      ]),
       ...input.piArgs,
     ],
     env,
@@ -184,6 +200,15 @@ export function buildCodexResearchProcessLaunch(input: {
     throw new Error("Codex research processes require non-interactive exec mode.");
   }
   const sandboxValues: string[] = [];
+  const assertSafeConfig = (value: string): void => {
+    const key = value.split("=", 1)[0]!;
+    if (
+      /(sandbox|approval|permission|dangerous)/i.test(key) &&
+      value !== CODEX_JOURNEY_MCP_APPROVAL_CONFIG
+    ) {
+      throw new Error("Codex research processes cannot override sandbox or approval config.");
+    }
+  };
   for (let index = 0; index < input.codexArgs.length; index += 1) {
     const arg = input.codexArgs[index]!;
     if (arg === "--sandbox" || arg === "-s") {
@@ -204,17 +229,13 @@ export function buildCodexResearchProcessLaunch(input: {
     if (arg === "--config" || arg === "-c") {
       const value = input.codexArgs[index + 1];
       if (!value) throw new Error(`Codex config flag is missing its value: ${arg}`);
-      if (/(sandbox|approval|permission|dangerous)/i.test(value.split("=", 1)[0]!)) {
-        throw new Error("Codex research processes cannot override sandbox or approval config.");
-      }
+      assertSafeConfig(value);
       index += 1;
       continue;
     }
     if (arg.startsWith("--config=") || /^-c[^-].+/.test(arg)) {
       const value = arg.replace(/^(?:--config=|-c=?)/, "");
-      if (/(sandbox|approval|permission|dangerous)/i.test(value.split("=", 1)[0]!)) {
-        throw new Error("Codex research processes cannot override sandbox or approval config.");
-      }
+      assertSafeConfig(value);
     }
   }
 

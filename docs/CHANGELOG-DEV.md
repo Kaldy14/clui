@@ -4,6 +4,31 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-03 — Restore authoritative Journey tools and durable output access
+
+**Problem:** A Journey started its coordinator node but never created child nodes, could spin on a rejected terminal callback, and hid the agent-output button after a run became terminal.
+
+**Root cause:** The authoritative reactor launched Codex and Pi with only a bearer token, without the Journey endpoint, thread/attempt fence, generated MCP server or Pi extension, capability-derived Pi tool allowlist, or unattended Codex MCP approval mode. A synchronous adapter launch rejection was reported both to the caller and as an observer callback, causing the terminal attempt failure to be retried indefinitely. The web graph treated only active runs and projected activity as evidence that output existed even though attempt output is durably stored.
+
+**Fix:** Added one generated, attempt-scoped Journey tool runtime shared by Codex and Pi; forwarded the complete fence and endpoint identity; configured capability-filtered Pi tools and the narrowly trusted Codex MCP approval override; tightened coordinator/worker result prompts; and loaded the same generated Codex MCP runtime for interactive sessions. Synchronous launch failures now have one owner and terminal callbacks stop retrying. Journey cards keep their output control for every historical run. Added launch, capability, retry, projection, and output regressions, then verified a clean browser run that created and completed a research child while preserving both output controls.
+
+**Affected files:**
+
+- `apps/server/src/orchestration/Layers/JourneyReactor.ts`
+- `apps/server/src/orchestration/Layers/JourneyReactor.test.ts`
+- `apps/server/src/orchestration/journeyHarnessAdapter.ts`
+- `apps/server/src/orchestration/journeyHarnessAdapter.test.ts`
+- `apps/server/src/terminal/journeyHarnessToolRuntime.ts`
+- `apps/server/src/terminal/journeyHarnessToolRuntime.test.ts`
+- `apps/server/src/terminal/journeyMcpServer.ts`
+- `apps/server/src/terminal/researchHarnessProfile.ts`
+- `apps/server/src/terminal/researchHarnessProfile.test.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/web/src/components/JourneyGraphView.tsx`
+- `apps/web/src/lib/journeyProjectionClient.ts`
+- `apps/web/src/lib/journeyProjectionClient.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
 ## 2026-08-03 — Preserve queued Journey research and cascade node deletion
 
 **Problem:** An atomic research child start was rejected when concurrency was full or another Journey owned the next fair admission, so the work disappeared instead of waiting. Deleting a node also cancelled only runs directly attached to that node, allowing active descendants to outlive the removed branch.

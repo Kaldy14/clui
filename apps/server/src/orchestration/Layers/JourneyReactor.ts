@@ -34,7 +34,18 @@ import {
   journeyAttemptAuthorizer,
   type JourneyAttemptGrant,
 } from "../../terminal/journeyAttemptAuthorization";
-import { CLUI_JOURNEY_TOOL_TOKEN_ENV } from "../../terminal/journeyMcpServer";
+import {
+  CLUI_JOURNEY_TOOL_ENDPOINT_ENV,
+  CLUI_JOURNEY_TOOL_THREAD_ID_ENV,
+  CLUI_JOURNEY_TOOL_TOKEN_ENV,
+} from "../../terminal/journeyMcpServer";
+import {
+  buildCodexJourneyMcpConfigArgs,
+  ensureJourneyHarnessToolRuntime,
+  journeyHarnessToolRuntimePaths,
+  journeyToolNamesForCapabilities,
+  type JourneyHarnessToolRuntimePaths,
+} from "../../terminal/journeyHarnessToolRuntime";
 import { getSessionProcessRegistryDir } from "../../terminal/sessionProcessRegistry";
 
 const execFileAsync = promisify(execFile);
@@ -104,6 +115,9 @@ export interface JourneyReactorOptions {
   readonly adapter: JourneyReactorAdapter;
   readonly authorizer: JourneyReactorAuthorizer;
   readonly stateDir: string;
+  readonly toolEndpoint: string;
+  readonly toolRuntimePaths?: JourneyHarnessToolRuntimePaths;
+  readonly ensureToolRuntime?: () => Promise<void>;
   readonly clock?: JourneyReactorClock;
   readonly startAckTimeoutMs?: number;
   readonly terminationAckTimeoutMs?: number;
@@ -197,6 +211,9 @@ export class JourneyReactorRuntime {
   private readonly authorizer: JourneyReactorAuthorizer;
   private readonly stateDir: string;
   private readonly registryDir: string;
+  private readonly toolEndpoint: string;
+  private readonly toolRuntimePaths: JourneyHarnessToolRuntimePaths;
+  private readonly ensureToolRuntime: () => Promise<void>;
   private readonly clock: JourneyReactorClock;
   private readonly startAckTimeoutMs: number;
   private readonly terminationAckTimeoutMs: number;
@@ -222,6 +239,12 @@ export class JourneyReactorRuntime {
     this.authorizer = options.authorizer;
     this.stateDir = options.stateDir;
     this.registryDir = getSessionProcessRegistryDir(options.stateDir);
+    this.toolEndpoint = options.toolEndpoint;
+    this.toolRuntimePaths =
+      options.toolRuntimePaths ?? journeyHarnessToolRuntimePaths(options.stateDir);
+    this.ensureToolRuntime =
+      options.ensureToolRuntime ??
+      (async () => void (await ensureJourneyHarnessToolRuntime(options.stateDir)));
     this.clock = options.clock ?? systemClock();
     this.startAckTimeoutMs = options.startAckTimeoutMs ?? DEFAULT_START_ACK_TIMEOUT_MS;
     this.terminationAckTimeoutMs =
@@ -473,6 +496,12 @@ export class JourneyReactorRuntime {
       "Continue this Journey run.";
     const cwd = await this.resolveWorkspace(run.threadId);
     try {
+      await this.ensureToolRuntime();
+    } catch (cause) {
+      await this.failAttempt(fence, "launchRejected", errorMessage(cause));
+      return;
+    }
+    try {
       await this.engine.beginJourneyRunOutput(fence);
     } catch (cause) {
       await this.failAttempt(fence, "launchRejected", errorMessage(cause));
@@ -529,6 +558,7 @@ export class JourneyReactorRuntime {
         );
       } else {
         await this.failAttempt(fence, "spawnFailed", errorMessage(cause));
+        state.terminalCallbackDelivered = true;
       }
     }
   }
@@ -967,7 +997,21 @@ export class JourneyReactorRuntime {
       ),
       processRegistryDir: this.registryDir,
       ...(run.resumableHarnessIdentity ? { resumeIdentity: run.resumableHarnessIdentity } : {}),
-      baseEnv: { [CLUI_JOURNEY_TOOL_TOKEN_ENV]: grant.token },
+      ...(run.harness === "codexCli"
+        ? {
+            codexConfigArgs: buildCodexJourneyMcpConfigArgs(this.toolRuntimePaths.mcpServerPath, {
+              attemptScoped: true,
+            }),
+          }
+        : {
+            trustedPiExtensionPaths: [this.toolRuntimePaths.piExtensionPath],
+            trustedPiToolNames: journeyToolNamesForCapabilities(run.capabilities),
+          }),
+      baseEnv: {
+        [CLUI_JOURNEY_TOOL_ENDPOINT_ENV]: this.toolEndpoint,
+        [CLUI_JOURNEY_TOOL_THREAD_ID_ENV]: run.threadId,
+        [CLUI_JOURNEY_TOOL_TOKEN_ENV]: grant.token,
+      },
     };
   }
 
@@ -1162,6 +1206,7 @@ export class JourneyReactorRuntime {
     const task = state.outputTail.then(operation);
     state.outputTail = task.catch(() => undefined);
     const retrying = task.catch((cause) => {
+      if (state.terminalCallbackDelivered) return;
       console.error("Journey reactor callback failed; scheduling deterministic retry.", cause);
       this.clock.schedule(CALLBACK_RETRY_MS, () => this.queueAttemptCallback(state, operation));
     });
@@ -1229,6 +1274,7 @@ export const makeJourneyReactor = Effect.gen(function* () {
     adapter: new JourneyHarnessAdapter(),
     authorizer: journeyAttemptAuthorizer,
     stateDir: config.stateDir,
+    toolEndpoint: `http://127.0.0.1:${config.port}/journey-tools`,
   });
 
   const start: JourneyReactorShape["start"] = Effect.gen(function* () {
