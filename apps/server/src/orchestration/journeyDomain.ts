@@ -230,7 +230,7 @@ function requireInterruptedReconciliationFence(
   return current;
 }
 
-function waitReady(
+export function isJourneyWaitReady(
   projection: JourneyDomainThreadProjection,
   readModel: OrchestrationReadModel,
   wait: JourneyWaitProjection,
@@ -969,7 +969,7 @@ export function decideJourneyCommand(input: {
           acceptedWakeGeneration: null,
         },
       });
-      if (waitReady(projection, readModel, pendingWait!)) {
+      if (isJourneyWaitReady(projection, readModel, pendingWait!)) {
         events.push({
           type: "journey.wait-wake-accepted",
           payload: {
@@ -1001,7 +1001,7 @@ export function decideJourneyCommand(input: {
       if (wait.acceptedWakeGeneration !== null) {
         throw invariant(command, "Journey wait generation has already accepted a wake.");
       }
-      if (!waitReady(projection, readModel, wait)) {
+      if (!isJourneyWaitReady(projection, readModel, wait)) {
         throw invariant(command, "Journey wait is not ready.");
       }
       const fence = {

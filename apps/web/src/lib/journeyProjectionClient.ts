@@ -7,6 +7,7 @@ import type {
   JourneyDecisionSubmitCommand,
   JourneyLogicalRun,
   JourneyNode,
+  JourneyNodeStatus,
   JourneyPhysicalAttempt,
   JourneyProjectionSnapshot,
   JourneyProposalRevisionHash,
@@ -30,6 +31,41 @@ const ACTIVE_RUN_STATUSES = new Set<JourneyLogicalRun["status"]>([
 
 export function isJourneyRunActive(run: JourneyLogicalRun): boolean {
   return ACTIVE_RUN_STATUSES.has(run.status);
+}
+
+export type JourneyNodeRunDisplay = {
+  readonly nodeStatus: JourneyNodeStatus;
+  readonly statusLabel: string | null;
+  readonly agentWorking: boolean;
+};
+
+export function journeyNodeRunDisplay(
+  nodeStatus: JourneyNodeStatus,
+  run: Pick<JourneyLogicalRun, "status"> | null,
+): JourneyNodeRunDisplay {
+  if (!run) return { nodeStatus, statusLabel: null, agentWorking: false };
+  switch (run.status) {
+    case "queued":
+      return { nodeStatus: "ready", statusLabel: "Queued", agentWorking: false };
+    case "starting":
+    case "running":
+    case "quiescing":
+      return { nodeStatus: "running", statusLabel: "Agent working", agentWorking: true };
+    case "waitingForDependencies":
+      return { nodeStatus: "ready", statusLabel: "Waiting for agents", agentWorking: false };
+    case "waitingForUser":
+      return { nodeStatus: "waitingForUser", statusLabel: null, agentWorking: false };
+    case "interrupted":
+      return { nodeStatus: "blocked", statusLabel: "Interrupted", agentWorking: false };
+    case "cancelling":
+      return { nodeStatus: "blocked", statusLabel: "Cancelling", agentWorking: false };
+    case "completed":
+      return { nodeStatus: "completed", statusLabel: null, agentWorking: false };
+    case "failed":
+      return { nodeStatus: "failed", statusLabel: null, agentWorking: false };
+    case "cancelled":
+      return { nodeStatus: "cancelled", statusLabel: null, agentWorking: false };
+  }
 }
 
 export function activeJourneyRuns(snapshot: JourneyProjectionSnapshot): JourneyLogicalRun[] {
@@ -87,7 +123,7 @@ export function selectJourneySteeringRun(
 }
 
 export function coordinatorPrompt(destination: string): string {
-  return `Coordinate this Journey: ${destination}\n\nAdapt the workflow to the actual work. For a simple, concrete request, create one cohesive task or implementation node and proceed without approval. For ambiguous or complex work, first research facts that can be discovered without the user, split independent research into concurrent branches, and ask only questions that require a real user decision. Converge real research results into a concrete material proposal and wait for approval before repository writes. Add nodes only for work that is starting, a real result, or a genuine decision/blocker; never create placeholder or future-roadmap nodes.`;
+  return `Coordinate this Journey: ${destination}\n\nAdapt the workflow to the actual work. For a simple, concrete request, create one cohesive task or implementation node and proceed without approval. For ambiguous or complex work, first research facts that can be discovered without the user, split independent research into concurrent branches, and ask only questions that require a real user decision. Converge real research results into a concrete material proposal and wait for approval before repository writes. Treat logical run status and durable research results as authoritative even when a graph node card still says running. Never wait again on terminal runs or launch a separate worker merely to synthesize completed research; read their results, update the graph, and move to a real decision or completion. Add nodes only for work that is starting, a real result, or a genuine decision/blocker; never create placeholder or future-roadmap nodes.`;
 }
 
 export function journeyRootStartCommand(input: {

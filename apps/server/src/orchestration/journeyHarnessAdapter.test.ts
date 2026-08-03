@@ -551,6 +551,23 @@ describe("JourneyHarnessAdapter", () => {
     expect(codexLaunch!.args.join(" ")).toContain("CLUI_JOURNEY_RESULT:");
   });
 
+  it("prevents coordinators from waiting again on terminal dependency runs", async () => {
+    const factory = new FakeProcessFactory();
+    const adapter = new JourneyHarnessAdapter(factory);
+
+    await adapter.start({
+      fence: fence("coordinator-contract"),
+      profile: profile({ role: "coordinator" }),
+      prompt: "Coordinate",
+      cwd: "/repo",
+    });
+
+    const launchPrompt = factory.launches[0]!.args.join(" ");
+    expect(launchPrompt).toContain("Never wait for dependencies that are already terminal");
+    expect(launchPrompt).toContain("without launching a redundant synthesis worker");
+    expect(launchPrompt).toContain("return waitForUser or complete");
+  });
+
   it("places trusted Journey tool adapters where each harness can load them", async () => {
     const factory = new FakeProcessFactory();
     const adapter = new JourneyHarnessAdapter(factory);

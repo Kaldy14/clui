@@ -237,6 +237,8 @@ function promptWithResultContract(role: JourneyRunRole, prompt: string): string 
   const roleInstructions =
     role === "coordinator"
       ? `Use the available Journey tools to evolve the graph and start concrete research or implementation work. Do not perform repository work in the coordinator process.
+Treat logical run state and durable results returned by journey_research_get as authoritative; a graph node card can still say running after its run has completed.
+Before returning waitForDependencies, inspect every referenced run. Use waitForDependencies only when at least one referenced run is still non-terminal or its durable result is unavailable. Never wait for dependencies that are already terminal: fetch their results, synthesize them yourself without launching a redundant synthesis worker, update the graph with a concrete proposal or decision, then return waitForUser or complete.
 Return exactly one of these JSON shapes:
 {"kind":"complete","summary":"..."}
 {"kind":"waitForDependencies","successDependencyNodeIds":["..."],"observeTerminalRunIds":["..."],"reason":"..."}

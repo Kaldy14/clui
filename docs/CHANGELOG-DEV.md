@@ -6,16 +6,25 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ## 2026-08-03 — Keep Journey agent startup visibly active
 
-**Problem:** A newly opened Codex Journey output panel could appear completely blank while the root node remained on “Agent working,” making a healthy but slow coordinator look stuck.
+**Problem:** A newly opened Codex Journey output panel could appear completely blank while the root node remained on “Agent working,” making a healthy but slow coordinator look stuck. Completed or waiting child cards could also keep saying “Agent working.” A coordinator that finished quiescing before its research children could remain in `waitingForDependencies` after every child completed, or repeatedly wait again on child runs that were already terminal.
 
-**Root cause:** Codex emits non-JSON startup text and lifecycle JSONL before its first displayable agent/tool item. The panel suppressed its waiting state as soon as any raw bytes arrived, even when the parser still had zero renderable entries.
+**Root cause:** Codex emits non-JSON startup text and lifecycle JSONL before its first displayable agent/tool item. The panel suppressed its waiting state as soon as any raw bytes arrived, even when the parser still had zero renderable entries, while card labels trusted stale node presentation status instead of the authoritative logical run. Dependency readiness was evaluated only when coordinator quiescence was acknowledged; later terminal child events released permits but never evaluated durable waits. The coordinator contract also did not distinguish durable logical-run state from stale graph-card status or forbid another dependency wait after all observed runs were terminal.
 
-**Fix:** Base the Codex empty state on renderable entry count instead of raw output length. The panel now shows “Starting Codex…” before bytes arrive and a working message while startup output is present but no displayable item exists. Added regressions for both startup phases and the transition to rendered output.
+**Fix:** Base the Codex empty state on renderable entry count instead of raw output length. The panel now shows “Starting Codex…” before bytes arrive and a working message while startup output is present but no displayable item exists. Cards derive completed, waiting, failed, cancelled, and actively working labels from the logical run. The engine now exposes ready durable waits to the reactor, which evaluates them after terminal runs and during startup reconciliation so the existing domain wake transition launches the next coordinator attempt. Coordinator prompts now require reading authoritative run results, prohibit waiting again on terminal runs, and require direct convergence into a proposal, user decision, or completion rather than a redundant synthesis worker. Added regressions for the startup phases, transition to rendered output, run-derived card status, late dependency completion, and terminal-dependency contract.
 
 **Affected files:**
 
 - `apps/web/src/components/JourneyAgentOutputView.tsx`
 - `apps/web/src/components/JourneyAgentOutputView.test.tsx`
+- `apps/server/src/orchestration/journeyDomain.ts`
+- `apps/server/src/orchestration/Services/OrchestrationEngine.ts`
+- `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`
+- `apps/server/src/orchestration/Layers/JourneyReactor.ts`
+- `apps/server/src/orchestration/Layers/JourneyReactor.test.ts`
+- `apps/server/src/orchestration/journeyHarnessAdapter.ts`
+- `apps/server/src/orchestration/journeyHarnessAdapter.test.ts`
+- `apps/web/src/lib/journeyProjectionClient.ts`
+- `apps/web/src/lib/journeyProjectionClient.test.ts`
 - `docs/CHANGELOG-DEV.md`
 
 ## 2026-08-03 — Restore authoritative Journey tools and durable output access

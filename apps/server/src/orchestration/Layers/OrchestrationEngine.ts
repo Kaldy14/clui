@@ -23,6 +23,7 @@ import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import {
   createEmptyJourneyDomainState,
   getJourneyProjectionSnapshot,
+  isJourneyWaitReady,
   projectJourneyEvent,
 } from "../journeyDomain.ts";
 import { JourneyOutputStoreLive, JourneyOutputStoreService } from "../journeyOutputStore.ts";
@@ -327,6 +328,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       catch: (error) => (error instanceof Error ? error : new Error(String(error))),
     });
 
+  const getReadyJourneyWaits: OrchestrationEngineShape["getReadyJourneyWaits"] = (threadId) =>
+    Effect.sync(() => {
+      const projection = journeyDomainState.threads.find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      if (!projection) return [];
+      return projection.waits.filter(
+        (wait) =>
+          wait.acceptedWakeGeneration === null &&
+          wait.consumedWakeGeneration === null &&
+          isJourneyWaitReady(projection, readModel, wait),
+      );
+    });
+
   const getJourneyDeltas: OrchestrationEngineShape["getJourneyDeltas"] = (
     threadId,
     afterJourneyRevision,
@@ -396,6 +411,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   return {
     getReadModel,
     getJourneyProjection,
+    getReadyJourneyWaits,
     getJourneyDeltas,
     beginJourneyRunOutput,
     appendJourneyRunOutput,

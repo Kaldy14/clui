@@ -23,6 +23,7 @@ import type {
 } from "../journeyHarnessAdapter.ts";
 import { JourneyHarnessOwnershipUncertainError } from "../journeyHarnessAdapter.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
+import type { JourneyWaitProjection } from "../journeyDomain.ts";
 import {
   JourneyReactorRuntime,
   type JourneyReactorAdapter,
@@ -249,6 +250,7 @@ function setup(currentProjection = projection()) {
   const output = { published: [] as string[], deactivated: 0 };
   const revocations: number[] = [];
   let snapshot = currentProjection;
+  let readyWaits: ReadonlyArray<JourneyWaitProjection> = [];
   const engine: JourneyReactorEngine = {
     dispatch: async (command) => {
       if (failNextDispatchType === command.type) {
@@ -294,6 +296,7 @@ function setup(currentProjection = projection()) {
       return { sequence: commands.length };
     },
     getJourneyProjection: async () => snapshot,
+    getReadyJourneyWaits: async () => readyWaits,
     getReadModel: async () => readModel(workspace),
     beginJourneyRunOutput: async () => {
       order.push("output.begin");
@@ -344,6 +347,7 @@ function setup(currentProjection = projection()) {
     order,
     revocations,
     setProjection: (value: JourneyProjectionSnapshot) => (snapshot = value),
+    setReadyWaits: (value: ReadonlyArray<JourneyWaitProjection>) => (readyWaits = value),
     rejectIssue: (error: Error) => (issueError = error),
     failNextDispatch: (type: OrchestrationCommand["type"]) => (failNextDispatchType = type),
     setAdmissionDeferred: (value: boolean) => (admissionDeferred = value),
@@ -453,6 +457,45 @@ describe("JourneyReactorRuntime", () => {
       type: "journey.attempt.start.request",
       fence: { runId: queued.runId, attempt: 1 },
     });
+  });
+
+  it("wakes a ready coordinator wait after a dependency run becomes terminal", async () => {
+    const system = setup(projection(run({ status: "completed" })));
+    system.setReadyWaits([
+      {
+        threadId,
+        runId: "coordinator-run",
+        nodeId: "goal-node",
+        waitGeneration: 2,
+        outcome: {
+          kind: "waitForDependencies",
+          successDependencyNodeIds: [fence.nodeId],
+          observeTerminalRunIds: [fence.runId],
+          reason: "Wait for research",
+        },
+        acceptedWakeGeneration: null,
+        consumedWakeGeneration: null,
+      },
+    ]);
+
+    await system.runtime.handleEvent(
+      event(
+        "journey.run-completed",
+        { fence, status: "completed", reason: "Research complete" },
+        42,
+      ),
+    );
+
+    expect(system.commands).toContainEqual(
+      expect.objectContaining({
+        type: "journey.wait.evaluate",
+        threadId,
+        runId: "coordinator-run",
+        nodeId: "goal-node",
+        waitGeneration: 2,
+        triggerEventSequence: 42,
+      }),
+    );
   });
 
   it("does not finalize a node deletion until every descendant run is terminal", async () => {

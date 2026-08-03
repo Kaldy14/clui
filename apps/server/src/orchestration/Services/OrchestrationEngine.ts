@@ -26,6 +26,7 @@ import type { Effect, Stream } from "effect";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
+import type { JourneyWaitProjection } from "../journeyDomain.ts";
 
 /**
  * OrchestrationEngineShape - Service API for orchestration command and event flow.
@@ -42,6 +43,11 @@ export interface OrchestrationEngineShape {
   readonly getJourneyProjection: (
     threadId: import("@clui/contracts").ThreadId,
   ) => Effect.Effect<JourneyProjectionSnapshot, Error, never>;
+
+  /** Read currently ready durable waits for reactor-owned wake-up dispatch. */
+  readonly getReadyJourneyWaits: (
+    threadId: import("@clui/contracts").ThreadId,
+  ) => Effect.Effect<ReadonlyArray<JourneyWaitProjection>, never, never>;
 
   /** Catch up a Journey projection without treating unrelated global events as gaps. */
   readonly getJourneyDeltas: (

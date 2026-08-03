@@ -11,6 +11,7 @@ import {
   activeJourneyRuns,
   coordinatorPrompt,
   hasJourneyAgentOutput,
+  journeyNodeRunDisplay,
   journeyRootStartCommand,
   journeyInteractionSubmitCommand,
   journeySteeringRemoveCommand,
@@ -147,11 +148,31 @@ describe("Journey projection UI helpers", () => {
     expect(selectJourneySteeringRun(snapshot, "unknown-node")?.runId).toBe("coordinator");
   });
 
+  it("derives card status from the authoritative logical run", () => {
+    expect(journeyNodeRunDisplay("running", { status: "completed" })).toEqual({
+      nodeStatus: "completed",
+      statusLabel: null,
+      agentWorking: false,
+    });
+    expect(journeyNodeRunDisplay("running", { status: "waitingForDependencies" })).toEqual({
+      nodeStatus: "ready",
+      statusLabel: "Waiting for agents",
+      agentWorking: false,
+    });
+    expect(journeyNodeRunDisplay("running", { status: "running" })).toEqual({
+      nodeStatus: "running",
+      statusLabel: "Agent working",
+      agentWorking: true,
+    });
+  });
+
   it("encodes adaptive MVP semantics without placeholder roadmap nodes", () => {
     const prompt = coordinatorPrompt("Make onboarding better");
     expect(prompt).toContain("simple, concrete request");
     expect(prompt).toContain("concurrent branches");
     expect(prompt).toContain("wait for approval before repository writes");
+    expect(prompt).toContain("Never wait again on terminal runs");
+    expect(prompt).toContain("merely to synthesize completed research");
     expect(prompt).toContain("never create placeholder");
   });
 

@@ -75,6 +75,7 @@ import {
   hasJourneyAgentOutput,
   isJourneyRunActive,
   journeyInteractionSubmitCommand,
+  journeyNodeRunDisplay,
   journeyRootStartCommand,
   journeySteeringRemoveCommand,
   latestAttemptFenceForRun,
@@ -103,6 +104,7 @@ type JourneyNodeData = {
   expanded: boolean;
   focused: boolean;
   agentWorking: boolean;
+  statusLabel: string | null;
   hasAgentOutput: boolean;
   agentOutputOpen: boolean;
   interactionBlockedReason: string | null;
@@ -470,7 +472,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
   return (
     <article
       ref={articleRef}
-      aria-label={`${type.label}: ${node.title}. ${status.label}`}
+      aria-label={`${type.label}: ${node.title}. ${data.statusLabel ?? status.label}`}
       className={cn(
         "group rounded-xl border bg-card text-card-foreground shadow-sm transition-[border-color,box-shadow,opacity]",
         status.className,
@@ -513,7 +515,7 @@ function JourneyNodeCard({ data }: NodeProps<JourneyFlowNode>) {
                   aria-hidden="true"
                 />
                 <span className="truncate">
-                  {data.agentWorking ? "Agent working" : status.label}
+                  {data.statusLabel ?? status.label}
                 </span>
               </span>
             </span>
@@ -1285,16 +1287,18 @@ export default function JourneyGraphView({ threadId }: { threadId: ThreadId }) {
         height: JOURNEY_NODE_HEIGHT,
       };
       const run = projection ? latestRunForNode(projection, node.id) : null;
+      const runDisplay = journeyNodeRunDisplay(node.status, run);
       return {
         id: node.id,
         type: "journey",
         position: { x: layout.x, y: layout.y },
         data: {
-          journeyNode: node,
+          journeyNode: { ...node, status: runDisplay.nodeStatus },
           direction: layoutDirection,
           expanded: expandedNodeId === node.id,
           focused: focusedNodeId === node.id,
-          agentWorking: run !== null && isJourneyRunActive(run),
+          agentWorking: runDisplay.agentWorking,
+          statusLabel: runDisplay.statusLabel,
           hasAgentOutput: hasJourneyAgentOutput(projection, node),
           agentOutputOpen: agentOutputNodeId === node.id,
           interactionBlockedReason:

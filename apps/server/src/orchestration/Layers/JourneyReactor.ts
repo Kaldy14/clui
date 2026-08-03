@@ -30,6 +30,7 @@ import {
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine";
 import { JourneyReactor, type JourneyReactorShape } from "../Services/JourneyReactor";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
+import type { JourneyWaitProjection } from "../journeyDomain.ts";
 import {
   journeyAttemptAuthorizer,
   type JourneyAttemptGrant,
@@ -104,6 +105,9 @@ export interface JourneyReactorAdapter {
 export interface JourneyReactorEngine {
   readonly dispatch: (command: OrchestrationCommand) => Promise<{ sequence: number }>;
   readonly getJourneyProjection: (threadId: ThreadId) => Promise<JourneyProjectionSnapshot>;
+  readonly getReadyJourneyWaits: (
+    threadId: ThreadId,
+  ) => Promise<ReadonlyArray<JourneyWaitProjection>>;
   readonly getReadModel: () => Promise<OrchestrationReadModel>;
   readonly beginJourneyRunOutput: (fence: JourneyAttemptFence) => Promise<void>;
   readonly appendJourneyRunOutput: (fence: JourneyAttemptFence, data: string) => Promise<void>;
@@ -366,6 +370,7 @@ export class JourneyReactorRuntime {
       if (this.pendingThreadDeletions.has(thread.id)) {
         await this.finalizePendingDeletions(thread.id, thread.journey.nodes[0]?.id ?? "");
       }
+      await this.wakeReadyWaits(thread.id, readModel.snapshotSequence);
     }
     await this.drainQueuedAdmissions();
   }
@@ -393,6 +398,7 @@ export class JourneyReactorRuntime {
           event.payload.fence.threadId,
           event.payload.fence.nodeId,
         );
+        await this.wakeReadyWaits(event.payload.fence.threadId, event.sequence);
         await this.drainQueuedAdmissions();
         break;
       case "journey.node-deletion-requested":
@@ -476,6 +482,24 @@ export class JourneyReactorRuntime {
     const run = projection.runs.find((candidate) => candidate.runId === requestedRun.runId);
     if (!run || run.status !== "queued" || run.attempt !== 0) return;
     await this.requestRetry(run, projection, null);
+  }
+
+  private async wakeReadyWaits(threadId: ThreadId, triggerEventSequence: number): Promise<void> {
+    const waits = await this.engine.getReadyJourneyWaits(threadId);
+    for (const wait of waits) {
+      await this.dispatch({
+        type: "journey.wait.evaluate",
+        commandId: CommandId.makeUnsafe(
+          `journey-wait-evaluate:${threadId}:${wait.runId}:${wait.waitGeneration}:${triggerEventSequence}`,
+        ),
+        threadId,
+        runId: wait.runId,
+        nodeId: wait.nodeId,
+        waitGeneration: wait.waitGeneration,
+        triggerEventSequence,
+        createdAt: this.clock.now(),
+      });
+    }
   }
 
   private async launchAttempt(fence: JourneyAttemptFence): Promise<void> {
@@ -1264,6 +1288,8 @@ export const makeJourneyReactor = Effect.gen(function* () {
     engine: {
       dispatch: (command) => Effect.runPromise(engine.dispatch(command)),
       getJourneyProjection: (threadId) => Effect.runPromise(engine.getJourneyProjection(threadId)),
+      getReadyJourneyWaits: (threadId) =>
+        Effect.runPromise(engine.getReadyJourneyWaits(threadId)),
       getReadModel: () => Effect.runPromise(engine.getReadModel()),
       beginJourneyRunOutput: (fence) => Effect.runPromise(engine.beginJourneyRunOutput(fence)),
       appendJourneyRunOutput: (fence, data) =>
