@@ -99,7 +99,7 @@ jobs:
             target: AppImage
             arch: x64
           - label: Windows x64
-            runner: ubuntu-24.04
+            runner: windows-2022
             platform: win
             target: nsis
             arch: x64
@@ -119,13 +119,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: package.json
-
-      - name: Install Wine for Windows packaging
-        if: matrix.platform == 'win'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes unzip wine
-          wine --version
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

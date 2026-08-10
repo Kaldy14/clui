@@ -4,6 +4,28 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-10 — Build Windows desktop artifacts on Windows
+
+**Problem:** The Windows x64 release got past proxy ZIP extraction, then Electron Builder failed
+while rebuilding `msgpackr-extract` with `node-gyp does not support cross-compiling native modules
+from source`.
+
+**Root cause:** The Windows NSIS target ran on Ubuntu with Wine. Clui ships native Node modules,
+including `node-pty` and `msgpackr-extract`, and Electron Builder cannot rebuild their Windows
+binaries from a Linux host.
+
+**Fix:** Moved the Windows x64 matrix entry to the native `windows-2022` runner, which matches the
+existing Visual Studio 2022 node-gyp configuration, and removed the obsolete Wine installation.
+Added a regression test that keeps the Windows release on its native runner.
+
+**Affected files:**
+
+- `.github/workflows/release.yml`
+- `scripts/release-workflow.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-08-10 — Fix Windows proxy archive extraction
 
 **Problem:** The Windows x64 desktop release built the application successfully, then failed while
