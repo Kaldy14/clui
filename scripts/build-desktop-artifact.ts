@@ -11,6 +11,7 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageClaudeCodeProxy } from "./lib/claude-code-proxy-release.ts";
+import { createDesktopPackageIdentity } from "./lib/desktop-build-config.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -487,7 +488,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const repoRoot = yield* RepoRoot;
   const buildConfig: Record<string, unknown> = {
     appId: "com.clui.app",
-    productName,
+    ...createDesktopPackageIdentity(productName),
     artifactName: "Clui-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",

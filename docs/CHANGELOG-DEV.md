@@ -4,6 +4,28 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-10 — Fix Linux AppImage filename validation
+
+**Problem:** The Linux desktop release completed the application builds and native dependency
+rebuilds, then failed while Electron Builder assembled the AppImage.
+
+**Root cause:** Release staging passed the branded `Clui (Alpha)` product name directly to Electron
+Builder without a separate executable name. Electron Builder 26 derived `productFilename` from that
+value and rejected its parentheses as unsafe for the AppImage build scripts.
+
+**Fix:** Preserved `Clui (Alpha)` as the display product name while assigning the filesystem-safe
+`Clui` executable name in the staged Electron Builder configuration. Added regression coverage for
+the display-name/executable-name split.
+
+**Affected files:**
+
+- `scripts/build-desktop-artifact.ts`
+- `scripts/lib/desktop-build-config.ts`
+- `scripts/lib/desktop-build-config.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-08-10 — Add OMP as a first-class terminal harness
 
 **Problem:** Clui could create terminal threads for Claude Code, pi, and Codex CLI, but users of
