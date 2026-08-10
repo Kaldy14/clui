@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 
 import type {
   ClaudeCodeBackend,
@@ -88,6 +90,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   private maxActiveSessions: number;
   private readonly hookConfig: HookConfig | null;
   private readonly dangerouslySkipPermissions: boolean;
+  private readonly stateDir: string | null;
   private readonly processRegistryDir: string | null;
   private readonly claudeCodeProxyManager: NonNullable<
     ClaudeSessionManagerOptions["claudeCodeProxyManager"]
@@ -102,6 +105,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     this.maxActiveSessions = options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
     this.hookConfig = options.hookConfig ?? null;
     this.dangerouslySkipPermissions = options.dangerouslySkipPermissions ?? false;
+    this.stateDir = options.stateDir ?? null;
     this.processRegistryDir = options.stateDir
       ? getSessionProcessRegistryDir(options.stateDir)
       : null;
@@ -126,10 +130,13 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
         this.stopProcess(existing);
       }
 
-      // Claude accepts a caller-provided session ID. Codex creates its own ID,
-      // which is recorded from the injected SessionStart hook after launch.
+      // Claude accepts a caller-provided session ID. OMP uses a thread-scoped
+      // session directory, so its synthetic ID is only a persisted resume marker.
+      // Codex creates its own ID, which is recorded from SessionStart after launch.
       const claudeSessionId =
-        harness === "claudeCode" ? (input.resumeSessionId ?? crypto.randomUUID()) : null;
+        harness === "claudeCode" || harness === "omp"
+          ? (input.resumeSessionId ?? crypto.randomUUID())
+          : null;
 
       const entry: ClaudeSessionEntry = existing ?? {
         threadId: input.threadId,
@@ -161,13 +168,15 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
       this.sessions.set(input.threadId, entry);
 
       const skipPermissions = input.dangerouslySkipPermissions ?? this.dangerouslySkipPermissions;
-      const args =
-        harness === "codexCli"
-          ? this.buildCodexArgs(input, skipPermissions)
-          : this.buildClaudeArgs(input, claudeSessionId!, skipPermissions);
 
       try {
         await assertValidCwd(input.cwd);
+        const args =
+          harness === "codexCli"
+            ? this.buildCodexArgs(input, skipPermissions)
+            : harness === "omp"
+              ? await this.buildOmpArgs(input, skipPermissions)
+              : this.buildClaudeArgs(input, claudeSessionId!, skipPermissions);
 
         const runtimeEnv =
           harness === "claudeCode" && input.claudeCodeBackend === "codex"
@@ -177,7 +186,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
 
         const ptyProcess = await Effect.runPromise(
           this.ptyAdapter.spawn({
-            shell: harness === "codexCli" ? "codex" : "claude",
+            shell: harness === "codexCli" ? "codex" : harness === "omp" ? "omp" : "claude",
             args,
             cwd: input.cwd,
             cols: input.cols,
@@ -219,10 +228,10 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
           createdAt: new Date().toISOString(),
         });
 
-        // Claude session IDs and resumed Codex IDs are known immediately. A
-        // new Codex session reports its generated ID through SessionStart.
+        // Claude IDs, OMP resume markers, and resumed Codex IDs are known
+        // immediately. A new Codex session reports its generated ID later.
         const knownSessionId =
-          harness === "claudeCode"
+          harness === "claudeCode" || harness === "omp"
             ? claudeSessionId
             : (entry.claudeSessionId ?? input.resumeSessionId);
         if (knownSessionId) {
@@ -354,7 +363,7 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
   }
 
   async reconcileActiveSessions(maxActive: number): Promise<void> {
-    for (const harness of ["claudeCode", "codexCli"] as const) {
+    for (const harness of ["claudeCode", "codexCli", "omp"] as const) {
       const activeSessions = [...this.sessions.values()].filter(
         (entry) => entry.harness === harness && entry.status === "active" && entry.process !== null,
       );
@@ -536,6 +545,30 @@ export class ClaudeSessionManagerRuntime extends EventEmitter<ClaudeSessionManag
     }
     if (input.resumeSessionId) {
       args.push(input.resumeSessionId);
+    }
+    return args;
+  }
+
+  private async buildOmpArgs(
+    input: { threadId: string; resumeSessionId?: string },
+    skipPermissions: boolean,
+  ): Promise<string[]> {
+    if (!this.stateDir) {
+      throw new Error("OMP sessions require a configured Clui state directory");
+    }
+    const sessionDir = path.join(
+      this.stateDir,
+      "omp-sessions",
+      Buffer.from(input.threadId).toString("base64url"),
+    );
+    await mkdir(sessionDir, { recursive: true });
+
+    const args = ["--session-dir", sessionDir];
+    if (input.resumeSessionId) {
+      args.push("--continue");
+    }
+    if (skipPermissions) {
+      args.push("--yolo");
     }
     return args;
   }

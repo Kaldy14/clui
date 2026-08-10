@@ -174,6 +174,7 @@ export function getActiveHarnessSessionStats(input: {
     claudeCode: 0,
     pi: 0,
     codexCli: 0,
+    omp: 0,
   };
 
   for (const thread of input.threads) {
@@ -195,7 +196,11 @@ export function getActiveHarnessSessionStats(input: {
 
   return {
     activeByHarness,
-    totalActive: activeByHarness.claudeCode + activeByHarness.pi + activeByHarness.codexCli,
+    totalActive:
+      activeByHarness.claudeCode +
+      activeByHarness.pi +
+      activeByHarness.codexCli +
+      activeByHarness.omp,
     maxActivePerHarness: input.maxActivePerHarness,
     busiestHarness,
     busiestHarnessActive,

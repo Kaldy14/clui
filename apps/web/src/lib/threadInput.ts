@@ -5,6 +5,8 @@ import {
   PI_TUI_SUBMIT_SEQUENCE,
 } from "@clui/shared/piTuiInput";
 
+import { isPiDerivedHarness } from "./harnessCapabilities";
+
 export { PI_TUI_NEWLINE_SEQUENCE, PI_TUI_SUBMIT_SEQUENCE };
 
 function trimTrailingSubmitChars(prompt: string): string {
@@ -12,7 +14,9 @@ function trimTrailingSubmitChars(prompt: string): string {
 }
 
 export function promptSubmitDataForHarness(harness: CodingHarness, prompt: string): string {
-  return harness === "pi" ? encodePiTuiPrompt(prompt) : `${trimTrailingSubmitChars(prompt)}\r`;
+  return isPiDerivedHarness(harness)
+    ? encodePiTuiPrompt(prompt)
+    : `${trimTrailingSubmitChars(prompt)}\r`;
 }
 
 export function writeHarnessInput(

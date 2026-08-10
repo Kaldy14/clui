@@ -42,6 +42,18 @@ describe("terminal replay input modes", () => {
     }
   });
 
+  it("restores OMP bracketed paste mode after a full replay reset", async () => {
+    const terminal = new Terminal({ allowProposedApi: true });
+    try {
+      writeTerminalFullResetForReplay(terminal, "omp");
+      await flushWrites(terminal);
+
+      expect(terminal.modes.bracketedPasteMode).toBe(true);
+    } finally {
+      terminal.dispose();
+    }
+  });
+
   it("does not force bracketed paste mode for Claude Code terminals", async () => {
     const terminal = new Terminal({ allowProposedApi: true });
     try {

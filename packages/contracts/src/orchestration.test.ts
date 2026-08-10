@@ -59,6 +59,13 @@ it.effect("decodes Codex CLI as a coding harness", () =>
   }),
 );
 
+it.effect("decodes OMP as a coding harness", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeCodingHarness("omp");
+    assert.strictEqual(parsed, "omp");
+  }),
+);
+
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeTurnDiffInput({

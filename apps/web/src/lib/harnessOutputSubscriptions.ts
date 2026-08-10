@@ -2,7 +2,7 @@ import { ThreadId, type NativeApi } from "@clui/contracts";
 
 import { onServerWelcome } from "../wsNativeApi";
 
-type HarnessKind = "claudeCode" | "pi" | "codexCli";
+type HarnessKind = "claudeCode" | "pi" | "codexCli" | "omp";
 
 const claudeThreadIds = new Set<string>();
 const piThreadIds = new Set<string>();

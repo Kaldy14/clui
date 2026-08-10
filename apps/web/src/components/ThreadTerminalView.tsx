@@ -78,6 +78,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { runProjectScriptInTerminal } from "./TerminalToolbar";
 import { useBranchToolbar } from "./useBranchToolbar";
+import { hasCluiModelSelection } from "../lib/harnessCapabilities";
 import {
   readNewThreadPreference,
   readNewThreadFastModePreference,
@@ -277,7 +278,7 @@ function modelForHarnessSelection(
   harness: HarnessKind,
   claudeCodeBackend: ClaudeCodeBackend,
 ): string | undefined {
-  if (harness === "pi") return undefined;
+  if (!hasCluiModelSelection(harness)) return undefined;
   if (harness === "codexCli") return DEFAULT_MODEL_BY_PROVIDER.codex;
   return claudeCodeBackend === "codex"
     ? DEFAULT_CLAUDE_CODE_PROXY_MODEL

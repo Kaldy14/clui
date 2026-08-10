@@ -6,7 +6,7 @@ export const CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID_ENV =
   "CLUI_SESSION_PROCESS_REGISTRY_OWNER_PID";
 const SESSION_PROCESS_REGISTRY_DIR_NAME = "session-processes";
 
-export type SessionProcessHarness = "claudeCode" | "codexCli" | "pi";
+export type SessionProcessHarness = "claudeCode" | "codexCli" | "omp" | "pi";
 
 export interface SessionProcessRegistryEntry {
   readonly harness: SessionProcessHarness;
@@ -73,6 +73,7 @@ export function readSessionProcessRegistryEntries(
       if (
         (parsed.harness === "claudeCode" ||
           parsed.harness === "codexCli" ||
+          parsed.harness === "omp" ||
           parsed.harness === "pi") &&
         typeof parsed.threadId === "string" &&
         typeof parsed.pid === "number" &&

@@ -7,8 +7,8 @@ import {
 } from "./terminalSurfaceTheme";
 
 describe("terminalLineHeightForHarness", () => {
-  it("uses tighter spacing for pi terminals", () => {
-    expect(terminalLineHeightForHarness("pi")).toBe(PI_TERMINAL_LINE_HEIGHT);
+  it.each(["pi", "omp"] as const)("uses tighter spacing for %s terminals", (harness) => {
+    expect(terminalLineHeightForHarness(harness)).toBe(PI_TERMINAL_LINE_HEIGHT);
     expect(PI_TERMINAL_LINE_HEIGHT).toBeLessThan(TERMINAL_LINE_HEIGHT);
   });
 

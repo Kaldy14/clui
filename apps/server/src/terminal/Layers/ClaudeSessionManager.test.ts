@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import type { ClaudeCodeProxyStatus, ClaudeSessionEvent } from "@clui/contracts";
 import {
@@ -133,6 +136,7 @@ function makeRuntime(
     maxActiveSessions?: number;
     hookConfig?: { serverPort: number };
     ptyAdapter?: FakePtyAdapter;
+    stateDir?: string;
     claudeCodeProxyManager?: FakeClaudeCodeProxyManager;
   } = {},
 ) {
@@ -147,6 +151,7 @@ function makeRuntime(
       maxActiveSessions: options.maxActiveSessions,
     }),
     ...(options.hookConfig && { hookConfig: options.hookConfig }),
+    ...(options.stateDir && { stateDir: options.stateDir }),
     ...(options.claudeCodeProxyManager && {
       claudeCodeProxyManager: options.claudeCodeProxyManager,
     }),
@@ -161,7 +166,7 @@ function defaultInput(
     resumeSessionId: string;
     cols: number;
     rows: number;
-    harness: "claudeCode" | "codexCli";
+    harness: "claudeCode" | "codexCli" | "omp";
     claudeCodeBackend: "anthropic" | "codex";
     model: string;
     dangerouslySkipPermissions: boolean;
@@ -277,6 +282,58 @@ describe("ClaudeSessionManagerRuntime", () => {
       expect(result.ptyAdapter.spawnInputs[1]!.args).toContain(
         "--dangerously-bypass-approvals-and-sandbox",
       );
+    });
+
+    it("launches OMP with thread-scoped state and an immediate resume marker", async () => {
+      const stateDir = mkdtempSync(path.join(tmpdir(), "clui-omp-session-"));
+      try {
+        const result = makeRuntime({ stateDir });
+        runtime = result.runtime;
+        const events = collectEvents(runtime);
+
+        await runtime.startSession(
+          defaultInput({ harness: "omp", model: "ignored-provider-model" }),
+        );
+
+        const spawnInput = result.ptyAdapter.spawnInputs[0]!;
+        expect(spawnInput.shell).toBe("omp");
+        expect(spawnInput.args).toEqual([
+          "--session-dir",
+          path.join(stateDir, "omp-sessions", Buffer.from("thread-1").toString("base64url")),
+        ]);
+        expect(spawnInput.args).not.toContain("--model");
+        const sessionIdEvents = events.filter((event) => event.type === "sessionId");
+        expect(sessionIdEvents).toHaveLength(1);
+        expect(runtime.getClaudeSessionId("thread-1")).toMatch(/^[a-f0-9-]+$/);
+      } finally {
+        rmSync(stateDir, { recursive: true, force: true });
+      }
+    });
+
+    it("resumes OMP from its session directory and maps YOLO mode", async () => {
+      const stateDir = mkdtempSync(path.join(tmpdir(), "clui-omp-resume-"));
+      try {
+        const result = makeRuntime({ stateDir });
+        runtime = result.runtime;
+
+        await runtime.startSession(
+          defaultInput({
+            harness: "omp",
+            resumeSessionId: "omp-resume-marker",
+            dangerouslySkipPermissions: true,
+          }),
+        );
+
+        expect(result.ptyAdapter.spawnInputs[0]!.args).toEqual([
+          "--session-dir",
+          path.join(stateDir, "omp-sessions", Buffer.from("thread-1").toString("base64url")),
+          "--continue",
+          "--yolo",
+        ]);
+        expect(runtime.getClaudeSessionId("thread-1")).toBe("omp-resume-marker");
+      } finally {
+        rmSync(stateDir, { recursive: true, force: true });
+      }
     });
 
     it("injects the managed proxy environment for Codex-backed Claude Code", async () => {
@@ -510,25 +567,32 @@ describe("ClaudeSessionManagerRuntime", () => {
   // ── reconcileActiveSessions ────────────────────────────────────
 
   describe("reconcileActiveSessions", () => {
-    it("applies the active-session cap independently to Claude Code and Codex CLI", async () => {
-      const result = makeRuntime({ maxActiveSessions: 100 });
+    it("applies the active-session cap independently to each PTY harness", async () => {
+      const stateDir = mkdtempSync(path.join(tmpdir(), "clui-omp-lru-"));
+      const result = makeRuntime({ maxActiveSessions: 100, stateDir });
       runtime = result.runtime;
 
       await runtime.startSession(defaultInput({ threadId: "claude-1" }));
       await runtime.startSession(defaultInput({ threadId: "codex-1", harness: "codexCli" }));
+      await runtime.startSession(defaultInput({ threadId: "omp-1", harness: "omp" }));
       await runtime.reconcileActiveSessions(1);
 
       expect(runtime.getSessionStatus("claude-1")).toBe("active");
       expect(runtime.getSessionStatus("codex-1")).toBe("active");
+      expect(runtime.getSessionStatus("omp-1")).toBe("active");
 
       await runtime.startSession(defaultInput({ threadId: "claude-2" }));
       await runtime.startSession(defaultInput({ threadId: "codex-2", harness: "codexCli" }));
+      await runtime.startSession(defaultInput({ threadId: "omp-2", harness: "omp" }));
       await runtime.reconcileActiveSessions(1);
 
       expect(runtime.getSessionStatus("claude-1")).toBe("dormant");
       expect(runtime.getSessionStatus("claude-2")).toBe("active");
       expect(runtime.getSessionStatus("codex-1")).toBe("dormant");
       expect(runtime.getSessionStatus("codex-2")).toBe("active");
+      expect(runtime.getSessionStatus("omp-1")).toBe("dormant");
+      expect(runtime.getSessionStatus("omp-2")).toBe("active");
+      rmSync(stateDir, { recursive: true, force: true });
     });
 
     it("hibernates oldest sessions when over maxActive limit", async () => {

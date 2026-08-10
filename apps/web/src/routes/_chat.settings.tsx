@@ -95,6 +95,7 @@ const CODING_HARNESS_DESCRIPTIONS: Record<CodingHarness, string> = {
   claudeCode: "Use the existing Claude Code terminal harness for new threads.",
   pi: "Use the pi coding agent terminal harness for new threads.",
   codexCli: "Use the Codex CLI terminal harness for new threads.",
+  omp: "Use the OMP (oh-my-pi) terminal harness for new threads.",
 };
 
 const MODEL_PROVIDER_SETTINGS: Array<{

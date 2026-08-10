@@ -20,4 +20,10 @@ describe("promptSubmitDataForHarness", () => {
       `line one${PI_TUI_NEWLINE_SEQUENCE}line two${PI_TUI_SUBMIT_SEQUENCE}`,
     );
   });
+
+  it("uses Pi-compatible CSI-u input for OMP submissions", () => {
+    expect(promptSubmitDataForHarness("omp", "line one\nline two\n")).toBe(
+      `line one${PI_TUI_NEWLINE_SEQUENCE}line two${PI_TUI_SUBMIT_SEQUENCE}`,
+    );
+  });
 });

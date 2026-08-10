@@ -1,5 +1,7 @@
 import type { CodingHarness } from "@clui/contracts";
 
+import { isPiDerivedHarness } from "./harnessCapabilities";
+
 export const TERMINAL_FULL_RESET_SEQUENCE = "\u001bc";
 export const TERMINAL_ENABLE_BRACKETED_PASTE_SEQUENCE = "\x1b[?2004h";
 
@@ -10,17 +12,17 @@ export interface TerminalWriter {
 /**
  * Restores xterm-local input modes that the running harness expects.
  *
- * The pi TUI enables bracketed paste when it starts, but Clui can replay
+ * Pi-derived TUIs enable bracketed paste when they start, but Clui can replay
  * truncated scrollback that no longer contains that startup DECSET. If we
  * reset xterm during replay and do not restore the local mode, multiline
- * browser paste is converted into raw Enter keypresses and pi submits each row
+ * browser paste is converted into raw Enter keypresses and the harness submits each row
  * as a separate queued message.
  */
 export function restoreTerminalInputModesForHarness(
   terminal: TerminalWriter,
   harness: CodingHarness,
 ): void {
-  if (harness !== "pi") return;
+  if (!isPiDerivedHarness(harness)) return;
   terminal.write(TERMINAL_ENABLE_BRACKETED_PASTE_SEQUENCE);
 }
 

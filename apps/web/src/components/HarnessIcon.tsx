@@ -37,6 +37,22 @@ export function HarnessIcon({
     );
   }
 
+  if (harness === "omp") {
+    return (
+      <svg
+        aria-label="OMP"
+        className={cn("fill-none", className)}
+        preserveAspectRatio="xMidYMid"
+        role="img"
+        viewBox="0 0 64 64"
+      >
+        <rect width="64" height="64" rx="14" fill="#171717" />
+        <path d="M14 18h36v9H37v19H27V27H14V18Z" fill="#d4ff3f" />
+        <path d="M18 33h9v13h-9V33Zm19 0h9v13h-9V33Z" fill="#fff" />
+      </svg>
+    );
+  }
+
   return (
     <svg aria-label="Pi" className={cn("fill-none", className)} role="img" viewBox="0 0 800 800">
       <rect width="800" height="800" rx="160" fill="#000" />

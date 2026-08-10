@@ -2219,7 +2219,7 @@ describe("WebSocket Server", () => {
       threadId: string;
       workspaceRoot: string;
       worktreePath: string | null;
-      harness?: "claudeCode" | "codexCli" | "pi";
+      harness?: "claudeCode" | "codexCli" | "omp" | "pi";
       claudeCodeBackend?: "anthropic" | "codex";
       model?: string;
     },

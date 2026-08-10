@@ -10,9 +10,10 @@ import {
 } from "./appSettings";
 
 describe("coding harness settings", () => {
-  it("exposes Codex CLI as a selectable harness", () => {
-    expect(CODING_HARNESS_OPTIONS).toEqual(["claudeCode", "pi", "codexCli"]);
+  it("exposes every supported terminal harness", () => {
+    expect(CODING_HARNESS_OPTIONS).toEqual(["claudeCode", "pi", "codexCli", "omp"]);
     expect(CODING_HARNESS_LABELS.codexCli).toBe("Codex CLI");
+    expect(CODING_HARNESS_LABELS.omp).toBe("OMP");
   });
 });
 

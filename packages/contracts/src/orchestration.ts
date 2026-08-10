@@ -38,7 +38,7 @@ export const ORCHESTRATION_WS_CHANNELS = {
 
 export const ProviderKind = Schema.Literals(["codex", "claudeCode", "cursor"]);
 export type ProviderKind = typeof ProviderKind.Type;
-export const CodingHarness = Schema.Literals(["claudeCode", "pi", "codexCli"]);
+export const CodingHarness = Schema.Literals(["claudeCode", "pi", "codexCli", "omp"]);
 export type CodingHarness = typeof CodingHarness.Type;
 export const ClaudeCodeBackend = Schema.Literals(["anthropic", "codex"]);
 export type ClaudeCodeBackend = typeof ClaudeCodeBackend.Type;

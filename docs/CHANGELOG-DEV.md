@@ -4,6 +4,52 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-10 — Add OMP as a first-class terminal harness
+
+**Problem:** Clui could create terminal threads for Claude Code, pi, and Codex CLI, but users of
+OMP (oh-my-pi) could not select or manage OMP sessions through the same project/thread workflow.
+
+**Root cause:** The shared coding-harness schema, terminal process registry, PTY launcher, client
+settings, prompt encoding, terminal replay behavior, icons, and sidebar session accounting all
+enumerated only the original three harnesses. OMP also needs Pi-compatible CSI-u prompt input and
+isolated session storage to resume the correct Clui thread.
+
+**Fix:** Added the `omp` harness across contracts and the web UI, launched the `omp` executable in
+the existing generic PTY transport, and assigned every Clui OMP thread a dedicated session
+directory with a persisted resume marker and `--continue` restart behavior. Mapped Clui's YOLO mode
+to OMP's `--yolo`, registered OMP processes for cleanup, reused Pi-derived TUI input/replay modes,
+and added focused contract, lifecycle, registry, subscription, settings, rendering, and sidebar
+coverage.
+
+**Affected files:**
+
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/orchestration.test.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.ts`
+- `apps/server/src/terminal/Layers/ClaudeSessionManager.test.ts`
+- `apps/server/src/terminal/sessionProcessRegistry.ts`
+- `apps/server/src/terminal/sessionProcessRegistry.test.ts`
+- `apps/server/src/wsServer.test.ts`
+- `apps/web/src/appSettings.ts`
+- `apps/web/src/appSettings.test.ts`
+- `apps/web/src/components/HarnessIcon.tsx`
+- `apps/web/src/components/Sidebar.logic.ts`
+- `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/components/ThreadTerminalView.tsx`
+- `apps/web/src/lib/harnessCapabilities.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.ts`
+- `apps/web/src/lib/harnessOutputSubscriptions.test.ts`
+- `apps/web/src/lib/terminalReplay.ts`
+- `apps/web/src/lib/terminalReplay.test.ts`
+- `apps/web/src/lib/terminalSurfaceTheme.ts`
+- `apps/web/src/lib/terminalSurfaceTheme.test.ts`
+- `apps/web/src/lib/threadInput.ts`
+- `apps/web/src/lib/threadInput.test.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-07-28 — Bound Clui CPU, memory, and idle energy usage
 
 **Problem:** A live Clui session accumulated blocked Git children, polled Git and GitHub state for
