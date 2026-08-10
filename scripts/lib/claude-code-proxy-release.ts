@@ -15,6 +15,11 @@ interface ReleaseArtifact {
   readonly binaryName: "claude-code-proxy" | "claude-code-proxy.exe";
 }
 
+interface ArchiveExtractionCommand {
+  readonly executable: "tar" | "unzip";
+  readonly args: readonly string[];
+}
+
 const RELEASE_ARTIFACTS: Record<`${ProxyPlatform}-${ProxyArch}`, ReleaseArtifact> = {
   "mac-x64": {
     archiveName: "claude-code-proxy-darwin-amd64.tar.gz",
@@ -55,6 +60,26 @@ export function resolveClaudeCodeProxyReleaseArtifact(
   return RELEASE_ARTIFACTS[`${platform}-${arch}`];
 }
 
+export function resolveArchiveExtractionCommand(
+  archiveName: string,
+  archivePath: string,
+  extractedDir: string,
+): ArchiveExtractionCommand {
+  if (archiveName.endsWith(".zip")) {
+    return {
+      executable: "unzip",
+      args: ["-q", archivePath, "-d", extractedDir],
+    };
+  }
+  if (archiveName.endsWith(".tar.gz")) {
+    return {
+      executable: "tar",
+      args: ["-xzf", archivePath, "-C", extractedDir],
+    };
+  }
+  throw new Error(`Unsupported proxy archive format: ${archiveName}`);
+}
+
 export async function stageClaudeCodeProxy(input: {
   readonly platform: ProxyPlatform;
   readonly arch: ProxyArch;
@@ -84,13 +109,19 @@ export async function stageClaudeCodeProxy(input: {
     await mkdir(extractedDir, { recursive: true });
     await writeFile(archivePath, archiveBytes);
 
-    const extraction = spawnSync("tar", ["-xf", archivePath, "-C", extractedDir], {
+    const extractionCommand = resolveArchiveExtractionCommand(
+      artifact.archiveName,
+      archivePath,
+      extractedDir,
+    );
+    const extraction = spawnSync(extractionCommand.executable, extractionCommand.args, {
       encoding: "utf8",
       windowsHide: true,
     });
     if (extraction.status !== 0) {
       throw new Error(
-        extraction.stderr.trim() || `Could not extract ${artifact.archiveName} with tar.`,
+        extraction.stderr.trim() ||
+          `Could not extract ${artifact.archiveName} with ${extractionCommand.executable}.`,
       );
     }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CLAUDE_CODE_PROXY_VERSION,
+  resolveArchiveExtractionCommand,
   resolveClaudeCodeProxyReleaseArtifact,
 } from "./claude-code-proxy-release";
 
@@ -25,5 +26,37 @@ describe("Claude Code proxy release", () => {
     expect(artifact.binaryName).toBe(
       platform === "win" ? "claude-code-proxy.exe" : "claude-code-proxy",
     );
+  });
+
+  it("extracts Windows ZIP releases with unzip", () => {
+    expect(
+      resolveArchiveExtractionCommand(
+        "claude-code-proxy-windows-amd64.zip",
+        "/tmp/proxy.zip",
+        "/tmp/extracted",
+      ),
+    ).toEqual({
+      executable: "unzip",
+      args: ["-q", "/tmp/proxy.zip", "-d", "/tmp/extracted"],
+    });
+  });
+
+  it("extracts macOS and Linux releases with tar", () => {
+    expect(
+      resolveArchiveExtractionCommand(
+        "claude-code-proxy-linux-amd64.tar.gz",
+        "/tmp/proxy.tar.gz",
+        "/tmp/extracted",
+      ),
+    ).toEqual({
+      executable: "tar",
+      args: ["-xzf", "/tmp/proxy.tar.gz", "-C", "/tmp/extracted"],
+    });
+  });
+
+  it("rejects unknown proxy archive formats", () => {
+    expect(() =>
+      resolveArchiveExtractionCommand("proxy.bin", "/tmp/proxy.bin", "/tmp/extracted"),
+    ).toThrow("Unsupported proxy archive format");
   });
 });

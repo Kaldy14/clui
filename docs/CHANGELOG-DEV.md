@@ -4,6 +4,29 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-10 — Fix Windows proxy archive extraction
+
+**Problem:** The Windows x64 desktop release built the application successfully, then failed while
+staging the pinned Claude Code proxy with `tar: This does not look like a tar archive`.
+
+**Root cause:** Windows proxy releases are ZIP archives, but `stageClaudeCodeProxy` sent every
+downloaded release artifact to `tar`. GNU tar on the Ubuntu cross-build runner cannot extract ZIP
+archives.
+
+**Fix:** Added explicit archive-format command selection: Windows ZIP releases use `unzip`, while
+macOS and Linux `.tar.gz` releases continue to use `tar`. The Windows release job now installs
+`unzip` explicitly, unsupported formats fail before spawning an extractor, and focused tests cover
+all three branches.
+
+**Affected files:**
+
+- `scripts/lib/claude-code-proxy-release.ts`
+- `scripts/lib/claude-code-proxy-release.test.ts`
+- `.github/workflows/release.yml`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-08-10 — Fix Linux AppImage filename validation
 
 **Problem:** The Linux desktop release completed the application builds and native dependency

@@ -124,7 +124,7 @@ jobs:
         if: matrix.platform == 'win'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes wine
+          sudo apt-get install --no-install-recommends --yes unzip wine
           wine --version
 
       - name: Install dependencies
