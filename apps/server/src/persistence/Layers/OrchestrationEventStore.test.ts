@@ -125,6 +125,87 @@ layer("OrchestrationEventStore", (it) => {
     }),
   );
 
+  it.effect("skips retired journey events while preserving replay limits", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+      const legacyThreadId = ThreadId.makeUnsafe("thread-retired-journey");
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.makeUnsafe("evt-store-retired-journey")},
+          ${"thread"},
+          ${legacyThreadId},
+          ${0},
+          ${"thread.journey-updated"},
+          ${now},
+          ${CommandId.makeUnsafe("cmd-store-retired-journey")},
+          ${null},
+          ${null},
+          ${"client"},
+          ${JSON.stringify({
+            threadId: legacyThreadId,
+            journey: { nodes: [], edges: [] },
+            updatedAt: now,
+          })},
+          ${"{}"}
+        )
+      `;
+
+      const legacyRows = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence
+        FROM orchestration_events
+        WHERE event_id = ${EventId.makeUnsafe("evt-store-retired-journey")}
+      `;
+      const legacySequence = legacyRows[0]?.sequence ?? 0;
+
+      const currentEvent = yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.makeUnsafe("evt-store-after-retired-journey"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.makeUnsafe("project-after-retired-journey"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-store-after-retired-journey"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        payload: {
+          projectId: ProjectId.makeUnsafe("project-after-retired-journey"),
+          title: "Project after retired journey event",
+          workspaceRoot: "/tmp/project-after-retired-journey",
+          defaultModel: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const replayed = yield* Stream.runCollect(
+        eventStore.readFromSequence(Math.max(0, legacySequence - 1), 1),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+
+      assert.deepStrictEqual(
+        replayed.map((event) => event.eventId),
+        [currentEvent.eventId],
+      );
+    }),
+  );
+
   it.effect("fails with PersistenceDecodeError when stored json is invalid", () =>
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;

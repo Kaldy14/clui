@@ -4,6 +4,29 @@ Session-by-session log of changes, fixes, and decisions made during development.
 
 ---
 
+## 2026-08-11 — Replay databases containing retired journey events
+
+**Problem:** Server startup failed while replaying an existing event database when it encountered
+the formerly supported `thread.journey-updated` event type.
+
+**Root cause:** The persisted-row decoder validated `event_type` against only the current
+`OrchestrationEventType` union. Journey events remained valid historical rows after the journey
+domain was removed, so decoding stopped before the projection pipeline could finish bootstrapping.
+
+**Fix:** The event store now recognizes the explicit set of retired journey event types and skips
+them during replay while retaining their rows for auditability. Replay pagination advances over
+retired rows without consuming the caller's result limit, and unsupported non-retired event types
+still fail strict domain-event decoding. Added regression coverage for a retired event followed by
+a current event with a one-event replay limit.
+
+**Affected files:**
+
+- `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`
+- `apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts`
+- `docs/CHANGELOG-DEV.md`
+
+---
+
 ## 2026-08-10 — Build Windows desktop artifacts on Windows
 
 **Problem:** The Windows x64 release got past proxy ZIP extraction, then Electron Builder failed

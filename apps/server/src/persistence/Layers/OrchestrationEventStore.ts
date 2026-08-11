@@ -29,6 +29,43 @@ const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMetadata);
 
+// These events were emitted by released journey implementations but no longer
+// have a current domain projection. Keep them in storage for auditability while
+// excluding them from the active event stream during replay.
+const RETIRED_ORCHESTRATION_EVENT_TYPES = new Set<string>([
+  "thread.journey-updated",
+  "journey.run-requested",
+  "journey.attempt-start-requested",
+  "journey.attempt-started",
+  "journey.attempt-quiesce-requested",
+  "journey.attempt-quiesced",
+  "journey.run-waiting-for-dependencies",
+  "journey.run-waiting-for-user",
+  "journey.wait-wake-accepted",
+  "journey.attempt-result-accepted",
+  "journey.run-completed",
+  "journey.attempt-failed",
+  "journey.run-failed",
+  "journey.run-cancellation-requested",
+  "journey.run-cancelled",
+  "journey.run-interrupted",
+  "journey.decision-recorded",
+  "journey.approval-recorded",
+  "journey.approval-invalidated",
+  "journey.permit-claimed",
+  "journey.permit-released",
+  "journey.writer-lease-claimed",
+  "journey.writer-lease-released",
+  "journey.reconciled",
+  "journey.scheduler-configured",
+  "journey.scheduler-admission-recorded",
+  "journey.steering-enqueued",
+  "journey.steering-delivered",
+  "journey.steering-removed",
+  "journey.node-deletion-requested",
+  "journey.thread-deletion-requested",
+]);
+
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
@@ -46,7 +83,7 @@ const AppendEventRequestSchema = Schema.Struct({
 const OrchestrationEventPersistedRowSchema = Schema.Struct({
   sequence: NonNegativeInt,
   eventId: EventId,
-  type: OrchestrationEventType,
+  type: Schema.String,
   aggregateKind: OrchestrationAggregateKind,
   aggregateId: Schema.Union([ProjectId, ThreadId]),
   occurredAt: IsoDateTime,
@@ -230,17 +267,28 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
-                Effect.mapError(
-                  toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
+              RETIRED_ORCHESTRATION_EVENT_TYPES.has(row.type)
+                ? Effect.succeed<OrchestrationEvent | undefined>(undefined)
+                : decodeEvent(row).pipe(
+                    Effect.mapError(
+                      toPersistenceDecodeError(
+                        "OrchestrationEventStore.readFromSequence:rowToEvent",
+                      ),
+                    ),
+                  ),
+            ).pipe(
+              Effect.map((events) => ({
+                cursor: rows.at(-1)?.sequence ?? cursor,
+                events: events.filter(
+                  (event): event is OrchestrationEvent => event !== undefined,
                 ),
-              ),
+              })),
             ),
           ),
         ),
       ).pipe(
-        Stream.flatMap((events) => {
-          if (events.length === 0) {
+        Stream.flatMap(({ cursor: nextCursor, events }) => {
+          if (nextCursor === cursor) {
             return Stream.empty;
           }
           const nextRemaining = remaining - events.length;
@@ -249,7 +297,7 @@ const makeEventStore = Effect.gen(function* () {
           }
           return Stream.concat(
             Stream.fromIterable(events),
-            readPage(events[events.length - 1]!.sequence, nextRemaining),
+            readPage(nextCursor, nextRemaining),
           );
         }),
       );
